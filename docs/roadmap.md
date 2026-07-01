@@ -57,6 +57,7 @@
 ## Sprint 5.6 - Packaging
 
 - Framework-dependent Windows CI package. Implemented as `agentmux-windows-package` after smoke gates pass.
+- Package provenance, checksums, and packaged CLI smoke. Implemented in CI.
 - Installer/MSIX/signing. Future work after real desktop QA.
 
 ## Sprint 6 - Browser Parity

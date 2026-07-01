@@ -50,9 +50,15 @@ CI publishes a lightweight framework-dependent artifact named `agentmux-windows-
 
 - `AgentMux.exe`: WPF desktop app
 - `cli\agentmux.exe`: CLI for the running app
-- runtime config, dependency files, WebView2/xterm assets, README, and license
+- runtime config, dependency files, WebView2/xterm assets, `PACKAGE.json`, `SHA256SUMS.txt`, README, and license
 
 It expects .NET 9 Desktop Runtime and WebView2 Runtime on the Windows machine. It is a smoke-ready package, not an installer.
+
+After extracting the artifact on Windows, run this from the package root for a quick CLI sanity check:
+
+```powershell
+.\cli\agentmux.exe --help
+```
 
 Experimental ConPTY smoke tests:
 

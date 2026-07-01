@@ -42,7 +42,7 @@ AgentMux.Win.App
 
 ## Packaging
 
-CI publishes a lightweight framework-dependent Windows artifact after the Windows smoke gates pass. The package includes the WPF app at the root, the CLI under `cli\`, runtime config, dependency files, WebView2/xterm assets, README, and license. It intentionally avoids an installer and self-contained runtime bundle until release readiness is higher.
+CI publishes a lightweight framework-dependent Windows artifact after the Windows smoke gates pass. The package includes the WPF app at the root, the CLI under `cli\`, runtime config, dependency files, WebView2/xterm assets, package provenance metadata, SHA-256 checksums, README, and license. CI also runs `cli\agentmux.exe --help` from the packaged output. It intentionally avoids an installer and self-contained runtime bundle until release readiness is higher.
 
 ## IPC
 

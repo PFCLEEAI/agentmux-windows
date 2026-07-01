@@ -84,14 +84,46 @@ jobs:
             "WinRT.Runtime.dll",
             "runtimes\win-x64\native\WebView2Loader.dll",
             "README.md",
-            "LICENSE"
+            "LICENSE",
+            "PACKAGE.json",
+            "SHA256SUMS.txt"
           )
+
+          $manifest = [ordered]@{
+            name = "AgentMux Windows"
+            packageKind = "framework-dependent"
+            commit = "${{ github.sha }}"
+            runId = "${{ github.run_id }}"
+            runNumber = "${{ github.run_number }}"
+            runAttempt = "${{ github.run_attempt }}"
+            builtAtUtc = (Get-Date).ToUniversalTime().ToString("o")
+            app = "AgentMux.exe"
+            cli = "cli\agentmux.exe"
+            requires = @(".NET 9 Desktop Runtime", "WebView2 Runtime")
+            requiredFiles = $requiredFiles
+          }
+          $manifest | ConvertTo-Json -Depth 5 | Set-Content -Encoding UTF8 (Join-Path $package "PACKAGE.json")
+
+          $hashes = Get-ChildItem $package -Recurse -File |
+            Where-Object { $_.Name -ne "SHA256SUMS.txt" } |
+            Sort-Object FullName |
+            ForEach-Object {
+              $relative = [System.IO.Path]::GetRelativePath($package, $_.FullName).Replace("\", "/")
+              $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+              "$hash  $relative"
+            }
+          $hashes | Set-Content -Encoding ASCII (Join-Path $package "SHA256SUMS.txt")
 
           foreach ($file in $requiredFiles) {
             $path = Join-Path $package $file
             if (-not (Test-Path $path)) {
               throw "Missing package file: $file"
             }
+          }
+
+          $cliHelp = & (Join-Path $package "cli\agentmux.exe") --help
+          if ($LASTEXITCODE -ne 0 -or ($cliHelp -join "`n") -notmatch "agentmux - CLI") {
+            throw "Packaged CLI smoke failed."
           }
 
           Get-ChildItem $package | Sort-Object Name | Select-Object Name,Length
