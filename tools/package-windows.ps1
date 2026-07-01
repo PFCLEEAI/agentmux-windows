@@ -93,6 +93,7 @@ try {
   Copy-Item README.md $package
   Copy-Item LICENSE $package
   Copy-Item docs/manual-windows-desktop-smoke.md (Join-Path $package "docs")
+  Copy-Item tools/install-user.ps1 (Join-Path $package "tools")
   Copy-Item tools/manual-desktop-smoke.ps1 (Join-Path $package "tools")
 
   $requiredFiles = @(
@@ -117,6 +118,7 @@ try {
     "README.md",
     "LICENSE",
     "docs\manual-windows-desktop-smoke.md",
+    "tools\install-user.ps1",
     "tools\manual-desktop-smoke.ps1",
     "PACKAGE.json",
     "SHA256SUMS.txt"

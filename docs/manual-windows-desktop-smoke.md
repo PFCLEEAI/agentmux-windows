@@ -50,6 +50,25 @@ C:\AgentMuxSmoke\agentmux-windows-package
 
 Avoid running from synced folders or paths containing secrets if you plan to share evidence.
 
+## Optional User Install
+
+To install the extracted package for the current user before the smoke:
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass -Force
+.\tools\install-user.ps1
+```
+
+The helper verifies package checksums, copies the extracted package to `%LOCALAPPDATA%\Programs\AgentMux`, creates `agentmux.cmd` and `agentmux-app.cmd` shims, and updates only the current user's PATH unless `-SkipPathUpdate` is used. It does not install runtimes, write to Program Files, create services, or replace the manual visible desktop smoke.
+
+From a repo checkout, pass the package explicitly:
+
+```powershell
+.\tools\install-user.ps1 -PackagePath C:\AgentMuxSmoke\agentmux-windows-package -InstallRoot "$env:LOCALAPPDATA\Programs\AgentMux"
+```
+
+Open a new terminal after a PATH update. Package checksums verify local package integrity; they do not prove publisher authenticity by themselves.
+
 ## Run The Helper
 
 From a repo checkout:

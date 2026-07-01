@@ -82,6 +82,31 @@ jobs:
             -PackagePath "$env:PACKAGE_DIR" `
             -EvidenceRoot "$env:RUNNER_TEMP\manual-desktop-smoke-helper" `
             -SkipLaunch
+      - name: User install helper preflight
+        shell: pwsh
+        run: |
+          $userPathBefore = [Environment]::GetEnvironmentVariable("Path", [EnvironmentVariableTarget]::User)
+          $installRoot = "$env:RUNNER_TEMP\agentmux-user-install"
+          & "$env:PACKAGE_DIR\tools\install-user.ps1" `
+            -PackagePath "$env:PACKAGE_DIR" `
+            -InstallRoot "$installRoot" `
+            -SkipPathUpdate
+
+          $userPathAfter = [Environment]::GetEnvironmentVariable("Path", [EnvironmentVariableTarget]::User)
+          if ($userPathBefore -ne $userPathAfter) {
+            throw "install-user.ps1 changed the user PATH even though -SkipPathUpdate was set."
+          }
+
+          foreach ($file in @("bin\agentmux.cmd", "bin\agentmux-app.cmd", "INSTALL.json")) {
+            if (-not (Test-Path (Join-Path $installRoot $file))) {
+              throw "Installed helper output is missing: $file"
+            }
+          }
+
+          $shimHelp = & (Join-Path $installRoot "bin\agentmux.cmd") --help
+          if ($LASTEXITCODE -ne 0 -or ($shimHelp -join "`n") -notmatch "agentmux - CLI") {
+            throw "Installed agentmux.cmd shim smoke failed."
+          }
       - name: Create release ZIP and checksum
         shell: pwsh
         run: |
@@ -120,7 +145,7 @@ jobs:
             throw "Release ZIP contains an extra package parent folder."
           }
 
-          foreach ($file in @("AgentMux.exe", "cli\agentmux.exe", "PACKAGE.json", "SHA256SUMS.txt")) {
+          foreach ($file in @("AgentMux.exe", "cli\agentmux.exe", "PACKAGE.json", "SHA256SUMS.txt", "tools\install-user.ps1")) {
             if (-not (Test-Path (Join-Path $smokeDir $file))) {
               throw "Release ZIP missing root file: $file"
             }
@@ -151,6 +176,17 @@ jobs:
             if ($actual -ne $parts[0]) {
               throw "Checksum mismatch for $($parts[1])"
             }
+          }
+
+          $zipInstallRoot = Join-Path $env:RUNNER_TEMP "agentmux-release-zip-install"
+          & (Join-Path $smokeDir "tools\install-user.ps1") `
+            -PackagePath $smokeDir `
+            -InstallRoot $zipInstallRoot `
+            -SkipPathUpdate
+
+          $zipShimHelp = & (Join-Path $zipInstallRoot "bin\agentmux.cmd") --help
+          if ($LASTEXITCODE -ne 0 -or ($zipShimHelp -join "`n") -notmatch "agentmux - CLI") {
+            throw "Release ZIP installed agentmux.cmd shim smoke failed."
           }
       - name: Upload release package artifact
         uses: actions/upload-artifact@v4
@@ -186,7 +222,7 @@ jobs:
           - .NET 9 Desktop Runtime
           - Microsoft Edge WebView2 Runtime
 
-          This is a smoke-ready preview package, not an installer. Manual Windows desktop QA is still required before release-ready status.
+          This is a smoke-ready preview package with a lightweight no-admin user install helper. It is not signed, MSIX-packaged, or release-ready. Manual Windows desktop QA is still required before release-ready status.
           EOF
 
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then

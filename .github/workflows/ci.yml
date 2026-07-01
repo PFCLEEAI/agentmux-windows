@@ -65,6 +65,52 @@ jobs:
             -PackagePath "${{ runner.temp }}\agentmux-windows-package" `
             -EvidenceRoot "${{ runner.temp }}\manual-desktop-smoke-helper" `
             -SkipLaunch
+      - name: User install helper preflight
+        shell: pwsh
+        run: |
+          $userPathBefore = [Environment]::GetEnvironmentVariable("Path", [EnvironmentVariableTarget]::User)
+          $installRoot = "${{ runner.temp }}\agentmux-user-install"
+          & "${{ runner.temp }}\agentmux-windows-package\tools\install-user.ps1" `
+            -PackagePath "${{ runner.temp }}\agentmux-windows-package" `
+            -InstallRoot "$installRoot" `
+            -SkipPathUpdate
+
+          $userPathAfter = [Environment]::GetEnvironmentVariable("Path", [EnvironmentVariableTarget]::User)
+          if ($userPathBefore -ne $userPathAfter) {
+            throw "install-user.ps1 changed the user PATH even though -SkipPathUpdate was set."
+          }
+
+          foreach ($file in @("bin\agentmux.cmd", "bin\agentmux-app.cmd", "INSTALL.json")) {
+            if (-not (Test-Path (Join-Path $installRoot $file))) {
+              throw "Installed helper output is missing: $file"
+            }
+          }
+
+          $shimHelp = & (Join-Path $installRoot "bin\agentmux.cmd") --help
+          if ($LASTEXITCODE -ne 0 -or ($shimHelp -join "`n") -notmatch "agentmux - CLI") {
+            throw "Installed agentmux.cmd shim smoke failed."
+          }
+
+          $tamperedPackage = "${{ runner.temp }}\agentmux-tampered-package"
+          if (Test-Path $tamperedPackage) {
+            Remove-Item -Recurse -Force $tamperedPackage
+          }
+          New-Item -ItemType Directory -Force -Path $tamperedPackage | Out-Null
+          Copy-Item -Path "${{ runner.temp }}\agentmux-windows-package\*" -Destination $tamperedPackage -Recurse -Force
+          Add-Content -LiteralPath (Join-Path $tamperedPackage "README.md") -Value "tamper"
+
+          try {
+            & (Join-Path $tamperedPackage "tools\install-user.ps1") `
+              -PackagePath $tamperedPackage `
+              -InstallRoot "${{ runner.temp }}\agentmux-tampered-install" `
+              -SkipPathUpdate
+            throw "Tampered package unexpectedly installed."
+          } catch {
+            if ($_.Exception.Message -eq "Tampered package unexpectedly installed.") {
+              throw
+            }
+            Write-Host "Tampered package install was blocked: $($_.Exception.Message)"
+          }
       - name: Upload Windows package
         uses: actions/upload-artifact@v4
         with:

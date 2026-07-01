@@ -296,6 +296,7 @@ if (-not [string]::IsNullOrWhiteSpace($packageRoot)) {
     "PACKAGE.json",
     "SHA256SUMS.txt",
     "docs\manual-windows-desktop-smoke.md",
+    "tools\install-user.ps1",
     "tools\manual-desktop-smoke.ps1"
   )) {
     if (-not (Test-Path -LiteralPath (Join-Path $packageRoot $requiredPackageFile) -PathType Leaf)) {
@@ -428,6 +429,7 @@ Do not paste tokens, passwords, SSH keys, API keys, customer data, private promp
 - [ ] package-checksums.txt is all OK, or checksum skip is explained.
 - [ ] cli-help.txt exists and shows agentmux - CLI.
 - [ ] launch.json records the app launch or -SkipLaunch was intentional.
+- [ ] tools\install-user.ps1 exists if the smoke is using a packaged build.
 
 ## Manual Evidence
 

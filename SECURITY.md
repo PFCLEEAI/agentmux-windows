@@ -23,6 +23,7 @@ Security-sensitive areas:
 - browser session data,
 - browser console messages, browser network/download/route metadata, browser trace files, synthetic route responses, and downloaded files under the user's local app data directory.
 - session snapshot data under `%LOCALAPPDATA%\AgentMux\session.json`, including surface titles, pane titles, browser URLs, split layout, active pane ids, and best-effort terminal screen text.
+- user install files under `%LOCALAPPDATA%\Programs\AgentMux` when the packaged install helper is used, including command shims and copied package files.
 - manual desktop-smoke evidence, including screenshots, terminal output, local paths, URLs, notification text, helper metadata, and copied CLI output.
 
 Browser preview boundaries:
@@ -53,6 +54,7 @@ Surface/session boundaries:
 Manual desktop-smoke evidence boundaries:
 
 - The manual proof helper creates local files only under the selected evidence folder, defaults to the user's temp directory, does not upload evidence, does not read browser history or credentials, does not require administrator privileges, and may launch AgentMux unless `-SkipLaunch` is used.
+- The user install helper is a convenience script for extracted packages, not a signed installer. It verifies `SHA256SUMS.txt` for local package integrity, but package checksums do not prove publisher authenticity by themselves. It copies package files to a user-local install root, creates command shims, and may update only the current user's PATH unless `-SkipPathUpdate` is used. It does not install runtimes, write machine PATH, write Program Files, create services, add startup tasks, or auto-update AgentMux. Treat the install root as executable local user state; do not run the helper from an untrusted or modified package.
 - Manual evidence may still contain local paths, URLs, terminal output, notification text, screenshots, browser console messages, network/download metadata, response bodies, HAR metadata, or browser trace files if the tester chooses to collect those outputs. Use disposable terminal commands and public or local demo pages only.
 - Remove tokens, passwords, SSH keys, API keys, private URLs, account ids, credentials, proprietary output, browser cookies, and private prompts before sharing evidence.
 - Hosted CI evidence is not a substitute for physical keyboard and visible Windows desktop proof.
