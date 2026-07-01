@@ -44,6 +44,47 @@ public sealed class CliBrowserCommandTests
         Assert.True(Path.IsPathFullyQualified(parameters.GetProperty("path").GetString()!));
     }
 
+    [Fact]
+    public void BrowserActionsKeepOptionalFrameTarget()
+    {
+        var click = Program.ParseBrowserRequestForTests(["click", "--frame", "agentmux-child-frame", "#submit"], out var clickError);
+        var fill = Program.ParseBrowserRequestForTests(["fill", "--frame", "agentmux-child-frame", "#prompt", "write", "tests"], out var fillError);
+        var type = Program.ParseBrowserRequestForTests(["type", "--frame", "agentmux-child-frame", "#prompt", "write", "tests"], out var typeError);
+        var press = Program.ParseBrowserRequestForTests(["press", "Enter", "--selector", "#prompt", "--frame", "agentmux-child-frame"], out var pressError);
+
+        Assert.Equal("", clickError);
+        Assert.Equal("", fillError);
+        Assert.Equal("", typeError);
+        Assert.Equal("", pressError);
+        Assert.NotNull(click);
+        Assert.NotNull(fill);
+        Assert.NotNull(type);
+        Assert.NotNull(press);
+
+        Assert.Equal("agentmux-child-frame", JsonSerializer.SerializeToElement(click.Parameters, AgentMuxJson.Options).GetProperty("frame").GetString());
+        Assert.Equal("agentmux-child-frame", JsonSerializer.SerializeToElement(fill.Parameters, AgentMuxJson.Options).GetProperty("frame").GetString());
+        Assert.Equal("agentmux-child-frame", JsonSerializer.SerializeToElement(type.Parameters, AgentMuxJson.Options).GetProperty("frame").GetString());
+        Assert.Equal("agentmux-child-frame", JsonSerializer.SerializeToElement(press.Parameters, AgentMuxJson.Options).GetProperty("frame").GetString());
+    }
+
+    [Fact]
+    public void BrowserFrameOptionRequiresValue()
+    {
+        var request = Program.ParseBrowserRequestForTests(["click", "#submit", "--frame"], out var error);
+
+        Assert.Null(request);
+        Assert.Equal("Usage: agentmux browser click [--frame <name-or-id>] <selector>", error);
+    }
+
+    [Fact]
+    public void BrowserPressFrameRequiresSelector()
+    {
+        var request = Program.ParseBrowserRequestForTests(["press", "Enter", "--frame", "agentmux-child-frame"], out var error);
+
+        Assert.Null(request);
+        Assert.Equal("Usage: agentmux browser press <key> [--selector <selector> [--frame <name-or-id>]]", error);
+    }
+
     [Theory]
     [InlineData("frames")]
     [InlineData("frame-tree")]
@@ -75,7 +116,7 @@ public sealed class CliBrowserCommandTests
         var request = Program.ParseBrowserRequestForTests(["type", "#prompt"], out var error);
 
         Assert.Null(request);
-        Assert.Equal("Usage: agentmux browser type <selector> <text>", error);
+        Assert.Equal("Usage: agentmux browser type [--frame <name-or-id>] <selector> <text>", error);
     }
 
     [Fact]
@@ -110,6 +151,6 @@ public sealed class CliBrowserCommandTests
         var request = Program.ParseBrowserRequestForTests(["press"], out var error);
 
         Assert.Null(request);
-        Assert.Equal("Usage: agentmux browser press <key> [--selector <selector>]", error);
+        Assert.Equal("Usage: agentmux browser press <key> [--selector <selector> [--frame <name-or-id>]]", error);
     }
 }

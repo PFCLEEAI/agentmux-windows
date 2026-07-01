@@ -623,7 +623,7 @@ public partial class MainWindow : Window
             return new { ok = false, reason = "selector is required" };
         }
 
-        return await RunBrowserScriptAsync(view => view.ClickAsync(parsed.Selector)).ConfigureAwait(true);
+        return await RunBrowserScriptAsync(view => view.ClickAsync(parsed.Selector, parsed.Frame)).ConfigureAwait(true);
     }
 
     private async Task<object> HandleBrowserFillAsync(JsonElement? parameters)
@@ -634,7 +634,7 @@ public partial class MainWindow : Window
             return new { ok = false, reason = "selector is required" };
         }
 
-        return await RunBrowserScriptAsync(view => view.FillAsync(parsed.Selector, parsed.Text ?? "")).ConfigureAwait(true);
+        return await RunBrowserScriptAsync(view => view.FillAsync(parsed.Selector, parsed.Text ?? "", parsed.Frame)).ConfigureAwait(true);
     }
 
     private async Task<object> HandleBrowserTypeAsync(JsonElement? parameters)
@@ -645,7 +645,7 @@ public partial class MainWindow : Window
             return new { ok = false, reason = "selector is required" };
         }
 
-        return await RunBrowserScriptAsync(view => view.TypeAsync(parsed.Selector, parsed.Text ?? "")).ConfigureAwait(true);
+        return await RunBrowserScriptAsync(view => view.TypeAsync(parsed.Selector, parsed.Text ?? "", parsed.Frame)).ConfigureAwait(true);
     }
 
     private async Task<object> HandleBrowserPressAsync(JsonElement? parameters)
@@ -656,7 +656,7 @@ public partial class MainWindow : Window
             return new { ok = false, reason = "key is required" };
         }
 
-        return await RunBrowserScriptAsync(view => view.PressAsync(parsed.Key, parsed.Selector)).ConfigureAwait(true);
+        return await RunBrowserScriptAsync(view => view.PressAsync(parsed.Key, parsed.Selector, parsed.Frame)).ConfigureAwait(true);
     }
 
     private async Task<object> HandleBrowserScreenshotAsync(JsonElement? parameters)
@@ -1860,18 +1860,21 @@ public partial class MainWindow : Window
     private sealed class BrowserSelectorParams
     {
         public string? Selector { get; set; }
+        public string? Frame { get; set; }
     }
 
     private sealed class BrowserFillParams
     {
         public string? Selector { get; set; }
         public string? Text { get; set; }
+        public string? Frame { get; set; }
     }
 
     private sealed class BrowserPressParams
     {
         public string? Key { get; set; }
         public string? Selector { get; set; }
+        public string? Frame { get; set; }
     }
 
     private sealed class BrowserScreenshotParams

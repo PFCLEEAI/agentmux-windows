@@ -161,35 +161,52 @@ internal sealed class BrowserPaneView : Grid
         return result;
     }
 
-    public async Task<string> ClickAsync(string selector)
+    public async Task<string> ClickAsync(string selector, string? frame = null)
     {
         if (string.IsNullOrWhiteSpace(selector))
         {
             return """{"ok":false,"reason":"selector is required"}""";
         }
 
+        var normalizedFrame = NormalizeFrame(frame);
         var targetJson = await EvaluateScriptAsync($$"""
             (() => {
               const selector = {{JsonSerializer.Serialize(selector)}};
-              const element = document.querySelector(selector);
+              {{FrameScopeScript(normalizedFrame)}}
+              const scope = resolveAutomationScope();
+              if (!scope.ok) {
+                return scope;
+              }
+
+              const element = scope.document.querySelector(selector);
               if (!element) {
-                return { ok: false, reason: "selector not found", selector };
+                return { ok: false, reason: "selector not found", selector, frame: scope.frame };
               }
 
               element.scrollIntoView({ block: "center", inline: "center" });
               const rect = element.getBoundingClientRect();
               if (!rect || rect.width <= 0 || rect.height <= 0) {
-                return { ok: false, reason: "selector is not visible", selector };
+                return { ok: false, reason: "selector is not visible", selector, frame: scope.frame };
               }
 
-              const x = Math.min(Math.max(rect.left + rect.width / 2, 0), window.innerWidth - 1);
-              const y = Math.min(Math.max(rect.top + rect.height / 2, 0), window.innerHeight - 1);
-              const hit = document.elementFromPoint(x, y);
+              const frameOffset = automationFrameOffset(scope);
+              const localX = Math.min(Math.max(rect.left + rect.width / 2, 0), Math.max(scope.window.innerWidth - 1, 0));
+              const localY = Math.min(Math.max(rect.top + rect.height / 2, 0), Math.max(scope.window.innerHeight - 1, 0));
+              const hit = scope.document.elementFromPoint(localX, localY);
               if (!hit || (hit !== element && !element.contains(hit) && !hit.contains(element))) {
-                return { ok: false, reason: "selector center is covered", selector };
+                return { ok: false, reason: "selector center is covered", selector, frame: scope.frame };
               }
 
-              return { ok: true, selector, x, y };
+              const x = Math.min(Math.max(frameOffset.x + localX, 0), Math.max(window.innerWidth - 1, 0));
+              const y = Math.min(Math.max(frameOffset.y + localY, 0), Math.max(window.innerHeight - 1, 0));
+              if (scope.offsetElement) {
+                const topHit = document.elementFromPoint(x, y);
+                if (topHit !== scope.offsetElement) {
+                  return { ok: false, reason: "frame target is covered", selector, frame: scope.frame };
+                }
+              }
+
+              return { ok: true, selector, frame: scope.frame, x, y };
             })()
             """).ConfigureAwait(true);
 
@@ -203,10 +220,10 @@ internal sealed class BrowserPaneView : Grid
         await DispatchMouseEventAsync("mousePressed", target.X, target.Y).ConfigureAwait(true);
         await DispatchMouseEventAsync("mouseReleased", target.X, target.Y).ConfigureAwait(true);
         await WaitForNavigationAsync(allowStartDelay: true).ConfigureAwait(true);
-        return JsonSerializer.Serialize(new { ok = true, selector, x = target.X, y = target.Y });
+        return JsonSerializer.Serialize(new { ok = true, selector, frame = normalizedFrame, x = target.X, y = target.Y });
     }
 
-    public async Task<string> FillAsync(string selector, string text)
+    public async Task<string> FillAsync(string selector, string text, string? frame = null)
     {
         if (string.IsNullOrWhiteSpace(selector))
         {
@@ -217,9 +234,15 @@ internal sealed class BrowserPaneView : Grid
             (() => {
               const selector = {{JsonSerializer.Serialize(selector)}};
               const value = {{JsonSerializer.Serialize(text)}};
-              const element = document.querySelector(selector);
+              {{FrameScopeScript(frame)}}
+              const scope = resolveAutomationScope();
+              if (!scope.ok) {
+                return scope;
+              }
+
+              const element = scope.document.querySelector(selector);
               if (!element) {
-                return { ok: false, reason: "selector not found", selector };
+                return { ok: false, reason: "selector not found", selector, frame: scope.frame };
               }
 
               if ("value" in element) {
@@ -230,26 +253,27 @@ internal sealed class BrowserPaneView : Grid
 
               element.dispatchEvent(new Event("input", { bubbles: true }));
               element.dispatchEvent(new Event("change", { bubbles: true }));
-              return { ok: true, selector };
+              return { ok: true, selector, frame: scope.frame };
             })()
             """).ConfigureAwait(true);
     }
 
-    public async Task<string> TypeAsync(string selector, string text)
+    public async Task<string> TypeAsync(string selector, string text, string? frame = null)
     {
         if (string.IsNullOrWhiteSpace(selector))
         {
             return """{"ok":false,"reason":"selector is required"}""";
         }
 
-        var clickResult = await ClickAsync(selector).ConfigureAwait(true);
+        var normalizedFrame = NormalizeFrame(frame);
+        var clickResult = await ClickAsync(selector, normalizedFrame).ConfigureAwait(true);
         var click = ParseAutomationResult(clickResult);
         if (!click.Ok)
         {
             return clickResult;
         }
 
-        var focusResult = await FocusForInputAsync(selector).ConfigureAwait(true);
+        var focusResult = await FocusForInputAsync(selector, normalizedFrame).ConfigureAwait(true);
         var focus = ParseAutomationResult(focusResult);
         if (!focus.Ok)
         {
@@ -261,10 +285,10 @@ internal sealed class BrowserPaneView : Grid
             ["text"] = text
         }).ConfigureAwait(true);
         await WaitForNavigationAsync(allowStartDelay: true).ConfigureAwait(true);
-        return JsonSerializer.Serialize(new { ok = true, selector, textLength = text.Length });
+        return JsonSerializer.Serialize(new { ok = true, selector, frame = normalizedFrame, textLength = text.Length });
     }
 
-    public async Task<string> PressAsync(string key, string? selector)
+    public async Task<string> PressAsync(string key, string? selector, string? frame = null)
     {
         if (string.IsNullOrWhiteSpace(key))
         {
@@ -277,9 +301,15 @@ internal sealed class BrowserPaneView : Grid
             return JsonSerializer.Serialize(new { ok = false, reason = "unsupported key", key });
         }
 
+        var normalizedFrame = NormalizeFrame(frame);
+        if (normalizedFrame is not null && string.IsNullOrWhiteSpace(selector))
+        {
+            return JsonSerializer.Serialize(new { ok = false, reason = "selector is required when frame is provided", frame = normalizedFrame });
+        }
+
         if (!string.IsNullOrWhiteSpace(selector))
         {
-            var clickResult = await ClickAsync(selector).ConfigureAwait(true);
+            var clickResult = await ClickAsync(selector, normalizedFrame).ConfigureAwait(true);
             var click = ParseAutomationResult(clickResult);
             if (!click.Ok)
             {
@@ -299,17 +329,23 @@ internal sealed class BrowserPaneView : Grid
         await DispatchKeyEventAsync("keyDown", mappedKey).ConfigureAwait(true);
         await DispatchKeyEventAsync("keyUp", mappedKey).ConfigureAwait(true);
         await WaitForNavigationAsync(allowStartDelay: true).ConfigureAwait(true);
-        return JsonSerializer.Serialize(new { ok = true, key = mappedKey.Key, code = mappedKey.Code });
+        return JsonSerializer.Serialize(new { ok = true, key = mappedKey.Key, code = mappedKey.Code, frame = normalizedFrame });
     }
 
-    private async Task<string> FocusForInputAsync(string selector)
+    private async Task<string> FocusForInputAsync(string selector, string? frame)
     {
         return await EvaluateScriptAsync($$"""
             (() => {
               const selector = {{JsonSerializer.Serialize(selector)}};
-              const element = document.querySelector(selector);
+              {{FrameScopeScript(frame)}}
+              const scope = resolveAutomationScope();
+              if (!scope.ok) {
+                return scope;
+              }
+
+              const element = scope.document.querySelector(selector);
               if (!element) {
-                return { ok: false, reason: "selector not found", selector };
+                return { ok: false, reason: "selector not found", selector, frame: scope.frame };
               }
 
               const isEditable = node =>
@@ -319,20 +355,20 @@ internal sealed class BrowserPaneView : Grid
                 : element.querySelector?.("input:not([type='button']):not([type='submit']):not([type='reset']):not([type='checkbox']):not([type='radio']), textarea, [contenteditable=''], [contenteditable='true'], [contenteditable='plaintext-only']");
 
               if (!target || typeof target.focus !== "function") {
-                return { ok: false, reason: "selector is not text-editable", selector };
+                return { ok: false, reason: "selector is not text-editable", selector, frame: scope.frame };
               }
 
               target.focus({ preventScroll: true });
-              const active = document.activeElement;
+              const active = scope.document.activeElement;
               if (active !== target && !target.contains(active)) {
-                return { ok: false, reason: "selector did not receive focus", selector };
+                return { ok: false, reason: "selector did not receive focus", selector, frame: scope.frame };
               }
 
               if (!isEditable(active)) {
-                return { ok: false, reason: "focused element is not text-editable", selector };
+                return { ok: false, reason: "focused element is not text-editable", selector, frame: scope.frame };
               }
 
-              return { ok: true, selector };
+              return { ok: true, selector, frame: scope.frame };
             })()
             """).ConfigureAwait(true);
     }
@@ -554,6 +590,60 @@ internal sealed class BrowserPaneView : Grid
         {
             return new AutomationTarget(false, 0, 0);
         }
+    }
+
+    private static string? NormalizeFrame(string? frame) =>
+        string.IsNullOrWhiteSpace(frame) ? null : frame.Trim();
+
+    private static string FrameScopeScript(string? frame)
+    {
+        var normalizedFrame = NormalizeFrame(frame);
+        return $$"""
+              const frameName = {{JsonSerializer.Serialize(normalizedFrame)}};
+              const resolveAutomationScope = () => {
+                if (!frameName) {
+                  return { ok: true, document, window, offsetElement: null, frame: null };
+                }
+
+                const frameElement = Array.from(document.querySelectorAll("iframe, frame")).find(candidate =>
+                  candidate.name === frameName ||
+                  candidate.id === frameName ||
+                  candidate.getAttribute("name") === frameName ||
+                  candidate.getAttribute("id") === frameName);
+                if (!frameElement) {
+                  return { ok: false, reason: "frame not found", frame: frameName };
+                }
+
+                frameElement.scrollIntoView({ block: "center", inline: "center" });
+
+                let frameWindow;
+                let frameDocument;
+                try {
+                  frameWindow = frameElement.contentWindow;
+                  frameDocument = frameElement.contentDocument || frameWindow?.document;
+                } catch {
+                  return { ok: false, reason: "frame is not same-origin accessible", frame: frameName };
+                }
+
+                if (!frameWindow || !frameDocument) {
+                  return { ok: false, reason: "frame is not same-origin accessible", frame: frameName };
+                }
+
+                return { ok: true, document: frameDocument, window: frameWindow, offsetElement: frameElement, frame: frameName };
+              };
+
+              const automationFrameOffset = scope => {
+                if (!scope.offsetElement) {
+                  return { x: 0, y: 0 };
+                }
+
+                const frameRect = scope.offsetElement.getBoundingClientRect();
+                return {
+                  x: frameRect.left + (scope.offsetElement.clientLeft || 0),
+                  y: frameRect.top + (scope.offsetElement.clientTop || 0)
+                };
+              };
+            """;
     }
 
     private static bool TryMapKey(string value, out BrowserKey key)

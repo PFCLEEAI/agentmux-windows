@@ -151,12 +151,17 @@ public static class Program
             var selector = NamedOrJoined(named, "selector");
             if (string.IsNullOrWhiteSpace(selector))
             {
-                error = "Usage: agentmux browser click <selector>";
+                error = "Usage: agentmux browser click [--frame <name-or-id>] <selector>";
+                return null;
+            }
+
+            if (!TryReadOptionalFrame(named, "Usage: agentmux browser click [--frame <name-or-id>] <selector>", out var frame, out error))
+            {
                 return null;
             }
 
             error = "";
-            return new CliRequest(AgentMuxMethods.BrowserClick, new { selector });
+            return new CliRequest(AgentMuxMethods.BrowserClick, new { selector, frame });
         }
 
         if (args[0].Equals("fill", StringComparison.OrdinalIgnoreCase))
@@ -167,12 +172,17 @@ public static class Program
             var text = NamedOrRemaining(named, "text", selectorWasNamed ? 0 : 1);
             if (string.IsNullOrWhiteSpace(selector))
             {
-                error = "Usage: agentmux browser fill <selector> <text>";
+                error = "Usage: agentmux browser fill [--frame <name-or-id>] <selector> <text>";
+                return null;
+            }
+
+            if (!TryReadOptionalFrame(named, "Usage: agentmux browser fill [--frame <name-or-id>] <selector> <text>", out var frame, out error))
+            {
                 return null;
             }
 
             error = "";
-            return new CliRequest(AgentMuxMethods.BrowserFill, new { selector, text = text ?? "" });
+            return new CliRequest(AgentMuxMethods.BrowserFill, new { selector, text = text ?? "", frame });
         }
 
         if (args[0].Equals("type", StringComparison.OrdinalIgnoreCase))
@@ -183,12 +193,17 @@ public static class Program
             var text = NamedOrRemaining(named, "text", selectorWasNamed ? 0 : 1);
             if (string.IsNullOrWhiteSpace(selector) || text is null)
             {
-                error = "Usage: agentmux browser type <selector> <text>";
+                error = "Usage: agentmux browser type [--frame <name-or-id>] <selector> <text>";
+                return null;
+            }
+
+            if (!TryReadOptionalFrame(named, "Usage: agentmux browser type [--frame <name-or-id>] <selector> <text>", out var frame, out error))
+            {
                 return null;
             }
 
             error = "";
-            return new CliRequest(AgentMuxMethods.BrowserType, new { selector, text });
+            return new CliRequest(AgentMuxMethods.BrowserType, new { selector, text, frame });
         }
 
         if (args[0].Equals("press", StringComparison.OrdinalIgnoreCase))
@@ -198,12 +213,23 @@ public static class Program
             named.TryGetValue("selector", out var selector);
             if (string.IsNullOrWhiteSpace(key))
             {
-                error = "Usage: agentmux browser press <key> [--selector <selector>]";
+                error = "Usage: agentmux browser press <key> [--selector <selector> [--frame <name-or-id>]]";
+                return null;
+            }
+
+            if (!TryReadOptionalFrame(named, "Usage: agentmux browser press <key> [--selector <selector> [--frame <name-or-id>]]", out var frame, out error))
+            {
+                return null;
+            }
+
+            if (!string.IsNullOrWhiteSpace(frame) && string.IsNullOrWhiteSpace(selector))
+            {
+                error = "Usage: agentmux browser press <key> [--selector <selector> [--frame <name-or-id>]]";
                 return null;
             }
 
             error = "";
-            return new CliRequest(AgentMuxMethods.BrowserPress, new { key, selector });
+            return new CliRequest(AgentMuxMethods.BrowserPress, new { key, selector, frame });
         }
 
         if (args[0].Equals("screenshot", StringComparison.OrdinalIgnoreCase))
@@ -350,6 +376,25 @@ public static class Program
         return values.Count == 0 ? null : string.Join(' ', values);
     }
 
+    private static bool TryReadOptionalFrame(Dictionary<string, string> named, string usage, out string? frame, out string error)
+    {
+        frame = null;
+        error = "";
+        if (!named.TryGetValue("frame", out var value))
+        {
+            return true;
+        }
+
+        if (string.IsNullOrWhiteSpace(value) || string.Equals(value, "true", StringComparison.OrdinalIgnoreCase))
+        {
+            error = usage;
+            return false;
+        }
+
+        frame = value;
+        return true;
+    }
+
     private static object ParseNotify(string[] args)
     {
         var named = ParseNamed(args);
@@ -457,9 +502,10 @@ public static class Program
           agentmux browser open https://example.com
           agentmux browser eval "document.title"
           agentmux browser click "#submit"
+          agentmux browser click --frame agentmux-child-frame "#submit"
           agentmux browser fill "#prompt" "write tests"
           agentmux browser type "#prompt" "write tests"
-          agentmux browser press Enter --selector "#prompt"
+          agentmux browser press Enter --selector "#prompt" --frame agentmux-child-frame
           agentmux browser screenshot .\browser.png
           agentmux browser frames
           agentmux send "npm test"
