@@ -18,7 +18,7 @@ It is inspired by the terminal/workspace workflow category popularized by cmux, 
 
 Pre-alpha scaffold.
 
-This repository currently contains the public-safe foundation: project structure, core models, OSC notification parsing, named-pipe JSON-RPC contracts, CLI skeleton, a WPF shell with workspace sidebar and recursive split panes, per-pane ConPTY session hosting, a WebView2/xterm terminal-renderer bridge with WPF fallback, a WebView2 browser-pane preview, direct terminal/browser input, lightweight browser automation commands, configurable app shortcuts, tests, and CI. Richer browser automation semantics and true manual Windows desktop smoke remain future implementation work.
+This repository currently contains the public-safe foundation: project structure, core models, OSC notification parsing, named-pipe JSON-RPC contracts, CLI skeleton, a WPF shell with workspace sidebar and recursive split panes, per-pane ConPTY session hosting, a WebView2/xterm terminal-renderer bridge with WPF fallback, a WebView2 browser-pane preview, direct terminal/browser input, lightweight browser automation commands, configurable app shortcuts, tests, CI, and a framework-dependent Windows package artifact. Broader browser automation semantics and true manual Windows desktop smoke remain future implementation work.
 
 Required Windows CI proves the solution restores, builds, runs deterministic unit tests, composes the WPF split-pane window in an STA smoke test, and passes a headless ConPTY smoke test for command output plus stdin echo. A real visible Windows desktop smoke test is still required before calling this release-ready.
 
@@ -45,6 +45,14 @@ The Windows app targets `net9.0-windows10.0.17763.0` and should be built on Wind
 dotnet build AgentMux.sln -c Release
 dotnet run --project src/AgentMux.Win.App/AgentMux.Win.App.csproj
 ```
+
+CI publishes a lightweight framework-dependent artifact named `agentmux-windows-package` after the Windows smoke gates pass. It contains:
+
+- `AgentMux.exe`: WPF desktop app
+- `cli\agentmux.exe`: CLI for the running app
+- runtime config, dependency files, WebView2/xterm assets, README, and license
+
+It expects .NET 9 Desktop Runtime and WebView2 Runtime on the Windows machine. It is a smoke-ready package, not an installer.
 
 Experimental ConPTY smoke tests:
 

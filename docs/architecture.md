@@ -40,6 +40,10 @@ AgentMux.Win.App
 - Browser automation uses the active browser pane and WebView2 directly: `surface.eval_js`, `surface.click_selector`, `surface.fill_selector`, `surface.browser_type_text`, `surface.browser_press_key`, and `surface.capture_screenshot`. These are local trust-boundary APIs; JavaScript executes in the active browser pane, click/type/press use WebView2 input automation where practical, and screenshots write to local paths.
 - App shortcuts are matched inside the focused WPF shell from `%LOCALAPPDATA%/AgentMux/shortcuts.json`, with hard-coded defaults used when the file or individual entries are missing or invalid. They are app-window bindings, not global hotkeys or IPC commands.
 
+## Packaging
+
+CI publishes a lightweight framework-dependent Windows artifact after the Windows smoke gates pass. The package includes the WPF app at the root, the CLI under `cli\`, runtime config, dependency files, WebView2/xterm assets, README, and license. It intentionally avoids an installer and self-contained runtime bundle until release readiness is higher.
+
 ## IPC
 
 The local API uses one request per named-pipe connection with a JSON-RPC-like envelope:
@@ -58,4 +62,4 @@ The default pipe is per-user named and intended for the current user session onl
 
 ## Verification Boundary
 
-macOS can verify shared library tests, Windows-targeted builds, and documentation. Hosted Windows CI verifies WPF composition, shortcut dispatch, WebView2 runtime smoke with PNG artifacts, ConPTY output/input smoke, and Windows builds. A true manual Windows desktop smoke is still required for physical keyboard behavior, clipboard behavior, and release readiness.
+macOS can verify shared library tests, Windows-targeted builds, and documentation. Hosted Windows CI verifies WPF composition, shortcut dispatch, WebView2 runtime smoke with PNG artifacts, ConPTY output/input smoke, Windows builds, and framework-dependent package creation. A true manual Windows desktop smoke is still required for physical keyboard behavior, clipboard behavior, and release readiness.

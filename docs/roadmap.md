@@ -54,6 +54,11 @@
 - WPF split-pane composition smoke. Implemented in Windows CI.
 - Real visible desktop smoke. Still required before release-ready status.
 
+## Sprint 5.6 - Packaging
+
+- Framework-dependent Windows CI package. Implemented as `agentmux-windows-package` after smoke gates pass.
+- Installer/MSIX/signing. Future work after real desktop QA.
+
 ## Sprint 6 - Browser Parity
 
 - WebView2 browser pane. Preview implemented with WPF fallback.

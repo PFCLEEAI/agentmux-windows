@@ -47,3 +47,57 @@ jobs:
           if-no-files-found: ignore
       - name: Windows ConPTY smoke
         run: dotnet test tests/AgentMux.Windows.Tests/AgentMux.Windows.Tests.csproj -c Release --no-build
+      - name: Publish Windows package
+        run: |
+          $package = "${{ runner.temp }}\agentmux-windows-package"
+          if (Test-Path $package) {
+            Remove-Item -Recurse -Force $package
+          }
+
+          New-Item -ItemType Directory -Force -Path $package | Out-Null
+          $cliPackage = Join-Path $package "cli"
+          New-Item -ItemType Directory -Force -Path $cliPackage | Out-Null
+
+          dotnet publish src/AgentMux.Win.App/AgentMux.Win.App.csproj -c Release --no-build -o $package
+          dotnet publish src/AgentMux.Cli/AgentMux.Cli.csproj -c Release --no-build -o $cliPackage
+          Get-ChildItem $package -Recurse -Include *.pdb,*.xml | Remove-Item -Force
+          Copy-Item README.md $package
+          Copy-Item LICENSE $package
+
+          $requiredFiles = @(
+            "AgentMux.exe",
+            "AgentMux.dll",
+            "AgentMux.runtimeconfig.json",
+            "AgentMux.deps.json",
+            "cli\agentmux.exe",
+            "cli\agentmux.dll",
+            "cli\agentmux.runtimeconfig.json",
+            "cli\agentmux.deps.json",
+            "AgentMux.Core.dll",
+            "AgentMux.Win.Pty.dll",
+            "Assets\Terminal\terminal.html",
+            "Assets\Terminal\vendor\xterm\xterm.css",
+            "Assets\Terminal\vendor\xterm\xterm.js",
+            "Microsoft.Web.WebView2.Core.dll",
+            "Microsoft.Web.WebView2.Wpf.dll",
+            "Microsoft.Windows.SDK.NET.dll",
+            "WinRT.Runtime.dll",
+            "runtimes\win-x64\native\WebView2Loader.dll",
+            "README.md",
+            "LICENSE"
+          )
+
+          foreach ($file in $requiredFiles) {
+            $path = Join-Path $package $file
+            if (-not (Test-Path $path)) {
+              throw "Missing package file: $file"
+            }
+          }
+
+          Get-ChildItem $package | Sort-Object Name | Select-Object Name,Length
+      - name: Upload Windows package
+        uses: actions/upload-artifact@v4
+        with:
+          name: agentmux-windows-package
+          path: ${{ runner.temp }}\agentmux-windows-package
+          if-no-files-found: error
