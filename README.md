@@ -18,7 +18,7 @@ It is inspired by the terminal/workspace workflow category popularized by cmux, 
 
 Pre-alpha scaffold.
 
-This repository currently contains the public-safe foundation: project structure, core models, streaming OSC notification parsing from terminal output, named-pipe JSON-RPC contracts, CLI skeleton, a WPF shell with workspace sidebar and recursive split panes, per-pane ConPTY session hosting, terminal pane resize propagation, app-level session restore, a WebView2/xterm terminal-renderer bridge with WPF fallback, a WebView2 browser-pane preview, direct terminal/browser input, lightweight browser automation commands with same-origin frame targeting, frame-tree inspection, an in-memory console log, an in-memory network event log with explicit response-body lookup and metadata-only HAR-like export, and a local download event log, configurable app shortcuts, tests, CI, a framework-dependent Windows package artifact, and a prerelease ZIP workflow. Broader browser automation semantics and true manual Windows desktop smoke remain future implementation work.
+This repository currently contains the public-safe foundation: project structure, core models, streaming OSC notification parsing from terminal output, named-pipe JSON-RPC contracts, CLI skeleton, a WPF shell with workspace sidebar and recursive split panes, per-pane ConPTY session hosting, terminal pane resize propagation, app-level session restore, a WebView2/xterm terminal-renderer bridge with WPF fallback, a WebView2 browser-pane preview, direct terminal/browser input, lightweight browser automation commands with same-origin frame targeting, frame-tree inspection, an in-memory console log, an in-memory network event log with explicit response-body lookup and metadata-only HAR-like export, and a local download event log, configurable app shortcuts, tests, CI, a framework-dependent Windows package artifact, a prerelease ZIP workflow, and a manual desktop-smoke proof packet. Broader browser automation semantics and true manual Windows desktop smoke evidence remain future implementation work.
 
 Required Windows CI proves the solution restores, builds, runs deterministic unit tests, composes the WPF split-pane window in an STA smoke test, propagates terminal pane dimensions from WPF layout, and passes headless ConPTY smoke tests for command output, stdin echo, and live resize. A real visible Windows desktop smoke test is still required before calling this release-ready.
 
@@ -54,7 +54,7 @@ The package contains:
 
 - `AgentMux.exe`: WPF desktop app
 - `cli\agentmux.exe`: CLI for the running app
-- runtime config, dependency files, WebView2/xterm assets, `PACKAGE.json`, `SHA256SUMS.txt`, README, and license
+- runtime config, dependency files, WebView2/xterm assets, `PACKAGE.json`, `SHA256SUMS.txt`, README, license, and the manual desktop-smoke helper/runbook
 
 It expects .NET 9 Desktop Runtime and WebView2 Runtime on the Windows machine. It is a smoke-ready pre-alpha package, not an installer.
 
@@ -63,6 +63,14 @@ After extracting the artifact on Windows, run this from the package root for a q
 ```powershell
 .\cli\agentmux.exe --help
 ```
+
+For the manual desktop proof gate, run:
+
+```powershell
+.\tools\manual-desktop-smoke.ps1
+```
+
+Follow [docs/manual-windows-desktop-smoke.md](docs/manual-windows-desktop-smoke.md) to collect screenshots, helper output, and pass/fail notes. The helper preflights the package and can launch AgentMux, but helper execution alone is not a pass; actual visible Windows desktop and physical-keyboard evidence is still required.
 
 To produce the package from a Windows checkout after building:
 

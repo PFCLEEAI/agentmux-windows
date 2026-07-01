@@ -75,6 +75,13 @@ jobs:
             -AssetBase "$env:AGENTMUX_ASSET_BASE" `
             -PackageLayout "zip-root" `
             -NoBuild
+      - name: Manual desktop smoke helper preflight
+        shell: pwsh
+        run: |
+          & "$env:PACKAGE_DIR\tools\manual-desktop-smoke.ps1" `
+            -PackagePath "$env:PACKAGE_DIR" `
+            -EvidenceRoot "$env:RUNNER_TEMP\manual-desktop-smoke-helper" `
+            -SkipLaunch
       - name: Create release ZIP and checksum
         shell: pwsh
         run: |

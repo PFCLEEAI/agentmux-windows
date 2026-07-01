@@ -88,8 +88,12 @@ try {
   Invoke-DotNet $cliPublishArgs
 
   Get-ChildItem $package -Recurse -Include *.pdb,*.xml | Remove-Item -Force
+  New-Item -ItemType Directory -Force -Path (Join-Path $package "docs") | Out-Null
+  New-Item -ItemType Directory -Force -Path (Join-Path $package "tools") | Out-Null
   Copy-Item README.md $package
   Copy-Item LICENSE $package
+  Copy-Item docs/manual-windows-desktop-smoke.md (Join-Path $package "docs")
+  Copy-Item tools/manual-desktop-smoke.ps1 (Join-Path $package "tools")
 
   $requiredFiles = @(
     "AgentMux.exe",
@@ -112,6 +116,8 @@ try {
     "runtimes\win-x64\native\WebView2Loader.dll",
     "README.md",
     "LICENSE",
+    "docs\manual-windows-desktop-smoke.md",
+    "tools\manual-desktop-smoke.ps1",
     "PACKAGE.json",
     "SHA256SUMS.txt"
   )

@@ -58,6 +58,13 @@ jobs:
             -RunNumber "${{ github.run_number }}" `
             -RunAttempt "${{ github.run_attempt }}" `
             -NoBuild
+      - name: Manual desktop smoke helper preflight
+        shell: pwsh
+        run: |
+          & "${{ runner.temp }}\agentmux-windows-package\tools\manual-desktop-smoke.ps1" `
+            -PackagePath "${{ runner.temp }}\agentmux-windows-package" `
+            -EvidenceRoot "${{ runner.temp }}\manual-desktop-smoke-helper" `
+            -SkipLaunch
       - name: Upload Windows package
         uses: actions/upload-artifact@v4
         with:

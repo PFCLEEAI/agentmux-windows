@@ -56,12 +56,14 @@
 
 - WPF split-pane composition smoke. Implemented in Windows CI.
 - WPF session restore smoke. Implemented in Windows CI with a temp snapshot store.
+- Manual desktop-smoke proof packet. Implemented as a public runbook plus packaged PowerShell helper for collecting Windows desktop evidence.
 - Real visible desktop smoke. Still required before release-ready status.
 
 ## Sprint 5.6 - Packaging
 
 - Framework-dependent Windows CI package. Implemented as `agentmux-windows-package` after smoke gates pass.
 - Package provenance, checksums, and packaged CLI smoke. Implemented in CI.
+- Packaged manual desktop-smoke runbook/helper. Implemented so testers can run the proof packet from an extracted package.
 - Shared package script. Implemented so CI artifacts and release assets use the same required-file and CLI-smoke gate.
 - Prerelease ZIP workflow. Implemented for `v*` tags with ZIP round-trip smoke and outer SHA-256 checksum.
 - Installer/MSIX/signing. Future work after real desktop QA.
