@@ -460,6 +460,12 @@ public static class Program
             return new CliRequest(AgentMuxMethods.BrowserDownloadsClear, new { });
         }
 
+        if (args[0].Equals("route", StringComparison.OrdinalIgnoreCase)
+            || args[0].Equals("routes", StringComparison.OrdinalIgnoreCase))
+        {
+            return ParseBrowserRouteRequest(args[1..], out error);
+        }
+
         if (args.Length == 1)
         {
             error = "";
@@ -467,6 +473,86 @@ public static class Program
         }
 
         error = $"Unknown browser command: {args[0]}";
+        return null;
+    }
+
+    private static CliRequest? ParseBrowserRouteRequest(string[] args, out string error)
+    {
+        const string usage = "Usage: agentmux browser route <list|block|fulfill|clear>";
+        if (args.Length == 0)
+        {
+            error = usage;
+            return null;
+        }
+
+        if (args[0].Equals("list", StringComparison.OrdinalIgnoreCase)
+            || args[0].Equals("ls", StringComparison.OrdinalIgnoreCase))
+        {
+            if (args.Length != 1)
+            {
+                error = "Usage: agentmux browser route list";
+                return null;
+            }
+
+            error = "";
+            return new CliRequest(AgentMuxMethods.BrowserRouteList, new { });
+        }
+
+        if (args[0].Equals("clear", StringComparison.OrdinalIgnoreCase)
+            || args[0].Equals("reset", StringComparison.OrdinalIgnoreCase))
+        {
+            if (args.Length != 1)
+            {
+                error = "Usage: agentmux browser route clear";
+                return null;
+            }
+
+            error = "";
+            return new CliRequest(AgentMuxMethods.BrowserRouteClear, new { });
+        }
+
+        if (args[0].Equals("block", StringComparison.OrdinalIgnoreCase))
+        {
+            var named = ParseNamed(args[1..]);
+            var urlContains = NamedOrFirst(named, "url-contains");
+            if (string.IsNullOrWhiteSpace(urlContains))
+            {
+                error = "Usage: agentmux browser route block --url-contains <text>";
+                return null;
+            }
+
+            error = "";
+            return new CliRequest(AgentMuxMethods.BrowserRouteBlock, new { urlContains });
+        }
+
+        if (args[0].Equals("fulfill", StringComparison.OrdinalIgnoreCase))
+        {
+            var named = ParseNamed(args[1..]);
+            var urlContains = NamedOrFirst(named, "url-contains");
+            if (string.IsNullOrWhiteSpace(urlContains))
+            {
+                error = "Usage: agentmux browser route fulfill --url-contains <text> [--status <code>] [--content-type <type>] [--body <text>]";
+                return null;
+            }
+
+            var status = 200;
+            if (named.TryGetValue("status", out var statusValue)
+                && !TryParseHttpStatus(statusValue, out status))
+            {
+                error = "Usage: agentmux browser route fulfill --url-contains <text> [--status <code>] [--content-type <type>] [--body <text>]";
+                return null;
+            }
+
+            var contentType = named.TryGetValue("content-type", out var parsedContentType) && !string.IsNullOrWhiteSpace(parsedContentType)
+                ? parsedContentType
+                : "text/plain";
+            var body = NamedOrRemaining(named, "body", 1) ?? "";
+
+            error = "";
+            return new CliRequest(AgentMuxMethods.BrowserRouteFulfill, new { urlContains, status, contentType, body });
+        }
+
+        error = usage;
         return null;
     }
 
@@ -844,6 +930,11 @@ public static class Program
         return int.TryParse(value, out number) && number > 0;
     }
 
+    private static bool TryParseHttpStatus(string? value, out int number)
+    {
+        return int.TryParse(value, out number) && number is >= 100 and <= 599;
+    }
+
     private static bool TryParseStrictPositiveInt(string? value, out int number)
     {
         number = 0;
@@ -967,6 +1058,10 @@ public static class Program
           agentmux browser har-metadata .\network.har.json
           agentmux browser downloads --limit 20
           agentmux browser downloads-clear
+          agentmux browser route list
+          agentmux browser route block --url-contains "/api/private"
+          agentmux browser route fulfill --url-contains "/api/mock" --status 200 --content-type text/plain --body "mocked"
+          agentmux browser route clear
           agentmux send "npm test"
           agentmux send-key Enter
           agentmux send-key Ctrl+C

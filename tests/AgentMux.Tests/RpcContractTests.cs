@@ -1,4 +1,6 @@
 using System.Text.Json;
+using System.IO.Pipes;
+using System.Reflection;
 using AgentMux.Core.Ipc;
 
 namespace AgentMux.Tests;
@@ -32,6 +34,20 @@ public sealed class RpcContractTests
         Assert.StartsWith("agentmux-", pipe, StringComparison.Ordinal);
         Assert.DoesNotContain('\\', pipe);
         Assert.DoesNotContain('/', pipe);
+    }
+
+    [Fact]
+    public void NamedPipeStreamsUseCurrentUserOption()
+    {
+        Assert.True(ReadPipeOptions(typeof(NamedPipeRpcServer), "ServerPipeOptions").HasFlag(PipeOptions.CurrentUserOnly));
+        Assert.True(ReadPipeOptions(typeof(NamedPipeRpcClient), "ClientPipeOptions").HasFlag(PipeOptions.CurrentUserOnly));
+    }
+
+    private static PipeOptions ReadPipeOptions(Type type, string fieldName)
+    {
+        var field = type.GetField(fieldName, BindingFlags.NonPublic | BindingFlags.Static);
+        Assert.NotNull(field);
+        return (PipeOptions)field.GetRawConstantValue()!;
     }
 
     [Fact]
@@ -91,6 +107,10 @@ public sealed class RpcContractTests
         Assert.Equal("surface.browser_har_metadata", AgentMuxMethods.BrowserHarMetadata);
         Assert.Equal("surface.browser_downloads", AgentMuxMethods.BrowserDownloads);
         Assert.Equal("surface.browser_clear_downloads", AgentMuxMethods.BrowserDownloadsClear);
+        Assert.Equal("surface.browser_route_list", AgentMuxMethods.BrowserRouteList);
+        Assert.Equal("surface.browser_route_block", AgentMuxMethods.BrowserRouteBlock);
+        Assert.Equal("surface.browser_route_fulfill", AgentMuxMethods.BrowserRouteFulfill);
+        Assert.Equal("surface.browser_route_clear", AgentMuxMethods.BrowserRouteClear);
     }
 
     [Fact]

@@ -520,6 +520,10 @@ public partial class MainWindow : Window
             AgentMuxMethods.BrowserHarMetadata => AgentMuxResponse.Success(request.Id, await HandleBrowserHarMetadataAsync(request.Params).ConfigureAwait(true)),
             AgentMuxMethods.BrowserDownloads => AgentMuxResponse.Success(request.Id, await HandleBrowserDownloadsAsync(request.Params).ConfigureAwait(true)),
             AgentMuxMethods.BrowserDownloadsClear => AgentMuxResponse.Success(request.Id, await HandleBrowserDownloadsClearAsync().ConfigureAwait(true)),
+            AgentMuxMethods.BrowserRouteList => AgentMuxResponse.Success(request.Id, await HandleBrowserRouteListAsync().ConfigureAwait(true)),
+            AgentMuxMethods.BrowserRouteBlock => AgentMuxResponse.Success(request.Id, await HandleBrowserRouteBlockAsync(request.Params).ConfigureAwait(true)),
+            AgentMuxMethods.BrowserRouteFulfill => AgentMuxResponse.Success(request.Id, await HandleBrowserRouteFulfillAsync(request.Params).ConfigureAwait(true)),
+            AgentMuxMethods.BrowserRouteClear => AgentMuxResponse.Success(request.Id, await HandleBrowserRouteClearAsync().ConfigureAwait(true)),
             _ => AgentMuxResponse.Failure(request.Id, $"Unsupported method: {request.Method}")
         };
 
@@ -1124,6 +1128,47 @@ public partial class MainWindow : Window
     private async Task<object> HandleBrowserDownloadsClearAsync()
     {
         return await RunBrowserScriptAsync(view => view.ClearDownloadLogAsync()).ConfigureAwait(true);
+    }
+
+    private async Task<object> HandleBrowserRouteListAsync()
+    {
+        return await RunBrowserScriptAsync(view => view.GetRouteListAsync()).ConfigureAwait(true);
+    }
+
+    private async Task<object> HandleBrowserRouteBlockAsync(JsonElement? parameters)
+    {
+        var parsed = Deserialize<BrowserRouteMatchParams>(parameters);
+        if (string.IsNullOrWhiteSpace(parsed?.UrlContains))
+        {
+            return new { ok = false, reason = "urlContains is required" };
+        }
+
+        return await RunBrowserScriptAsync(view => view.AddBlockRouteAsync(parsed.UrlContains)).ConfigureAwait(true);
+    }
+
+    private async Task<object> HandleBrowserRouteFulfillAsync(JsonElement? parameters)
+    {
+        var parsed = Deserialize<BrowserRouteFulfillParams>(parameters);
+        if (string.IsNullOrWhiteSpace(parsed?.UrlContains))
+        {
+            return new { ok = false, reason = "urlContains is required" };
+        }
+
+        if (parsed.Status is < 100 or > 599)
+        {
+            return new { ok = false, reason = "status must be between 100 and 599" };
+        }
+
+        return await RunBrowserScriptAsync(view => view.AddFulfillRouteAsync(
+            parsed.UrlContains,
+            parsed.Status,
+            parsed.ContentType,
+            parsed.Body)).ConfigureAwait(true);
+    }
+
+    private async Task<object> HandleBrowserRouteClearAsync()
+    {
+        return await RunBrowserScriptAsync(view => view.ClearRoutesAsync()).ConfigureAwait(true);
     }
 
     private async Task<ConPtySession?> EnsurePanePtyAsync(PaneState? pane)
@@ -2227,7 +2272,11 @@ public partial class MainWindow : Window
             or AgentMuxMethods.BrowserResponseBody
             or AgentMuxMethods.BrowserHarMetadata
             or AgentMuxMethods.BrowserDownloads
-            or AgentMuxMethods.BrowserDownloadsClear;
+            or AgentMuxMethods.BrowserDownloadsClear
+            or AgentMuxMethods.BrowserRouteList
+            or AgentMuxMethods.BrowserRouteBlock
+            or AgentMuxMethods.BrowserRouteFulfill
+            or AgentMuxMethods.BrowserRouteClear;
     }
 
     private void StopPanePty(string paneId)
@@ -2914,5 +2963,18 @@ public partial class MainWindow : Window
     private sealed class BrowserDownloadLogParams
     {
         public int? Limit { get; set; }
+    }
+
+    private sealed class BrowserRouteMatchParams
+    {
+        public string? UrlContains { get; set; }
+    }
+
+    private sealed class BrowserRouteFulfillParams
+    {
+        public string? UrlContains { get; set; }
+        public int? Status { get; set; }
+        public string? ContentType { get; set; }
+        public string? Body { get; set; }
     }
 }

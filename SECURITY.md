@@ -10,7 +10,7 @@ Open a private security advisory on GitHub when available, or create an issue wi
 
 ## Security Boundaries
 
-AgentMux Windows launches local shells and exposes a local automation API. The intended default boundary is the current Windows user session only. Any local process that can access the user's AgentMux named pipe should be treated as able to automate the active AgentMux window.
+AgentMux Windows launches local shells and exposes a local automation API. The default named pipe is per-user named and created with .NET's current-user-only pipe option. Any local process running as the same Windows user that can access the AgentMux named pipe should be treated as able to automate the active AgentMux window.
 
 Security-sensitive areas:
 
@@ -21,7 +21,7 @@ Security-sensitive areas:
 - notification and status text,
 - environment variables,
 - browser session data,
-- browser console messages, browser network/download metadata, and downloaded files under the user's local app data directory.
+- browser console messages, browser network/download/route metadata, synthetic route responses, and downloaded files under the user's local app data directory.
 - session snapshot data under `%LOCALAPPDATA%\AgentMux\session.json`, including surface titles, pane titles, browser URLs, split layout, active pane ids, and best-effort terminal screen text.
 - manual desktop-smoke evidence, including screenshots, terminal output, local paths, URLs, notification text, helper metadata, and copied CLI output.
 
@@ -36,6 +36,7 @@ Browser preview boundaries:
 - Response-body retrieval is explicit and request-id scoped through the active browser pane. Returned bodies may contain tokens, personal data, session data, API responses, or private document contents. They are returned unredacted to the local caller, capped at 1,000,000 characters with a truncation marker, and not stored in the network log or session snapshot by the browser pane. CLI stdout can still persist in terminal scrollback, shell transcripts, redirected files, or logs.
 - HAR metadata export is an explicit path-scoped, metadata-only HAR-like preview for the active browser pane's currently retained in-memory network events. It writes to a caller-provided filesystem path and persists until the caller deletes it. It omits headers, cookies, post data, response bodies, downloaded file contents, tracing data, interception state, replay data, and telemetry, but full URLs may still contain tokens, account ids, query params, auth callbacks, or other secrets. The destination path may be a repository, synced folder, backup location, or shared folder.
 - The browser download log is local and in-memory. It includes URLs and local result paths, routes downloaded files under `%LOCALAPPDATA%\AgentMux\Downloads`, and `downloads-clear` clears only metadata, not downloaded files.
+- Browser route interception is local, active-pane scoped, and transient. Rules are in-memory substring matches only; `route block` fails matching requests, `route fulfill` sends a caller-provided synthetic UTF-8 response body with the caller-provided content type plus a fixed `Access-Control-Allow-Origin: *` header, `route list` returns rules plus full recent hit URLs, and `route clear` removes rules/hits and disables Fetch interception. It does not capture headers, cookies, post data, request bodies, response headers, or original response bodies, and route rules/hits are not stored in the session snapshot. However, URL substrings and recent hit URLs may contain query tokens, account ids, auth callbacks, private endpoints, or other secrets; synthetic fulfill bodies may contain private data while the rule exists; and CLI stdout can still persist route data in terminal scrollback, shell transcripts, redirected files, or logs. `route clear` is not secure deletion of CLI output, shell history, logs, screenshots, or other copies outside AgentMux. Any same-user local process with AgentMux named-pipe access can add, clear, block, or fulfill active-pane route rules.
 - AgentMux does not scan downloads, quarantine files, auto-open downloads, upload downloaded files, or provide a download policy engine in this pre-alpha preview.
 
 Surface/session boundaries:

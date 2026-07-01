@@ -413,6 +413,90 @@ public sealed class CliBrowserCommandTests
         Assert.Equal("Usage: agentmux browser downloads [--limit <count>]", error);
     }
 
+    [Theory]
+    [InlineData("route")]
+    [InlineData("routes")]
+    public void BrowserRouteParsesListAndClear(string command)
+    {
+        var list = Program.ParseBrowserRequestForTests([command, "list"], out var listError);
+        var clear = Program.ParseBrowserRequestForTests([command, "clear"], out var clearError);
+
+        Assert.Equal("", listError);
+        Assert.Equal("", clearError);
+        Assert.NotNull(list);
+        Assert.NotNull(clear);
+        Assert.Equal(AgentMuxMethods.BrowserRouteList, list.Method);
+        Assert.Equal(AgentMuxMethods.BrowserRouteClear, clear.Method);
+    }
+
+    [Fact]
+    public void BrowserRouteParsesBlockUrlContains()
+    {
+        var request = Program.ParseBrowserRequestForTests(["route", "block", "--url-contains", "/api/private"], out var error);
+
+        Assert.Equal("", error);
+        Assert.NotNull(request);
+        Assert.Equal(AgentMuxMethods.BrowserRouteBlock, request.Method);
+        var parameters = JsonSerializer.SerializeToElement(request.Parameters, AgentMuxJson.Options);
+        Assert.Equal("/api/private", parameters.GetProperty("urlContains").GetString());
+    }
+
+    [Fact]
+    public void BrowserRouteParsesFulfillOptions()
+    {
+        var request = Program.ParseBrowserRequestForTests([
+            "route",
+            "fulfill",
+            "--url-contains",
+            "/api/mock",
+            "--status",
+            "201",
+            "--content-type",
+            "application/json",
+            "--body",
+            "{\"ok\":true}"
+        ], out var error);
+
+        Assert.Equal("", error);
+        Assert.NotNull(request);
+        Assert.Equal(AgentMuxMethods.BrowserRouteFulfill, request.Method);
+        var parameters = JsonSerializer.SerializeToElement(request.Parameters, AgentMuxJson.Options);
+        Assert.Equal("/api/mock", parameters.GetProperty("urlContains").GetString());
+        Assert.Equal(201, parameters.GetProperty("status").GetInt32());
+        Assert.Equal("application/json", parameters.GetProperty("contentType").GetString());
+        Assert.Equal("{\"ok\":true}", parameters.GetProperty("body").GetString());
+    }
+
+    [Theory]
+    [InlineData("99")]
+    [InlineData("600")]
+    [InlineData("abc")]
+    public void BrowserRouteFulfillRejectsInvalidStatus(string status)
+    {
+        var request = Program.ParseBrowserRequestForTests([
+            "route",
+            "fulfill",
+            "--url-contains",
+            "/api/mock",
+            "--status",
+            status
+        ], out var error);
+
+        Assert.Null(request);
+        Assert.Equal("Usage: agentmux browser route fulfill --url-contains <text> [--status <code>] [--content-type <type>] [--body <text>]", error);
+    }
+
+    [Theory]
+    [InlineData("block")]
+    [InlineData("fulfill")]
+    public void BrowserRouteRequiresUrlContains(string action)
+    {
+        var request = Program.ParseBrowserRequestForTests(["route", action], out var error);
+
+        Assert.Null(request);
+        Assert.StartsWith($"Usage: agentmux browser route {action}", error, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void BrowserTypeKeepsPositionalText()
     {

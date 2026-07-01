@@ -83,6 +83,10 @@ public static class AgentMuxMethods
     public const string BrowserHarMetadata = "surface.browser_har_metadata";
     public const string BrowserDownloads = "surface.browser_downloads";
     public const string BrowserDownloadsClear = "surface.browser_clear_downloads";
+    public const string BrowserRouteList = "surface.browser_route_list";
+    public const string BrowserRouteBlock = "surface.browser_route_block";
+    public const string BrowserRouteFulfill = "surface.browser_route_fulfill";
+    public const string BrowserRouteClear = "surface.browser_route_clear";
 }
 
 public static class AgentMuxJson

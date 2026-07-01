@@ -1,5 +1,6 @@
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
@@ -25,10 +26,17 @@ internal sealed class BrowserPaneView : Grid, IDisposable
     private const int NetworkIdleQuietWindowMs = 500;
     private const int MaxDownloadEventCount = 100;
     private const int MaxDownloadFileNameLength = 120;
+    private const int MaxRouteRuleCount = 20;
+    private const int MaxRouteHitCount = 100;
+    private const int MaxRouteUrlContainsChars = 512;
+    private const int MaxRouteBodyChars = 65_536;
+    private const int MaxRouteContentTypeChars = 128;
 
     private readonly List<BrowserNetworkEvent> _networkEvents = [];
     private readonly List<BrowserConsoleEvent> _consoleEvents = [];
     private readonly List<BrowserDownloadEvent> _downloadEvents = [];
+    private readonly List<BrowserRouteRule> _routeRules = [];
+    private readonly List<BrowserRouteHit> _routeHits = [];
     private readonly List<TrackedDownload> _activeDownloads = [];
     private readonly TextBox _addressBox;
     private readonly Button _goButton;
@@ -39,6 +47,7 @@ internal sealed class BrowserPaneView : Grid, IDisposable
     private CoreWebView2DevToolsProtocolEventReceiver? _networkLoadingFailedReceiver;
     private CoreWebView2DevToolsProtocolEventReceiver? _networkLoadingFinishedReceiver;
     private CoreWebView2DevToolsProtocolEventReceiver? _consoleApiCalledReceiver;
+    private CoreWebView2DevToolsProtocolEventReceiver? _fetchRequestPausedReceiver;
     private Task? _readyTask;
     private TaskCompletionSource? _navigationCompletion;
     private ulong? _pendingNavigationId;
@@ -47,10 +56,13 @@ internal sealed class BrowserPaneView : Grid, IDisposable
     private long _networkEventSequence;
     private long _consoleEventSequence;
     private long _downloadEventSequence;
+    private long _routeRuleSequence;
+    private long _routeHitSequence;
     private bool _webViewEventsWired;
     private bool _downloadEventsWired;
     private bool _networkEventsEnabled;
     private bool _consoleEventsEnabled;
+    private bool _fetchRoutingEnabled;
     private bool _webViewReady;
     private bool _webViewFailed;
     private bool _disposed;
@@ -133,6 +145,7 @@ internal sealed class BrowserPaneView : Grid, IDisposable
         _disposed = true;
         UnwireDownloadEventLogging();
         UnwireConsoleEventLogging();
+        UnwireFetchRouting();
         UnwireNetworkEventLogging();
         _webView.Dispose();
     }
@@ -933,6 +946,98 @@ internal sealed class BrowserPaneView : Grid, IDisposable
         return JsonSerializer.Serialize(new { ok = true, cleared }, AgentMuxJson.Options);
     }
 
+    public async Task<string> GetRouteListAsync()
+    {
+        await EnsureReadyAsync().ConfigureAwait(true);
+        return JsonSerializer.Serialize(BuildRouteSnapshot(), AgentMuxJson.Options);
+    }
+
+    public async Task<string> AddBlockRouteAsync(string? urlContains)
+    {
+        var normalizedUrlContains = NormalizeRouteUrlContains(urlContains);
+        if (normalizedUrlContains is null)
+        {
+            return JsonSerializer.Serialize(new { ok = false, reason = "urlContains is required" }, AgentMuxJson.Options);
+        }
+
+        return await AddRouteAsync(new BrowserRouteRule(
+            Id: NextRouteId(),
+            Action: "block",
+            UrlContains: normalizedUrlContains,
+            Status: null,
+            ContentType: null,
+            Body: null,
+            BodyLength: 0,
+            CreatedAtUtc: DateTimeOffset.UtcNow)).ConfigureAwait(true);
+    }
+
+    public async Task<string> AddFulfillRouteAsync(string? urlContains, int? status, string? contentType, string? body)
+    {
+        var normalizedUrlContains = NormalizeRouteUrlContains(urlContains);
+        if (normalizedUrlContains is null)
+        {
+            return JsonSerializer.Serialize(new { ok = false, reason = "urlContains is required" }, AgentMuxJson.Options);
+        }
+
+        var normalizedStatus = status ?? 200;
+        if (normalizedStatus is < 100 or > 599)
+        {
+            return JsonSerializer.Serialize(new { ok = false, reason = "status must be between 100 and 599" }, AgentMuxJson.Options);
+        }
+
+        var normalizedContentType = NormalizeRouteContentType(contentType);
+        var normalizedBody = body ?? "";
+        var truncated = normalizedBody.Length > MaxRouteBodyChars;
+        if (truncated)
+        {
+            normalizedBody = normalizedBody[..MaxRouteBodyChars];
+        }
+
+        return await AddRouteAsync(new BrowserRouteRule(
+            Id: NextRouteId(),
+            Action: "fulfill",
+            UrlContains: normalizedUrlContains,
+            Status: normalizedStatus,
+            ContentType: normalizedContentType,
+            Body: normalizedBody,
+            BodyLength: normalizedBody.Length,
+            CreatedAtUtc: DateTimeOffset.UtcNow,
+            BodyTruncated: truncated)).ConfigureAwait(true);
+    }
+
+    public async Task<string> ClearRoutesAsync()
+    {
+        await EnsureReadyAsync().ConfigureAwait(true);
+        int clearedRules;
+        int clearedHits;
+        lock (_routeRules)
+        {
+            clearedRules = _routeRules.Count;
+            clearedHits = _routeHits.Count;
+            _routeRules.Clear();
+            _routeHits.Clear();
+        }
+
+        string? disableError = null;
+        try
+        {
+            await DisableFetchRoutingAsync().ConfigureAwait(true);
+        }
+        catch (Exception ex) when (ex is COMException or InvalidOperationException)
+        {
+            disableError = ex.Message;
+        }
+
+        return JsonSerializer.Serialize(new
+        {
+            ok = disableError is null,
+            clearedRules,
+            clearedHits,
+            fetchEnabled = _fetchRoutingEnabled,
+            disableError
+        }, AgentMuxJson.Options);
+    }
+
     private void AddressBox_KeyDown(object sender, KeyEventArgs e)
     {
         if (e.Key != Key.Enter)
@@ -1217,6 +1322,231 @@ internal sealed class BrowserPaneView : Grid, IDisposable
             _networkLoadingFinishedReceiver.DevToolsProtocolEventReceived -= NetworkLoadingFinished;
             _networkLoadingFinishedReceiver = null;
         }
+    }
+
+    private async Task<string> AddRouteAsync(BrowserRouteRule rule)
+    {
+        await EnsureReadyAsync().ConfigureAwait(true);
+        lock (_routeRules)
+        {
+            if (_routeRules.Count >= MaxRouteRuleCount)
+            {
+                return JsonSerializer.Serialize(new
+                {
+                    ok = false,
+                    reason = "route rule limit reached",
+                    maxRules = MaxRouteRuleCount
+                }, AgentMuxJson.Options);
+            }
+
+            _routeRules.Add(rule);
+        }
+
+        try
+        {
+            await EnableFetchRoutingAsync().ConfigureAwait(true);
+        }
+        catch (Exception ex) when (ex is COMException or InvalidOperationException or ArgumentException)
+        {
+            lock (_routeRules)
+            {
+                _routeRules.Remove(rule);
+            }
+
+            return JsonSerializer.Serialize(new
+            {
+                ok = false,
+                reason = ex.Message,
+                ruleId = rule.Id
+            }, AgentMuxJson.Options);
+        }
+
+        return JsonSerializer.Serialize(new
+        {
+            ok = true,
+            rule = rule.Snapshot(),
+            snapshot = BuildRouteSnapshot()
+        }, AgentMuxJson.Options);
+    }
+
+    private async Task EnableFetchRoutingAsync()
+    {
+        if (_fetchRoutingEnabled || _webView.CoreWebView2 is null)
+        {
+            return;
+        }
+
+        await EnableNetworkEventLoggingAsync().ConfigureAwait(true);
+        var core = _webView.CoreWebView2;
+        _fetchRequestPausedReceiver = core.GetDevToolsProtocolEventReceiver("Fetch.requestPaused");
+        _fetchRequestPausedReceiver.DevToolsProtocolEventReceived += FetchRequestPaused;
+
+        try
+        {
+            await core.CallDevToolsProtocolMethodAsync("Fetch.enable", "{}").ConfigureAwait(true);
+            _fetchRoutingEnabled = true;
+        }
+        catch
+        {
+            UnwireFetchRouting();
+            throw;
+        }
+    }
+
+    private async Task DisableFetchRoutingAsync()
+    {
+        if (!_fetchRoutingEnabled || _webView.CoreWebView2 is null)
+        {
+            UnwireFetchRouting();
+            return;
+        }
+
+        await _webView.CoreWebView2.CallDevToolsProtocolMethodAsync("Fetch.disable", "{}").ConfigureAwait(true);
+        UnwireFetchRouting();
+    }
+
+    private void UnwireFetchRouting()
+    {
+        if (_fetchRequestPausedReceiver is not null)
+        {
+            _fetchRequestPausedReceiver.DevToolsProtocolEventReceived -= FetchRequestPaused;
+            _fetchRequestPausedReceiver = null;
+        }
+
+        _fetchRoutingEnabled = false;
+    }
+
+    private async void FetchRequestPaused(object? sender, CoreWebView2DevToolsProtocolEventReceivedEventArgs args)
+    {
+        var paused = ParseFetchRequestPaused(args.SessionId, args.ParameterObjectAsJson);
+        if (string.IsNullOrWhiteSpace(paused.RequestId))
+        {
+            return;
+        }
+
+        var decision = MatchRoute(paused);
+        try
+        {
+            if (decision is null)
+            {
+                await ContinueFetchRequestAsync(paused).ConfigureAwait(true);
+                return;
+            }
+
+            if (decision.Action == "block")
+            {
+                await FailFetchRequestAsync(paused).ConfigureAwait(true);
+                return;
+            }
+
+            await FulfillFetchRequestAsync(paused, decision).ConfigureAwait(true);
+        }
+        catch (Exception ex) when (ex is COMException or InvalidOperationException or ArgumentException)
+        {
+            try
+            {
+                await ContinueFetchRequestAsync(paused).ConfigureAwait(true);
+            }
+            catch
+            {
+            }
+        }
+    }
+
+    private BrowserRouteDecision? MatchRoute(FetchPausedRequest paused)
+    {
+        lock (_routeRules)
+        {
+            var rule = _routeRules.FirstOrDefault(candidate => paused.Url.Contains(candidate.UrlContains, StringComparison.OrdinalIgnoreCase));
+            if (rule is null)
+            {
+                return null;
+            }
+
+            var now = DateTimeOffset.UtcNow;
+            rule.HitCount++;
+            rule.LastHitAtUtc = now;
+            var hit = new BrowserRouteHit(
+                ++_routeHitSequence,
+                rule.Id,
+                rule.Action,
+                paused.Url,
+                paused.Method,
+                rule.Status,
+                rule.Action == "block" ? "BlockedByClient" : null,
+                now);
+            _routeHits.Add(hit);
+            if (_routeHits.Count > MaxRouteHitCount)
+            {
+                _routeHits.RemoveRange(0, _routeHits.Count - MaxRouteHitCount);
+            }
+
+            return new BrowserRouteDecision(
+                rule.Id,
+                rule.Action,
+                rule.Status,
+                rule.ContentType,
+                rule.Body,
+                rule.BodyLength,
+                rule.BodyTruncated);
+        }
+    }
+
+    private Task ContinueFetchRequestAsync(FetchPausedRequest paused) =>
+        CallFetchAsync(paused.SessionId, "Fetch.continueRequest", new { requestId = paused.RequestId });
+
+    private Task FailFetchRequestAsync(FetchPausedRequest paused) =>
+        CallFetchAsync(paused.SessionId, "Fetch.failRequest", new { requestId = paused.RequestId, errorReason = "BlockedByClient" });
+
+    private Task FulfillFetchRequestAsync(FetchPausedRequest paused, BrowserRouteDecision decision)
+    {
+        var body = decision.Body ?? "";
+        var bodyBase64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(body));
+        return CallFetchAsync(paused.SessionId, "Fetch.fulfillRequest", new
+        {
+            requestId = paused.RequestId,
+            responseCode = decision.Status ?? 200,
+            responseHeaders = new[]
+            {
+                new { name = "Content-Type", value = decision.ContentType ?? "text/plain" },
+                new { name = "Access-Control-Allow-Origin", value = "*" }
+            },
+            body = bodyBase64
+        });
+    }
+
+    private async Task CallFetchAsync(string? sessionId, string method, object parameters)
+    {
+        var parametersJson = JsonSerializer.Serialize(parameters, AgentMuxJson.Options);
+        if (string.IsNullOrWhiteSpace(sessionId))
+        {
+            await _webView.CoreWebView2!.CallDevToolsProtocolMethodAsync(method, parametersJson).ConfigureAwait(true);
+            return;
+        }
+
+        await _webView.CoreWebView2!.CallDevToolsProtocolMethodForSessionAsync(sessionId, method, parametersJson).ConfigureAwait(true);
+    }
+
+    private object BuildRouteSnapshot()
+    {
+        BrowserRouteSnapshot[] routes;
+        BrowserRouteHit[] recentHits;
+        lock (_routeRules)
+        {
+            routes = _routeRules.Select(rule => rule.Snapshot()).ToArray();
+            recentHits = _routeHits.ToArray();
+        }
+
+        return new
+        {
+            ok = true,
+            count = routes.Length,
+            maxRules = MaxRouteRuleCount,
+            maxRecentHits = MaxRouteHitCount,
+            fetchEnabled = _fetchRoutingEnabled,
+            routes,
+            recentHits
+        };
     }
 
     private void NetworkRequestWillBeSent(object? sender, CoreWebView2DevToolsProtocolEventReceivedEventArgs args) =>
@@ -1945,6 +2275,86 @@ internal sealed class BrowserPaneView : Grid, IDisposable
         return false;
     }
 
+    private string NextRouteId() => $"route-{++_routeRuleSequence}";
+
+    private static string? NormalizeRouteUrlContains(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value) || string.Equals(value, "true", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        var builder = new StringBuilder(Math.Min(value.Length, MaxRouteUrlContainsChars));
+        foreach (var character in value)
+        {
+            if (builder.Length >= MaxRouteUrlContainsChars)
+            {
+                break;
+            }
+
+            if (!char.IsControl(character))
+            {
+                builder.Append(character);
+            }
+        }
+
+        var normalized = builder.ToString().Trim();
+        return string.IsNullOrWhiteSpace(normalized) ? null : normalized;
+    }
+
+    private static string NormalizeRouteContentType(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value) || string.Equals(value, "true", StringComparison.OrdinalIgnoreCase))
+        {
+            return "text/plain";
+        }
+
+        var builder = new StringBuilder(Math.Min(value.Length, MaxRouteContentTypeChars));
+        foreach (var character in value)
+        {
+            if (builder.Length >= MaxRouteContentTypeChars)
+            {
+                break;
+            }
+
+            if (!char.IsControl(character))
+            {
+                builder.Append(character);
+            }
+        }
+
+        var normalized = builder.ToString().Trim();
+        return string.IsNullOrWhiteSpace(normalized) ? "text/plain" : normalized;
+    }
+
+    private static FetchPausedRequest ParseFetchRequestPaused(string? sessionId, string parametersJson)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(parametersJson);
+            var root = document.RootElement;
+            var requestId = JsonString(root, "requestId") ?? "";
+            string? url = null;
+            string? method = null;
+            if (root.TryGetProperty("request", out var request)
+                && request.ValueKind == JsonValueKind.Object)
+            {
+                url = JsonString(request, "url");
+                method = JsonString(request, "method");
+            }
+
+            return new FetchPausedRequest(
+                requestId,
+                url ?? "",
+                string.IsNullOrWhiteSpace(method) ? "GET" : method,
+                string.IsNullOrWhiteSpace(sessionId) ? null : sessionId);
+        }
+        catch (JsonException)
+        {
+            return new FetchPausedRequest("", "", "GET", string.IsNullOrWhiteSpace(sessionId) ? null : sessionId);
+        }
+    }
+
     private static string WebViewUserDataFolder() =>
         Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -2008,6 +2418,90 @@ internal sealed class BrowserPaneView : Grid, IDisposable
     private readonly record struct NetworkRequestState(bool SeenResponse, bool SeenLoadingFinished);
 
     private readonly record struct NetworkActivitySnapshot(int InFlightRequests, DateTimeOffset LastActivityUtc, int EventCount);
+
+    private sealed class BrowserRouteRule(
+        string Id,
+        string Action,
+        string UrlContains,
+        int? Status,
+        string? ContentType,
+        string? Body,
+        int BodyLength,
+        DateTimeOffset CreatedAtUtc,
+        bool BodyTruncated = false)
+    {
+        public string Id { get; } = Id;
+
+        public string Action { get; } = Action;
+
+        public string UrlContains { get; } = UrlContains;
+
+        public int? Status { get; } = Status;
+
+        public string? ContentType { get; } = ContentType;
+
+        public string? Body { get; } = Body;
+
+        public int BodyLength { get; } = BodyLength;
+
+        public bool BodyTruncated { get; } = BodyTruncated;
+
+        public DateTimeOffset CreatedAtUtc { get; } = CreatedAtUtc;
+
+        public int HitCount { get; set; }
+
+        public DateTimeOffset? LastHitAtUtc { get; set; }
+
+        public BrowserRouteSnapshot Snapshot() =>
+            new(
+                Id,
+                Action,
+                UrlContains,
+                Status,
+                ContentType,
+                BodyLength,
+                BodyTruncated,
+                HitCount,
+                CreatedAtUtc,
+                LastHitAtUtc);
+    }
+
+    private sealed record BrowserRouteSnapshot(
+        string Id,
+        string Action,
+        string UrlContains,
+        int? Status,
+        string? ContentType,
+        int BodyLength,
+        bool BodyTruncated,
+        int HitCount,
+        DateTimeOffset CreatedAtUtc,
+        DateTimeOffset? LastHitAtUtc);
+
+    private sealed record BrowserRouteHit(
+        long Sequence,
+        string RuleId,
+        string Action,
+        string Url,
+        string Method,
+        int? Status,
+        string? ErrorReason,
+        DateTimeOffset CapturedAtUtc);
+
+    private sealed record BrowserRouteDecision(
+        string RuleId,
+        string Action,
+        int? Status,
+        string? ContentType,
+        string? Body,
+        int BodyLength,
+        bool BodyTruncated);
+
+    private readonly record struct FetchPausedRequest(
+        string RequestId,
+        string Url,
+        string Method,
+        string? SessionId);
 
     private sealed class TrackedDownload(
         CoreWebView2DownloadOperation operation,

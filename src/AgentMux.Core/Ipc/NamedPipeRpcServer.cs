@@ -5,6 +5,8 @@ namespace AgentMux.Core.Ipc;
 
 public sealed class NamedPipeRpcServer : IAsyncDisposable
 {
+    internal const PipeOptions ServerPipeOptions = PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly;
+
     private readonly string _pipeName;
     private readonly Func<AgentMuxRequest, CancellationToken, Task<AgentMuxResponse>> _handler;
     private CancellationTokenSource? _stop;
@@ -62,7 +64,7 @@ public sealed class NamedPipeRpcServer : IAsyncDisposable
                 PipeDirection.InOut,
                 NamedPipeServerStream.MaxAllowedServerInstances,
                 PipeTransmissionMode.Byte,
-                PipeOptions.Asynchronous);
+                ServerPipeOptions);
 
             await stream.WaitForConnectionAsync(cancellationToken).ConfigureAwait(false);
             _ = Task.Run(() => HandleConnectionAsync(stream, cancellationToken), cancellationToken);

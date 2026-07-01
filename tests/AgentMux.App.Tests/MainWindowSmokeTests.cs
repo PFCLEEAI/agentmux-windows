@@ -1429,6 +1429,165 @@ public sealed class MainWindowSmokeTests
             }));
             Assert.Equal(0, emptyNetworkLog.GetProperty("count").GetInt32());
 
+            AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserRouteClear));
+            var emptyRoutes = AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserRouteList));
+            Assert.Equal(0, emptyRoutes.GetProperty("count").GetInt32());
+            Assert.False(emptyRoutes.GetProperty("fetchEnabled").GetBoolean());
+
+            var routeBlockToken = $"agentmux-route-block-{Guid.NewGuid():N}";
+            var routeBlockUrl = $"http://127.0.0.1:9/{routeBlockToken}";
+            var blockRoute = AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserRouteBlock, new
+            {
+                urlContains = routeBlockToken
+            }));
+            Assert.Equal("block", blockRoute.GetProperty("rule").GetProperty("action").GetString());
+            Assert.Equal(routeBlockToken, blockRoute.GetProperty("rule").GetProperty("urlContains").GetString());
+
+            AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserEval, new
+            {
+                script = $$"""
+                    window.__agentMuxRouteBlockText = "";
+                    fetch({{System.Text.Json.JsonSerializer.Serialize(routeBlockUrl)}})
+                        .then(response => response.text())
+                        .then(text => { window.__agentMuxRouteBlockText = text; })
+                        .catch(error => { window.__agentMuxRouteBlockText = "ERROR:" + error.message; });
+                    true;
+                    """
+            }));
+            await WaitForBrowserEvalTrueAsync(
+                window,
+                "window.__agentMuxRouteBlockText.startsWith('ERROR:')").ConfigureAwait(true);
+
+            var blockRoutes = AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserRouteList));
+            Assert.True(blockRoutes.GetProperty("fetchEnabled").GetBoolean());
+            Assert.True(TryFindBrowserRoute(blockRoutes, routeBlockToken, "block", out var blockRouteSnapshot), blockRoutes.ToString());
+            Assert.Equal(1, blockRouteSnapshot.GetProperty("hitCount").GetInt32());
+            Assert.True(TryFindBrowserRouteHit(blockRoutes, routeBlockToken, "block", out var blockRouteHit), blockRoutes.ToString());
+            Assert.Equal("GET", blockRouteHit.GetProperty("method").GetString());
+            Assert.Equal("BlockedByClient", blockRouteHit.GetProperty("errorReason").GetString());
+
+            var routeClearAfterBlock = AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserRouteClear));
+            Assert.True(routeClearAfterBlock.GetProperty("clearedRules").GetInt32() >= 1);
+            Assert.True(routeClearAfterBlock.GetProperty("clearedHits").GetInt32() >= 1);
+            Assert.False(routeClearAfterBlock.GetProperty("fetchEnabled").GetBoolean());
+
+            var routeFulfillToken = $"agentmux-route-fulfill-{Guid.NewGuid():N}";
+            var routeFulfillUrl = $"http://127.0.0.1:9/{routeFulfillToken}";
+            var routeFulfillBody = $"synthetic route body {Guid.NewGuid():N}";
+            var fulfillRoute = AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserRouteFulfill, new
+            {
+                urlContains = routeFulfillToken,
+                status = 209,
+                contentType = "text/plain; charset=utf-8",
+                body = routeFulfillBody
+            }));
+            Assert.Equal("fulfill", fulfillRoute.GetProperty("rule").GetProperty("action").GetString());
+            Assert.Equal(routeFulfillToken, fulfillRoute.GetProperty("rule").GetProperty("urlContains").GetString());
+            Assert.Equal(209, fulfillRoute.GetProperty("rule").GetProperty("status").GetInt32());
+            Assert.Equal(routeFulfillBody.Length, fulfillRoute.GetProperty("rule").GetProperty("bodyLength").GetInt32());
+            Assert.DoesNotContain(routeFulfillBody, fulfillRoute.ToString(), StringComparison.Ordinal);
+
+            AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserEval, new
+            {
+                script = $$"""
+                    window.__agentMuxRouteFulfill = {};
+                    fetch({{System.Text.Json.JsonSerializer.Serialize(routeFulfillUrl)}})
+                        .then(async response => {
+                            window.__agentMuxRouteFulfill = {
+                                ok: true,
+                                status: response.status,
+                                contentType: response.headers.get("content-type"),
+                                text: await response.text()
+                            };
+                        })
+                        .catch(error => {
+                            window.__agentMuxRouteFulfill = {
+                                ok: false,
+                                error: error.message
+                            };
+                        });
+                    true;
+                    """
+            }));
+            await WaitForBrowserEvalTrueAsync(
+                window,
+                $"window.__agentMuxRouteFulfill.text === {System.Text.Json.JsonSerializer.Serialize(routeFulfillBody)}").ConfigureAwait(true);
+
+            var fulfillStateRoot = AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserEval, new
+            {
+                script = "window.__agentMuxRouteFulfill"
+            }));
+            var fulfillState = fulfillStateRoot.GetProperty("result");
+            Assert.True(fulfillState.GetProperty("ok").GetBoolean(), fulfillState.ToString());
+            Assert.Equal(209, fulfillState.GetProperty("status").GetInt32());
+            Assert.Contains("text/plain", fulfillState.GetProperty("contentType").GetString(), StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(routeFulfillBody, fulfillState.GetProperty("text").GetString());
+
+            var fulfillRoutes = AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserRouteList));
+            Assert.True(TryFindBrowserRoute(fulfillRoutes, routeFulfillToken, "fulfill", out var fulfillRouteSnapshot), fulfillRoutes.ToString());
+            Assert.Equal(1, fulfillRouteSnapshot.GetProperty("hitCount").GetInt32());
+            Assert.Equal(routeFulfillBody.Length, fulfillRouteSnapshot.GetProperty("bodyLength").GetInt32());
+            Assert.False(fulfillRouteSnapshot.GetProperty("bodyTruncated").GetBoolean());
+            Assert.True(TryFindBrowserRouteHit(fulfillRoutes, routeFulfillToken, "fulfill", out var fulfillRouteHit), fulfillRoutes.ToString());
+            Assert.Equal(209, fulfillRouteHit.GetProperty("status").GetInt32());
+            Assert.DoesNotContain(routeFulfillBody, fulfillRoutes.ToString(), StringComparison.Ordinal);
+
+            var routeFrameSrcDoc = "<!doctype html><html><body><script>fetch("
+                + System.Text.Json.JsonSerializer.Serialize(routeFulfillUrl + "?frame=1")
+                + ").catch(() => {});</script></body></html>";
+            AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserEval, new
+            {
+                script = $$"""
+                    (() => {
+                        const frame = document.createElement("iframe");
+                        frame.id = "agentmux-route-frame";
+                        frame.srcdoc = {{System.Text.Json.JsonSerializer.Serialize(routeFrameSrcDoc)}};
+                        document.body.appendChild(frame);
+                        return true;
+                    })()
+                    """
+            }));
+            var frameFulfillRoutes = await WaitForBrowserRouteHitCountAsync(
+                window,
+                routeFulfillToken,
+                "fulfill",
+                2).ConfigureAwait(true);
+            Assert.True(TryFindBrowserRouteHit(frameFulfillRoutes, routeFulfillToken, "fulfill", out var frameFulfillRouteHit), frameFulfillRoutes.ToString());
+            Assert.Equal(209, frameFulfillRouteHit.GetProperty("status").GetInt32());
+
+            await window.SaveSessionForSmokeTestAsync().ConfigureAwait(true);
+            Assert.True(System.IO.File.Exists(store.FilePath));
+            var routeSnapshotText = await System.IO.File.ReadAllTextAsync(store.FilePath).ConfigureAwait(true);
+            Assert.DoesNotContain(routeFulfillBody, routeSnapshotText, StringComparison.Ordinal);
+            Assert.DoesNotContain(routeFulfillToken, routeSnapshotText, StringComparison.Ordinal);
+
+            var routeClearAfterFulfill = AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserRouteClear));
+            Assert.True(routeClearAfterFulfill.GetProperty("clearedRules").GetInt32() >= 1);
+            Assert.False(routeClearAfterFulfill.GetProperty("fetchEnabled").GetBoolean());
+
+            var routeClearToken = $"agentmux-route-clear-{Guid.NewGuid():N}";
+            await using (var routeClearServer = LoopbackHttpServer.Start($"/{routeClearToken}", routeClearToken))
+            {
+                AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserEval, new
+                {
+                    script = $$"""
+                        window.__agentMuxRouteClearText = "";
+                        fetch({{System.Text.Json.JsonSerializer.Serialize(routeClearServer.Url.ToString())}})
+                            .then(response => response.text())
+                            .then(text => { window.__agentMuxRouteClearText = text; })
+                            .catch(error => { window.__agentMuxRouteClearText = "ERROR:" + error.message; });
+                        true;
+                        """
+                }));
+                await WaitForBrowserEvalTrueAsync(
+                    window,
+                    $"window.__agentMuxRouteClearText === {System.Text.Json.JsonSerializer.Serialize(routeClearToken)}").ConfigureAwait(true);
+            }
+
+            var postClearRoutes = AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserRouteList));
+            Assert.Equal(0, postClearRoutes.GetProperty("count").GetInt32());
+            Assert.False(postClearRoutes.GetProperty("fetchEnabled").GetBoolean());
+
             var slowNetworkToken = $"agentmux-wait-load-slow-{Guid.NewGuid():N}";
             await using (var slowServer = LoopbackHttpServer.Start(
                 $"/{slowNetworkToken}",
@@ -1970,6 +2129,35 @@ public sealed class MainWindowSmokeTests
         return false;
     }
 
+    private static async Task<System.Text.Json.JsonElement> WaitForBrowserRouteHitCountAsync(
+        MainWindow window,
+        string urlContains,
+        string action,
+        int minHitCount)
+    {
+        System.Text.Json.JsonElement? lastResult = null;
+        for (var attempt = 0; attempt < 20; attempt++)
+        {
+            var response = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserRouteList).ConfigureAwait(true);
+            if (response.Ok)
+            {
+                var result = System.Text.Json.JsonSerializer.SerializeToElement(response.Result, AgentMuxJson.Options);
+                lastResult = result.Clone();
+                if (result.TryGetProperty("ok", out var ok)
+                    && ok.GetBoolean()
+                    && TryFindBrowserRoute(result, urlContains, action, out var route)
+                    && route.GetProperty("hitCount").GetInt32() >= minHitCount)
+                {
+                    return result.Clone();
+                }
+            }
+
+            await Task.Delay(250).ConfigureAwait(true);
+        }
+
+        throw new InvalidOperationException($"Browser route {action} did not reach hit count {minHitCount} for {urlContains}. Last result: {lastResult?.ToString() ?? "<none>"}");
+    }
+
     private static bool TryFindHarEntry(System.Text.Json.JsonElement harLog, string urlFragment, out System.Text.Json.JsonElement harEntry)
     {
         harEntry = default;
@@ -1987,6 +2175,62 @@ public sealed class MainWindowSmokeTests
                 && (url.GetString()?.Contains(urlFragment, StringComparison.Ordinal) ?? false))
             {
                 harEntry = candidate.Clone();
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool TryFindBrowserRoute(
+        System.Text.Json.JsonElement routeList,
+        string urlContains,
+        string action,
+        out System.Text.Json.JsonElement route)
+    {
+        route = default;
+        if (!routeList.TryGetProperty("routes", out var routes)
+            || routes.ValueKind != System.Text.Json.JsonValueKind.Array)
+        {
+            return false;
+        }
+
+        foreach (var candidate in routes.EnumerateArray())
+        {
+            if (candidate.TryGetProperty("urlContains", out var urlContainsProperty)
+                && string.Equals(urlContainsProperty.GetString(), urlContains, StringComparison.Ordinal)
+                && candidate.TryGetProperty("action", out var actionProperty)
+                && string.Equals(actionProperty.GetString(), action, StringComparison.Ordinal))
+            {
+                route = candidate.Clone();
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool TryFindBrowserRouteHit(
+        System.Text.Json.JsonElement routeList,
+        string urlFragment,
+        string action,
+        out System.Text.Json.JsonElement hit)
+    {
+        hit = default;
+        if (!routeList.TryGetProperty("recentHits", out var hits)
+            || hits.ValueKind != System.Text.Json.JsonValueKind.Array)
+        {
+            return false;
+        }
+
+        foreach (var candidate in hits.EnumerateArray())
+        {
+            if (candidate.TryGetProperty("url", out var urlProperty)
+                && urlProperty.GetString()?.Contains(urlFragment, StringComparison.Ordinal) == true
+                && candidate.TryGetProperty("action", out var actionProperty)
+                && string.Equals(actionProperty.GetString(), action, StringComparison.Ordinal))
+            {
+                hit = candidate.Clone();
                 return true;
             }
         }

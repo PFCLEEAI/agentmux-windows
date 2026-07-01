@@ -6,6 +6,7 @@ namespace AgentMux.Core.Ipc;
 public sealed class NamedPipeRpcClient
 {
     private const int DefaultTimeoutMs = 35_000;
+    internal const PipeOptions ClientPipeOptions = PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly;
 
     private readonly string _pipeName;
     private readonly int _timeoutMs;
@@ -26,7 +27,7 @@ public sealed class NamedPipeRpcClient
                 : JsonSerializer.SerializeToElement(parameters, AgentMuxJson.Options)
         };
 
-        await using var stream = new NamedPipeClientStream(".", _pipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
+        await using var stream = new NamedPipeClientStream(".", _pipeName, PipeDirection.InOut, ClientPipeOptions);
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(_timeoutMs);
 
