@@ -72,10 +72,10 @@
                     CornerRadius="6"
                     Padding="18">
                 <StackPanel>
-                    <TextBlock Text="Terminal renderer placeholder"
+                    <TextBlock Text="Terminal preview"
                                FontSize="18"
                                FontWeight="SemiBold" />
-                    <TextBlock Text="Next sprint wires ConPTY output into the WebView2/xterm terminal host."
+                    <TextBlock Text="ConPTY output is shown here until the WebView2/xterm renderer lands."
                                Foreground="{StaticResource AgentMuxMutedText}"
                                Margin="0,8,0,0" />
                     <TextBox x:Name="ScreenPreview"

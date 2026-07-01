@@ -1,9 +1,11 @@
 using System.Collections.ObjectModel;
+using System.Text;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 using AgentMux.Core.Ipc;
 using AgentMux.Core.Models;
+using AgentMux.Win.Pty;
 
 namespace AgentMux.Win.App.Views;
 
@@ -12,6 +14,7 @@ public partial class MainWindow : Window
     private readonly ObservableCollection<WorkspaceState> _workspaces = [];
     private readonly List<TerminalNotification> _notifications = [];
     private NamedPipeRpcServer? _server;
+    private ConPtySession? _pty;
     private int _activeWorkspaceIndex;
 
     public MainWindow()
@@ -24,7 +27,7 @@ public partial class MainWindow : Window
         });
     }
 
-    private void Window_Loaded(object sender, RoutedEventArgs e)
+    private async void Window_Loaded(object sender, RoutedEventArgs e)
     {
         WorkspaceList.ItemsSource = _workspaces;
         WorkspaceList.SelectedIndex = 0;
@@ -34,10 +37,16 @@ public partial class MainWindow : Window
         PipeStatus.Text = $"Pipe: {AgentMuxPipe.ForCurrentUser()}";
 
         RefreshWorkspaceView();
+        await StartPtyPreviewAsync().ConfigureAwait(false);
     }
 
     private async void Window_Closed(object? sender, EventArgs e)
     {
+        if (_pty is not null)
+        {
+            await _pty.DisposeAsync().ConfigureAwait(false);
+        }
+
         if (_server is not null)
         {
             await _server.DisposeAsync().ConfigureAwait(false);
@@ -141,8 +150,67 @@ public partial class MainWindow : Window
             return new { sent = false };
         }
 
-        pane.LastScreenText = string.Concat(pane.LastScreenText, parsed?.Text ?? "", Environment.NewLine);
+        var text = parsed?.Text ?? "";
+        if (_pty is { IsRunning: true })
+        {
+            _ = _pty.WriteAsync(Encoding.UTF8.GetBytes(text + Environment.NewLine));
+        }
+        else
+        {
+            pane.LastScreenText = string.Concat(pane.LastScreenText, text, Environment.NewLine);
+        }
+
         return new { sent = true, bytes = (parsed?.Text ?? "").Length };
+    }
+
+    private async Task StartPtyPreviewAsync()
+    {
+        _pty = new ConPtySession();
+        _pty.OutputReceived += bytes =>
+        {
+            var text = Encoding.UTF8.GetString(bytes.Span);
+            Dispatcher.Invoke(() =>
+            {
+                var pane = FirstPane();
+                if (pane is not null)
+                {
+                    pane.LastScreenText = string.Concat(pane.LastScreenText, text);
+                }
+
+                RefreshWorkspaceView();
+            });
+        };
+        _pty.Exited += exitCode =>
+        {
+            Dispatcher.Invoke(() =>
+            {
+                var pane = FirstPane();
+                if (pane is not null)
+                {
+                    pane.LastScreenText = string.Concat(pane.LastScreenText, Environment.NewLine, $"[process exited: {exitCode}]", Environment.NewLine);
+                }
+
+                RefreshWorkspaceView();
+            });
+        };
+
+        try
+        {
+            await _pty.StartAsync(new PtyLaunchOptions()).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is PlatformNotSupportedException or InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            Dispatcher.Invoke(() =>
+            {
+                var pane = FirstPane();
+                if (pane is not null)
+                {
+                    pane.LastScreenText = $"ConPTY did not start: {ex.Message}";
+                }
+
+                RefreshWorkspaceView();
+            });
+        }
     }
 
     private WorkspaceState CreateWorkspace(string? title, string? cwd)

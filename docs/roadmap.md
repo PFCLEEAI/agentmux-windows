@@ -8,11 +8,11 @@
 
 ## Sprint 1 - ConPTY Terminal Core
 
-- Launch PowerShell, CMD, and WSL through ConPTY.
-- Input/output pump.
-- Resize support.
-- Process cleanup and timeout handling.
-- Headless Windows smoke tests.
+- Launch PowerShell, CMD, and WSL through ConPTY. In progress.
+- Input/output pump. In progress.
+- Resize support. In progress.
+- Process cleanup and timeout handling. In progress.
+- Headless Windows smoke tests. Not started.
 
 ## Sprint 2 - Workspace UI
 
