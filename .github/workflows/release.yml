@@ -15,8 +15,8 @@ jobs:
     permissions:
       contents: read
     env:
-      PACKAGE_DIR: ${{ runner.temp }}\agentmux-windows-package
-      RELEASE_DIR: ${{ runner.temp }}\agentmux-release
+      PACKAGE_NAME: agentmux-windows-package
+      RELEASE_NAME: agentmux-release
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
@@ -59,6 +59,8 @@ jobs:
           "AGENTMUX_RELEASE_VERSION=$safeVersion" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "AGENTMUX_RELEASE_TAG=$releaseTag" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "AGENTMUX_ASSET_BASE=agentmux-windows-$safeVersion-framework-dependent" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "PACKAGE_DIR=$env:RUNNER_TEMP\$env:PACKAGE_NAME" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "RELEASE_DIR=$env:RUNNER_TEMP\$env:RELEASE_NAME" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - name: Publish Windows package
         shell: pwsh
         run: |
