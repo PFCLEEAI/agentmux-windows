@@ -91,7 +91,10 @@ jobs:
             -CompressionLevel Optimal
 
           $hash = (Get-FileHash $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
-          "$hash  $(Split-Path -Leaf $zipPath)" | Set-Content -Encoding ASCII "$zipPath.sha256"
+          [System.IO.File]::WriteAllText(
+            "$zipPath.sha256",
+            "$hash  $(Split-Path -Leaf $zipPath)`n",
+            [System.Text.Encoding]::ASCII)
 
           Get-ChildItem $env:RELEASE_DIR | Sort-Object Name | Select-Object Name,Length
       - name: Smoke release ZIP layout

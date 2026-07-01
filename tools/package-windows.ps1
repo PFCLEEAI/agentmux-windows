@@ -148,7 +148,10 @@ try {
       $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
       "$hash  $relative"
     }
-  $hashes | Set-Content -Encoding ASCII (Join-Path $package "SHA256SUMS.txt")
+  [System.IO.File]::WriteAllText(
+    (Join-Path $package "SHA256SUMS.txt"),
+    (($hashes -join "`n") + "`n"),
+    [System.Text.Encoding]::ASCII)
 
   foreach ($file in $requiredFiles) {
     $path = Join-Path $package $file
