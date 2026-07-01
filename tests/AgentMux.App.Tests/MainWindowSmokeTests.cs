@@ -656,6 +656,7 @@ public sealed class MainWindowSmokeTests
                             const link = document.createElement("a");
                             link.id = "agentmux-download-link";
                             link.href = {{System.Text.Json.JsonSerializer.Serialize(downloadServer.Url.ToString())}};
+                            link.download = {{System.Text.Json.JsonSerializer.Serialize(downloadFileName)}};
                             link.textContent = "download";
                             document.body.appendChild(link);
                             return true;
