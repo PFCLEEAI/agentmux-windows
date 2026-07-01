@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.Wpf;
 
 namespace AgentMux.Win.App.Controls;
@@ -15,6 +16,7 @@ internal sealed class TerminalPaneView : Grid
     private readonly WebView2 _webView;
     private readonly TextBox _fallback;
     private readonly Queue<TerminalScriptCall> _pendingScripts = [];
+    private TaskCompletionSource? _runtimeReady;
     private string _screenText = EmptyText;
     private bool _isFlushingScripts;
     private bool _webViewInitializing;
@@ -42,6 +44,10 @@ internal sealed class TerminalPaneView : Grid
 
         _webView = new WebView2
         {
+            CreationProperties = new CoreWebView2CreationProperties
+            {
+                UserDataFolder = WebViewUserDataFolder()
+            },
             Visibility = Visibility.Collapsed
         };
 
@@ -113,6 +119,7 @@ internal sealed class TerminalPaneView : Grid
                 _fallback.Visibility = Visibility.Collapsed;
                 QueueTerminalScript("agentmuxSetText", _screenText);
                 await FlushTerminalScriptsAsync().ConfigureAwait(true);
+                _runtimeReady?.TrySetResult();
             };
             _webView.Source = new Uri(terminalHtmlPath);
         }
@@ -121,6 +128,62 @@ internal sealed class TerminalPaneView : Grid
             _webViewInitializing = false;
             UseFallback();
         }
+    }
+
+    internal async Task EnsureRuntimeReadyForSmokeTestAsync()
+    {
+        if (!_webViewReady && !_webViewFailed)
+        {
+            _runtimeReady ??= new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            if (!_webViewInitializing)
+            {
+                OnLoaded(this, new RoutedEventArgs(LoadedEvent));
+            }
+
+            await _runtimeReady.Task.WaitAsync(TimeSpan.FromSeconds(15)).ConfigureAwait(true);
+        }
+
+        if (!_webViewReady || _webView.CoreWebView2 is null)
+        {
+            throw new InvalidOperationException("terminal WebView2 runtime is not ready");
+        }
+    }
+
+    internal async Task<string> ExecuteRuntimeScriptForSmokeTestAsync(string script)
+    {
+        await EnsureRuntimeReadyForSmokeTestAsync().ConfigureAwait(true);
+        return await _webView.CoreWebView2!.ExecuteScriptAsync(script).ConfigureAwait(true);
+    }
+
+    internal async Task<string> WaitForRuntimeTextForSmokeTestAsync(string expectedText)
+    {
+        await EnsureRuntimeReadyForSmokeTestAsync().ConfigureAwait(true);
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
+        var lastText = string.Empty;
+
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            lastText = await ReadRuntimeTextForSmokeTestAsync().ConfigureAwait(true);
+            if (lastText.Contains(expectedText, StringComparison.Ordinal))
+            {
+                return lastText;
+            }
+
+            await Task.Delay(50).ConfigureAwait(true);
+        }
+
+        throw new InvalidOperationException($"terminal WebView2 runtime did not render expected text. Last text: {lastText}");
+    }
+
+    private async Task<string> ReadRuntimeTextForSmokeTestAsync()
+    {
+        var json = await ExecuteRuntimeScriptForSmokeTestAsync("""
+            (() => typeof window.agentmuxGetTextForSmoke === "function"
+                ? window.agentmuxGetTextForSmoke()
+                : "")()
+            """).ConfigureAwait(true);
+
+        return JsonSerializer.Deserialize<string>(json) ?? string.Empty;
     }
 
     private void HandleWebMessage(string json)
@@ -205,9 +268,16 @@ internal sealed class TerminalPaneView : Grid
         _webViewReady = false;
         _webViewFailed = true;
         _pendingScripts.Clear();
+        _runtimeReady?.TrySetException(new InvalidOperationException("terminal WebView2 runtime is not ready"));
         _webView.Visibility = Visibility.Collapsed;
         _fallback.Visibility = Visibility.Visible;
     }
+
+    private static string WebViewUserDataFolder() =>
+        Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "AgentMux",
+            "WebView2");
 
     private readonly record struct TerminalScriptCall(string FunctionName, string Text);
 }

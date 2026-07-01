@@ -39,6 +39,7 @@
 
     let hasOutput = false;
     const emptyText = 'No terminal output yet.';
+    let smokeScreenText = emptyText;
     let writeQueue = Promise.resolve();
 
     const writeAsync = text => new Promise(resolve => terminal.write(text, resolve));
@@ -62,6 +63,7 @@
         terminal.reset();
         hasOutput = text !== emptyText;
         await writeAsync(text);
+        smokeScreenText = text;
       });
     };
 
@@ -75,11 +77,15 @@
         if (!hasOutput) {
           terminal.reset();
           hasOutput = true;
+          smokeScreenText = '';
         }
 
         await writeAsync(text);
+        smokeScreenText += text;
       });
     };
+
+    window.agentmuxGetTextForSmoke = () => smokeScreenText;
   </script>
 </body>
 </html>

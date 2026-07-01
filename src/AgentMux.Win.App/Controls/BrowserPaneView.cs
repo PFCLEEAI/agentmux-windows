@@ -76,6 +76,10 @@ internal sealed class BrowserPaneView : Grid
 
         _webView = new WebView2
         {
+            CreationProperties = new CoreWebView2CreationProperties
+            {
+                UserDataFolder = WebViewUserDataFolder()
+            },
             Visibility = Visibility.Collapsed
         };
 
@@ -336,4 +340,10 @@ internal sealed class BrowserPaneView : Grid
     }
 
     private static string FallbackText(string url) => $"Browser pane: {url}";
+
+    private static string WebViewUserDataFolder() =>
+        Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "AgentMux",
+            "WebView2");
 }

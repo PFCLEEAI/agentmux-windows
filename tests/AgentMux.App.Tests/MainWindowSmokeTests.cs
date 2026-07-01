@@ -1,7 +1,12 @@
 using System.Threading;
 using System.Windows;
+using System.Windows.Threading;
 using AgentMux.Core.Models;
+using AgentMux.Win.App.Controls;
 using AgentMux.Win.App.Views;
+using Xunit;
+
+[assembly: CollectionBehavior(DisableTestParallelization = true)]
 
 namespace AgentMux.App.Tests;
 
@@ -15,7 +20,7 @@ public sealed class MainWindowSmokeTests
             return;
         }
 
-        await WpfTestHost.RunAsync(() =>
+        await WpfTestHost.RunAsync(async () =>
         {
             EnsureApplicationResources();
 
@@ -130,7 +135,99 @@ public sealed class MainWindowSmokeTests
             {
                 window.Close();
             }
+
+            await RunHostedWebView2RuntimeSmokeAsync();
         });
+    }
+
+    private static async Task RunHostedWebView2RuntimeSmokeAsync()
+    {
+        var terminalWindow = CreateSmokeWindow();
+        var terminal = new TerminalPaneView();
+        terminalWindow.Content = terminal;
+        try
+        {
+            terminalWindow.Show();
+
+            const string terminalMarker = "AGENTMUX_WEBVIEW2_XTERM_SMOKE_APPEND";
+            terminal.SetScreenText("AGENTMUX_WEBVIEW2_XTERM_SMOKE");
+            terminal.AppendScreenText("_APPEND");
+
+            var diagnosticsJson = await terminal.ExecuteRuntimeScriptForSmokeTestAsync("""
+                (() => ({
+                    hasXtermElement: !!document.querySelector(".xterm"),
+                    hasSetText: typeof window.agentmuxSetText === "function",
+                    hasAppendText: typeof window.agentmuxAppendText === "function",
+                    hasSmokeProbe: typeof window.agentmuxGetTextForSmoke === "function"
+                }))()
+                """);
+            using (var diagnostics = System.Text.Json.JsonDocument.Parse(diagnosticsJson))
+            {
+                var root = diagnostics.RootElement;
+                Assert.True(root.GetProperty("hasXtermElement").GetBoolean());
+                Assert.True(root.GetProperty("hasSetText").GetBoolean());
+                Assert.True(root.GetProperty("hasAppendText").GetBoolean());
+                Assert.True(root.GetProperty("hasSmokeProbe").GetBoolean());
+            }
+
+            var runtimeText = await terminal.WaitForRuntimeTextForSmokeTestAsync(terminalMarker);
+            Assert.Contains(terminalMarker, runtimeText);
+        }
+        finally
+        {
+            terminalWindow.Close();
+        }
+
+        var browserWindow = CreateSmokeWindow();
+        var browser = new BrowserPaneView();
+        browserWindow.Content = browser;
+        try
+        {
+            browserWindow.Show();
+
+            var setupResult = await browser.EvaluateScriptAsync("""
+                document.body.innerHTML = '<input id="name"><button id="go">go</button><output id="result"></output>';
+                window.__agentMuxClicked = 0;
+                document.querySelector("#go").addEventListener("click", () => {
+                    window.__agentMuxClicked += 1;
+                    document.querySelector("#result").textContent = document.querySelector("#name").value;
+                });
+                true;
+                """);
+            Assert.Equal("true", setupResult);
+
+            AssertBrowserOk(await browser.FillAsync("#name", "agentmux-browser-smoke"));
+            AssertBrowserOk(await browser.ClickAsync("#go"));
+
+            var stateJson = await browser.EvaluateScriptAsync("""
+                (() => ({
+                    value: document.querySelector("#name").value,
+                    result: document.querySelector("#result").textContent,
+                    clicked: window.__agentMuxClicked
+                }))()
+                """);
+            using (var state = System.Text.Json.JsonDocument.Parse(stateJson))
+            {
+                var root = state.RootElement;
+                Assert.Equal("agentmux-browser-smoke", root.GetProperty("value").GetString());
+                Assert.Equal("agentmux-browser-smoke", root.GetProperty("result").GetString());
+                Assert.Equal(1, root.GetProperty("clicked").GetInt32());
+            }
+
+            var screenshotPath = System.IO.Path.Combine(
+                System.IO.Path.GetTempPath(),
+                "agentmux-app-smoke",
+                $"{Guid.NewGuid():N}.png");
+            var capturedPath = await browser.CapturePngAsync(screenshotPath);
+            var screenshot = new System.IO.FileInfo(capturedPath);
+            Assert.True(screenshot.Exists);
+            Assert.True(screenshot.Length > 0);
+            AssertPngSignature(capturedPath);
+        }
+        finally
+        {
+            browserWindow.Close();
+        }
     }
 
     private static void EnsureApplicationResources()
@@ -147,32 +244,68 @@ public sealed class MainWindowSmokeTests
         app.InitializeComponent();
     }
 
+    private static Window CreateSmokeWindow() => new()
+    {
+        Width = 900,
+        Height = 560,
+        ShowActivated = false,
+        ShowInTaskbar = false,
+        WindowStartupLocation = WindowStartupLocation.Manual
+    };
+
+    private static void AssertBrowserOk(string json)
+    {
+        using var document = System.Text.Json.JsonDocument.Parse(json);
+        Assert.True(document.RootElement.GetProperty("ok").GetBoolean());
+    }
+
+    private static void AssertPngSignature(string path)
+    {
+        var signature = new byte[8];
+        using var stream = System.IO.File.OpenRead(path);
+        Assert.Equal(signature.Length, stream.Read(signature));
+        Assert.Equal([137, 80, 78, 71, 13, 10, 26, 10], signature);
+    }
+
     private static class WpfTestHost
     {
-        public static async Task RunAsync(Action action)
+        public static Task RunAsync(Action action) =>
+            RunAsync(() =>
+            {
+                action();
+                return Task.CompletedTask;
+            });
+
+        public static async Task RunAsync(Func<Task> action)
         {
             var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var thread = new Thread(() =>
             {
-                try
+                SynchronizationContext.SetSynchronizationContext(new DispatcherSynchronizationContext(Dispatcher.CurrentDispatcher));
+                Dispatcher.CurrentDispatcher.InvokeAsync(async () =>
                 {
-                    action();
-                    completion.SetResult();
-                }
-                catch (Exception ex)
-                {
-                    completion.SetException(ex);
-                }
-                finally
-                {
-                    Application.Current?.Shutdown();
-                }
+                    try
+                    {
+                        await action().ConfigureAwait(true);
+                        completion.SetResult();
+                    }
+                    catch (Exception ex)
+                    {
+                        completion.SetException(ex);
+                    }
+                    finally
+                    {
+                        Application.Current?.Shutdown();
+                        Dispatcher.CurrentDispatcher.BeginInvokeShutdown(DispatcherPriority.Background);
+                    }
+                });
+                Dispatcher.Run();
             });
 
             thread.SetApartmentState(ApartmentState.STA);
             thread.Start();
 
-            await completion.Task.WaitAsync(TimeSpan.FromSeconds(15));
+            await completion.Task.WaitAsync(TimeSpan.FromSeconds(60));
             thread.Join(TimeSpan.FromSeconds(5));
         }
     }
