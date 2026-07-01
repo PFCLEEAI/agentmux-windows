@@ -79,28 +79,31 @@
                     </Grid.RowDefinitions>
 
                     <DockPanel Grid.Row="0" Margin="0,0,0,12" LastChildFill="False">
-                        <TextBlock DockPanel.Dock="Left"
-                                   Text="Terminal"
-                                   FontSize="18"
-                                   FontWeight="SemiBold" />
+                        <StackPanel DockPanel.Dock="Left" Orientation="Horizontal">
+                            <TextBlock Text="Terminal"
+                                       FontSize="18"
+                                       FontWeight="SemiBold"
+                                       VerticalAlignment="Center" />
+                            <Button Content="Split right"
+                                    Width="88"
+                                    Height="28"
+                                    Margin="14,0,0,0"
+                                    Click="SplitRight_Click" />
+                            <Button Content="Split down"
+                                    Width="88"
+                                    Height="28"
+                                    Margin="8,0,0,0"
+                                    Click="SplitDown_Click" />
+                        </StackPanel>
                         <TextBlock x:Name="TerminalStatus"
                                    DockPanel.Dock="Right"
                                    HorizontalAlignment="Right"
                                    Foreground="{StaticResource AgentMuxMutedText}" />
                     </DockPanel>
 
-                    <TextBox x:Name="ScreenPreview"
-                             Grid.Row="1"
-                             Background="#0F131A"
-                             Foreground="{StaticResource AgentMuxText}"
-                             BorderBrush="{StaticResource AgentMuxBorder}"
-                             FontFamily="Consolas"
-                             FontSize="14"
-                             MinHeight="220"
-                             TextWrapping="Wrap"
-                             VerticalScrollBarVisibility="Auto"
-                             AcceptsReturn="True"
-                             IsReadOnly="True" />
+                    <Grid x:Name="PaneHost"
+                          Grid.Row="1"
+                          MinHeight="220" />
 
                     <Grid Grid.Row="2" Margin="0,12,0,0">
                         <Grid.ColumnDefinitions>

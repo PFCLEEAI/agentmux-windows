@@ -18,7 +18,7 @@ It is inspired by the terminal/workspace workflow category popularized by cmux, 
 
 Pre-alpha scaffold.
 
-This repository currently contains the public-safe foundation: project structure, core models, OSC notification parsing, named-pipe JSON-RPC contracts, CLI skeleton, a minimal WPF shell, ConPTY session interop, tests, and CI. The WebView2/xterm terminal renderer and full pane UI are the next implementation sprint.
+This repository currently contains the public-safe foundation: project structure, core models, OSC notification parsing, named-pipe JSON-RPC contracts, CLI skeleton, a WPF shell with workspace sidebar and recursive split panes, per-pane ConPTY session hosting, direct terminal input, tests, and CI. The WebView2/xterm terminal renderer, richer keyboard navigation, and browser panes remain future implementation work.
 
 Required Windows CI proves the solution restores, builds, runs deterministic unit tests, and passes a headless ConPTY smoke test for command output plus stdin echo. A real Windows desktop smoke test is still required before calling this release-ready.
 

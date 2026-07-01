@@ -8,27 +8,29 @@
 
 ## Sprint 1 - ConPTY Terminal Core
 
-- Launch PowerShell, CMD, and WSL through ConPTY. In progress.
-- Input/output pump. In progress.
+- Launch a shell through ConPTY. Passing in hosted Windows smoke for process output and stdin echo.
+- Input/output pump. Passing in hosted Windows smoke.
 - Resize support. In progress.
 - Process cleanup and timeout handling. In progress.
 - Headless Windows smoke tests. Passing as a blocking GitHub Actions gate; real Windows desktop smoke still required before release-ready status.
 
 ## Sprint 2 - Workspace UI
 
-- Workspace sidebar.
+- Workspace sidebar. Implemented in WPF shell.
 - Surface tabs.
-- Split pane layout.
+- Split pane layout. Implemented as recursive WPF panes with persisted split ratios.
 - Focus movement.
 - Keyboard shortcuts.
+- Each terminal pane now owns an independent ConPTY session started lazily.
 
 ## Sprint 3 - CLI/API
 
 - `ping`, `status`, `tree`.
 - Workspace create/list/select.
-- Split pane.
-- Send text/key.
-- Read screen.
+- Split pane. Preview implemented.
+- Send text. Preview implemented.
+- Send key.
+- Read screen. Preview implemented for active pane text.
 
 ## Sprint 4 - Notifications
 
@@ -40,7 +42,7 @@
 ## Sprint 5 - Persistence
 
 - JSON session snapshot.
-- Layout restore.
+- Layout restore. Core split tree and active pane id round-trip through JSON snapshot tests.
 - Working directory restore.
 - Scrollback best effort.
 

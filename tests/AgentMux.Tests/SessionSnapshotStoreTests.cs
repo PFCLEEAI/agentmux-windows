@@ -10,13 +10,17 @@ public sealed class SessionSnapshotStoreTests
     {
         var root = Path.Combine(Path.GetTempPath(), $"agentmux-tests-{Guid.NewGuid():N}");
         var store = new SessionSnapshotStore(root);
+        var surface = SurfaceState.CreateDefault();
+        var paneId = surface.Root.Pane!.Id;
+        surface.ActivePaneId = paneId;
         var snapshot = new SessionSnapshot
         {
             Workspaces =
             [
                 new WorkspaceState
                 {
-                    Title = "API"
+                    Title = "API",
+                    Surfaces = [surface]
                 }
             ]
         };
@@ -27,6 +31,8 @@ public sealed class SessionSnapshotStoreTests
         Assert.NotNull(loaded);
         Assert.Single(loaded.Workspaces);
         Assert.Equal("API", loaded.Workspaces[0].Title);
+        Assert.Equal(paneId, loaded.Workspaces[0].Surfaces[0].ActivePaneId);
+        Assert.Equal(paneId, loaded.Workspaces[0].Surfaces[0].Root.Pane?.Id);
 
         Directory.Delete(root, recursive: true);
     }

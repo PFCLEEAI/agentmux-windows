@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Media;
 using AgentMux.Core.Ipc;
 using AgentMux.Core.Models;
 using AgentMux.Win.Pty;
@@ -14,8 +15,9 @@ public partial class MainWindow : Window
 {
     private readonly ObservableCollection<WorkspaceState> _workspaces = [];
     private readonly List<TerminalNotification> _notifications = [];
+    private readonly Dictionary<string, ConPtySession> _ptySessions = [];
+    private readonly HashSet<string> _ptyStartFailedPaneIds = [];
     private NamedPipeRpcServer? _server;
-    private ConPtySession? _pty;
     private int _activeWorkspaceIndex;
 
     public MainWindow()
@@ -38,14 +40,17 @@ public partial class MainWindow : Window
         PipeStatus.Text = $"Pipe: {AgentMuxPipe.ForCurrentUser()}";
 
         RefreshWorkspaceView();
-        await StartPtyPreviewAsync().ConfigureAwait(false);
+        await EnsurePanePtyAsync(ActivePane()).ConfigureAwait(false);
     }
 
     private async void Window_Closed(object? sender, EventArgs e)
     {
-        if (_pty is not null)
+        var sessions = _ptySessions.Values.ToArray();
+        _ptySessions.Clear();
+
+        foreach (var session in sessions)
         {
-            await _pty.DisposeAsync().ConfigureAwait(false);
+            await session.DisposeAsync().ConfigureAwait(false);
         }
 
         if (_server is not null)
@@ -62,6 +67,26 @@ public partial class MainWindow : Window
     private void TestNotification_Click(object sender, RoutedEventArgs e)
     {
         AddNotification("AgentMux", "Scaffold notification");
+    }
+
+    private async void SplitRight_Click(object sender, RoutedEventArgs e)
+    {
+        if (SplitActivePane(SplitDirection.Right))
+        {
+            await EnsurePanePtyAsync(ActivePane()).ConfigureAwait(true);
+        }
+
+        RefreshWorkspaceView();
+    }
+
+    private async void SplitDown_Click(object sender, RoutedEventArgs e)
+    {
+        if (SplitActivePane(SplitDirection.Down))
+        {
+            await EnsurePanePtyAsync(ActivePane()).ConfigureAwait(true);
+        }
+
+        RefreshWorkspaceView();
     }
 
     private void WorkspaceList_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -91,6 +116,15 @@ public partial class MainWindow : Window
 
     private Task<AgentMuxResponse> HandleRpcAsync(AgentMuxRequest request, CancellationToken cancellationToken)
     {
+        var response = Dispatcher.CheckAccess()
+            ? HandleRpcOnUi(request)
+            : Dispatcher.Invoke(() => HandleRpcOnUi(request));
+
+        return Task.FromResult(response);
+    }
+
+    private AgentMuxResponse HandleRpcOnUi(AgentMuxRequest request)
+    {
         var response = request.Method switch
         {
             AgentMuxMethods.Ping => AgentMuxResponse.Success(request.Id, new { pong = true }),
@@ -102,12 +136,12 @@ public partial class MainWindow : Window
             AgentMuxMethods.Notify => AgentMuxResponse.Success(request.Id, HandleNotify(request.Params)),
             AgentMuxMethods.Split => AgentMuxResponse.Success(request.Id, HandleSplit(request.Params)),
             AgentMuxMethods.SendText => AgentMuxResponse.Success(request.Id, HandleSendText(request.Params)),
-            AgentMuxMethods.ReadScreen => AgentMuxResponse.Success(request.Id, new { text = FirstPane()?.LastScreenText ?? "" }),
+            AgentMuxMethods.ReadScreen => AgentMuxResponse.Success(request.Id, new { text = ActivePane()?.LastScreenText ?? "" }),
             _ => AgentMuxResponse.Failure(request.Id, $"Unsupported method: {request.Method}")
         };
 
-        Dispatcher.Invoke(RefreshWorkspaceView);
-        return Task.FromResult(response);
+        RefreshWorkspaceView();
+        return response;
     }
 
     private object BuildStatus() => new
@@ -116,7 +150,8 @@ public partial class MainWindow : Window
         status = "pre-alpha scaffold",
         workspaceCount = _workspaces.Count,
         activeWorkspaceIndex = _activeWorkspaceIndex,
-        notificationCount = _notifications.Count
+        notificationCount = _notifications.Count,
+        terminalSessionCount = _ptySessions.Count
     };
 
     private WorkspaceState HandleWorkspaceCreate(JsonElement? parameters)
@@ -152,16 +187,19 @@ public partial class MainWindow : Window
             ? SplitDirection.Down
             : SplitDirection.Right;
 
-        var workspace = ActiveWorkspace();
-        var surface = workspace.Surfaces.ElementAtOrDefault(workspace.ActiveSurfaceIndex) ?? workspace.Surfaces[0];
-        var changed = SplitFirstLeaf(surface.Root, direction);
+        var changed = SplitActivePane(direction);
+        if (changed)
+        {
+            _ = EnsurePanePtyAsync(ActivePane());
+        }
+
         return new { split = changed, direction = direction.ToString().ToLowerInvariant() };
     }
 
     private object HandleSendText(JsonElement? parameters)
     {
         var parsed = Deserialize<SendTextParams>(parameters);
-        var pane = FirstPane();
+        var pane = ActivePane();
         if (pane is null)
         {
             return new { sent = false };
@@ -173,16 +211,61 @@ public partial class MainWindow : Window
         return new { sent = true, bytes = (parsed?.Text ?? "").Length };
     }
 
-    private async Task StartPtyPreviewAsync()
+    private async Task<ConPtySession?> EnsurePanePtyAsync(PaneState? pane)
     {
-        _pty = new ConPtySession();
-        _pty.OutputReceived += bytes =>
+        Dispatcher.VerifyAccess();
+        if (pane?.Kind != PaneKind.Terminal || _ptyStartFailedPaneIds.Contains(pane.Id))
+        {
+            return null;
+        }
+
+        if (_ptySessions.TryGetValue(pane.Id, out var existing))
+        {
+            if (existing.IsRunning)
+            {
+                return existing;
+            }
+
+            _ptySessions.Remove(pane.Id);
+            await existing.DisposeAsync().ConfigureAwait(true);
+        }
+
+        var session = new ConPtySession();
+        WirePanePtyEvents(pane.Id, session);
+        _ptySessions[pane.Id] = session;
+
+        try
+        {
+            await session.StartAsync(new PtyLaunchOptions
+            {
+                CommandLine = pane.Shell,
+                WorkingDirectory = pane.WorkingDirectory,
+                Cols = pane.Cols,
+                Rows = pane.Rows
+            }).ConfigureAwait(true);
+
+            return session;
+        }
+        catch (Exception ex) when (ex is PlatformNotSupportedException or InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            _ptySessions.Remove(pane.Id);
+            _ptyStartFailedPaneIds.Add(pane.Id);
+            await session.DisposeAsync().ConfigureAwait(true);
+
+            pane.LastScreenText = $"ConPTY did not start: {ex.Message}";
+            RefreshWorkspaceView();
+            return null;
+        }
+    }
+
+    private void WirePanePtyEvents(string paneId, ConPtySession session)
+    {
+        session.OutputReceived += bytes =>
         {
             var text = Encoding.UTF8.GetString(bytes.Span);
             Dispatcher.Invoke(() =>
             {
-                var pane = FirstPane();
-                if (pane is not null)
+                if (FindPaneById(paneId) is { } pane)
                 {
                     pane.LastScreenText = string.Concat(pane.LastScreenText, text);
                 }
@@ -190,12 +273,11 @@ public partial class MainWindow : Window
                 RefreshWorkspaceView();
             });
         };
-        _pty.Exited += exitCode =>
+        session.Exited += exitCode =>
         {
             Dispatcher.Invoke(() =>
             {
-                var pane = FirstPane();
-                if (pane is not null)
+                if (FindPaneById(paneId) is { } pane)
                 {
                     pane.LastScreenText = string.Concat(pane.LastScreenText, Environment.NewLine, $"[process exited: {exitCode}]", Environment.NewLine);
                 }
@@ -203,24 +285,6 @@ public partial class MainWindow : Window
                 RefreshWorkspaceView();
             });
         };
-
-        try
-        {
-            await _pty.StartAsync(new PtyLaunchOptions()).ConfigureAwait(false);
-        }
-        catch (Exception ex) when (ex is PlatformNotSupportedException or InvalidOperationException or System.ComponentModel.Win32Exception)
-        {
-            Dispatcher.Invoke(() =>
-            {
-                var pane = FirstPane();
-                if (pane is not null)
-                {
-                    pane.LastScreenText = $"ConPTY did not start: {ex.Message}";
-                }
-
-                RefreshWorkspaceView();
-            });
-        }
     }
 
     private async Task SendTerminalInputAsync()
@@ -240,37 +304,33 @@ public partial class MainWindow : Window
             return;
         }
 
-        var pane = FirstPane();
-        if (_pty is { IsRunning: true })
+        Dispatcher.VerifyAccess();
+        var pane = ActivePane();
+        var pty = await EnsurePanePtyAsync(pane).ConfigureAwait(true);
+        if (pty is { IsRunning: true })
         {
             try
             {
-                await _pty.WriteAsync(Encoding.UTF8.GetBytes(text + Environment.NewLine)).ConfigureAwait(false);
+                await pty.WriteAsync(Encoding.UTF8.GetBytes(text + Environment.NewLine)).ConfigureAwait(true);
             }
             catch (InvalidOperationException ex)
             {
-                Dispatcher.Invoke(() =>
+                if (pane is not null)
                 {
-                    if (pane is not null)
-                    {
-                        pane.LastScreenText = string.Concat(pane.LastScreenText, Environment.NewLine, $"[send failed: {ex.Message}]", Environment.NewLine);
-                    }
+                    pane.LastScreenText = string.Concat(pane.LastScreenText, Environment.NewLine, $"[send failed: {ex.Message}]", Environment.NewLine);
+                }
 
-                    RefreshWorkspaceView();
-                });
+                RefreshWorkspaceView();
             }
         }
         else
         {
-            Dispatcher.Invoke(() =>
+            if (pane is not null)
             {
-                if (pane is not null)
-                {
-                    pane.LastScreenText = string.Concat(pane.LastScreenText, "> ", text, Environment.NewLine);
-                }
+                pane.LastScreenText = string.Concat(pane.LastScreenText, "> ", text, Environment.NewLine);
+            }
 
-                RefreshWorkspaceView();
-            });
+            RefreshWorkspaceView();
         }
     }
 
@@ -297,7 +357,7 @@ public partial class MainWindow : Window
     private TerminalNotification AddNotification(string title, string body, string? subtitle = null)
     {
         var workspace = ActiveWorkspace();
-        var pane = FirstPane();
+        var pane = ActivePane();
         var notification = new TerminalNotification
         {
             WorkspaceId = workspace.Id,
@@ -328,11 +388,24 @@ public partial class MainWindow : Window
         return _workspaces[_activeWorkspaceIndex];
     }
 
-    private PaneState? FirstPane()
+    private SurfaceState ActiveSurface()
     {
         var workspace = ActiveWorkspace();
-        var surface = workspace.Surfaces.ElementAtOrDefault(workspace.ActiveSurfaceIndex) ?? workspace.Surfaces[0];
-        return FindFirstPane(surface.Root);
+        if (workspace.ActiveSurfaceIndex < 0 || workspace.ActiveSurfaceIndex >= workspace.Surfaces.Count)
+        {
+            workspace.ActiveSurfaceIndex = 0;
+        }
+
+        return workspace.Surfaces[workspace.ActiveSurfaceIndex];
+    }
+
+    private PaneState? ActivePane()
+    {
+        var surface = ActiveSurface();
+        var pane = surface.ActivePaneId is null ? null : FindPane(surface.Root, surface.ActivePaneId);
+        pane ??= FindFirstPane(surface.Root);
+        surface.ActivePaneId = pane?.Id;
+        return pane;
     }
 
     private static PaneState? FindFirstPane(SplitNodeState node)
@@ -345,32 +418,259 @@ public partial class MainWindow : Window
         return node.First is not null ? FindFirstPane(node.First) : node.Second is not null ? FindFirstPane(node.Second) : null;
     }
 
-    private static bool SplitFirstLeaf(SplitNodeState node, SplitDirection direction)
+    private static PaneState? FindPane(SplitNodeState node, string paneId)
     {
-        if (node.Pane is not null)
+        if (node.Pane?.Id == paneId)
+        {
+            return node.Pane;
+        }
+
+        return node.First is not null && FindPane(node.First, paneId) is { } first
+            ? first
+            : node.Second is not null
+                ? FindPane(node.Second, paneId)
+                : null;
+    }
+
+    private PaneState? FindPaneById(string paneId)
+    {
+        foreach (var workspace in _workspaces)
+        {
+            foreach (var surface in workspace.Surfaces)
+            {
+                if (FindPane(surface.Root, paneId) is { } pane)
+                {
+                    return pane;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private bool SplitActivePane(SplitDirection direction)
+    {
+        var surface = ActiveSurface();
+        var activePane = ActivePane();
+        if (activePane is null)
+        {
+            return false;
+        }
+
+        var changed = SplitPane(surface.Root, activePane.Id, direction, out var newPane);
+        if (changed)
+        {
+            surface.ActivePaneId = newPane?.Id ?? activePane.Id;
+        }
+
+        return changed;
+    }
+
+    private static bool SplitPane(SplitNodeState node, string paneId, SplitDirection direction, out PaneState? newPane)
+    {
+        if (node.Pane?.Id == paneId)
         {
             var existingPane = node.Pane;
+            var second = SplitNodeState.CreateLeaf();
             node.Pane = null;
             node.Direction = direction;
             node.First = new SplitNodeState { Pane = existingPane };
-            node.Second = SplitNodeState.CreateLeaf();
+            node.Second = second;
+            newPane = second.Pane;
             return true;
         }
 
-        return (node.First is not null && SplitFirstLeaf(node.First, direction))
-            || (node.Second is not null && SplitFirstLeaf(node.Second, direction));
+        if (node.First is not null && SplitPane(node.First, paneId, direction, out newPane))
+        {
+            return true;
+        }
+
+        if (node.Second is not null && SplitPane(node.Second, paneId, direction, out newPane))
+        {
+            return true;
+        }
+
+        newPane = null;
+        return false;
     }
 
     private void RefreshWorkspaceView()
     {
         var workspace = ActiveWorkspace();
+        var surface = ActiveSurface();
+        var activePane = ActivePane();
         WorkspaceTitle.Text = workspace.Title;
-        WorkspaceMeta.Text = $"{workspace.WorkingDirectory}  |  unread: {workspace.UnreadCount}";
-        ScreenPreview.Text = FirstPane()?.LastScreenText ?? "No terminal output yet.";
-        TerminalStatus.Text = _pty is { IsRunning: true } ? "running" : "stopped";
-        ScreenPreview.ScrollToEnd();
+        WorkspaceMeta.Text = $"{workspace.WorkingDirectory}  |  panes: {CountPanes(surface.Root)}  |  unread: {workspace.UnreadCount}";
+        var activeSessionRunning = activePane is not null
+            && _ptySessions.TryGetValue(activePane.Id, out var activeSession)
+            && activeSession.IsRunning;
+        TerminalStatus.Text = $"{(activeSessionRunning ? "running" : "stopped")}  |  active: {activePane?.Title ?? "none"}";
+        PaneHost.Children.Clear();
+        PaneHost.Children.Add(BuildSplitElement(surface.Root, activePane?.Id));
         WorkspaceList.Items.Refresh();
     }
+
+    private FrameworkElement BuildSplitElement(SplitNodeState node, string? activePaneId)
+    {
+        if (node.Pane is not null)
+        {
+            return BuildPaneElement(node.Pane, node.Pane.Id == activePaneId);
+        }
+
+        var grid = new Grid();
+        if (node.Direction == SplitDirection.Down)
+        {
+            grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(node.Ratio, GridUnitType.Star), MinHeight = 120 });
+            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(Math.Max(0.1, 1 - node.Ratio), GridUnitType.Star), MinHeight = 120 });
+
+            if (node.First is not null)
+            {
+                var first = BuildSplitElement(node.First, activePaneId);
+                Grid.SetRow(first, 0);
+                grid.Children.Add(first);
+            }
+
+            var splitter = new GridSplitter
+            {
+                Height = 6,
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                Background = Brush("AgentMuxBorder")
+            };
+            splitter.DragCompleted += (_, _) =>
+            {
+                node.Ratio = RatioFromActual(grid.RowDefinitions[0].ActualHeight, grid.RowDefinitions[2].ActualHeight);
+            };
+            Grid.SetRow(splitter, 1);
+            grid.Children.Add(splitter);
+
+            if (node.Second is not null)
+            {
+                var second = BuildSplitElement(node.Second, activePaneId);
+                Grid.SetRow(second, 2);
+                grid.Children.Add(second);
+            }
+        }
+        else
+        {
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(node.Ratio, GridUnitType.Star), MinWidth = 180 });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(Math.Max(0.1, 1 - node.Ratio), GridUnitType.Star), MinWidth = 180 });
+
+            if (node.First is not null)
+            {
+                var first = BuildSplitElement(node.First, activePaneId);
+                Grid.SetColumn(first, 0);
+                grid.Children.Add(first);
+            }
+
+            var splitter = new GridSplitter
+            {
+                Width = 6,
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                Background = Brush("AgentMuxBorder")
+            };
+            splitter.DragCompleted += (_, _) =>
+            {
+                node.Ratio = RatioFromActual(grid.ColumnDefinitions[0].ActualWidth, grid.ColumnDefinitions[2].ActualWidth);
+            };
+            Grid.SetColumn(splitter, 1);
+            grid.Children.Add(splitter);
+
+            if (node.Second is not null)
+            {
+                var second = BuildSplitElement(node.Second, activePaneId);
+                Grid.SetColumn(second, 2);
+                grid.Children.Add(second);
+            }
+        }
+
+        return grid;
+    }
+
+    private Border BuildPaneElement(PaneState pane, bool isActive)
+    {
+        var border = new Border
+        {
+            Background = Brush("AgentMuxPanel"),
+            BorderBrush = isActive ? Brush("AgentMuxAccent") : Brush("AgentMuxBorder"),
+            BorderThickness = new Thickness(isActive ? 2 : 1),
+            CornerRadius = new CornerRadius(4),
+            Margin = new Thickness(3),
+            Padding = new Thickness(8),
+            Tag = pane
+        };
+        border.PreviewMouseDown += async (_, _) =>
+        {
+            ActiveSurface().ActivePaneId = pane.Id;
+            await EnsurePanePtyAsync(pane).ConfigureAwait(true);
+            RefreshWorkspaceView();
+        };
+
+        var layout = new Grid();
+        layout.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        layout.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+
+        var header = new DockPanel { LastChildFill = false, Margin = new Thickness(0, 0, 0, 6) };
+        var title = new TextBlock
+        {
+            Text = pane.HasUnreadNotification ? $"{pane.Title} *" : pane.Title,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = Brush("AgentMuxText")
+        };
+        DockPanel.SetDock(title, Dock.Left);
+        header.Children.Add(title);
+
+        var kind = new TextBlock
+        {
+            Text = pane.Kind.ToString().ToLowerInvariant(),
+            Foreground = Brush("AgentMuxMutedText"),
+            HorizontalAlignment = HorizontalAlignment.Right
+        };
+        DockPanel.SetDock(kind, Dock.Right);
+        header.Children.Add(kind);
+
+        layout.Children.Add(header);
+
+        var text = new TextBox
+        {
+            Text = pane.LastScreenText ?? "No terminal output yet.",
+            Background = new SolidColorBrush(Color.FromRgb(15, 19, 26)),
+            Foreground = Brush("AgentMuxText"),
+            BorderBrush = Brush("AgentMuxBorder"),
+            FontFamily = new FontFamily("Consolas"),
+            FontSize = 13,
+            TextWrapping = TextWrapping.Wrap,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            AcceptsReturn = true,
+            IsReadOnly = true
+        };
+        text.Loaded += (_, _) => text.ScrollToEnd();
+        Grid.SetRow(text, 1);
+        layout.Children.Add(text);
+
+        border.Child = layout;
+        return border;
+    }
+
+    private static int CountPanes(SplitNodeState node)
+    {
+        if (node.Pane is not null)
+        {
+            return 1;
+        }
+
+        return (node.First is null ? 0 : CountPanes(node.First))
+            + (node.Second is null ? 0 : CountPanes(node.Second));
+    }
+
+    private static double RatioFromActual(double first, double second)
+    {
+        var total = first + second;
+        return total <= 0 ? 0.5 : Math.Clamp(first / total, 0.1, 0.9);
+    }
+
+    private Brush Brush(string resourceKey) => (Brush)FindResource(resourceKey);
 
     private static T? Deserialize<T>(JsonElement? parameters)
     {

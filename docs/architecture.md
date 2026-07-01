@@ -21,8 +21,8 @@ AgentMux.Win.App
     |
     +-- workspace/session model
     +-- notification state
-    +-- ConPTY terminal host
-    +-- terminal renderer
+    +-- per-pane ConPTY terminal hosts
+    +-- terminal renderer preview
 ```
 
 ## MVP Data Model
@@ -31,7 +31,8 @@ AgentMux.Win.App
 - Workspace contains surfaces.
 - Surface contains a split tree.
 - Split leaves contain panes.
-- Panes represent terminal sessions in MVP and browser surfaces later.
+- Terminal panes own independent ConPTY sessions, started lazily when a pane becomes active or receives input.
+- Browser panes are planned for a later sprint.
 
 ## IPC
 
