@@ -662,10 +662,10 @@ public sealed class MainWindowSmokeTests
                         })()
                         """
                 }));
-                AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserClick, new
+                await WaitForRpcOkAsync(window, AgentMuxMethods.BrowserClick, new
                 {
                     selector = "#agentmux-download-link"
-                }));
+                }).ConfigureAwait(true);
 
                 var downloadLog = await WaitForDownloadAsync(window, downloadToken, "Completed").ConfigureAwait(true);
                 Assert.True(TryFindDownload(downloadLog, downloadToken, "Completed", out var downloadEvent), downloadLog.ToString());
