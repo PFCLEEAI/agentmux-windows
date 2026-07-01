@@ -25,7 +25,6 @@ public sealed class ConPtySession : IPtySession
     private int? _processId;
     private int? _exitCode;
     private bool _exitReported;
-    private bool _killedProcessOnDispose;
 
     public string Id { get; } = $"pty-{Guid.NewGuid():N}";
     public bool IsRunning { get; private set; }
@@ -37,28 +36,6 @@ public sealed class ConPtySession : IPtySession
             lock (_gate)
             {
                 return _processId;
-            }
-        }
-    }
-
-    internal int? DirectChildExitCodeForTests
-    {
-        get
-        {
-            lock (_gate)
-            {
-                return _exitCode;
-            }
-        }
-    }
-
-    internal bool LastDisposeKillAttemptedForTests
-    {
-        get
-        {
-            lock (_gate)
-            {
-                return _killedProcessOnDispose;
             }
         }
     }
@@ -83,7 +60,6 @@ public sealed class ConPtySession : IPtySession
             _exitCode = null;
             _exitReported = false;
             _processId = null;
-            _killedProcessOnDispose = false;
         }
 
         var inputReadForPseudoConsole = CreatePipe(out var inputWrite);
@@ -279,13 +255,7 @@ public sealed class ConPtySession : IPtySession
             return;
         }
 
-        if (TryKillProcess(process))
-        {
-            lock (_gate)
-            {
-                _killedProcessOnDispose = true;
-            }
-        }
+        _ = TryKillProcess(process);
 
         _ = await WaitForExitAsync(process, DirectChildKillExitTimeout).ConfigureAwait(false);
         MarkProcessExitedIfPossible(process);

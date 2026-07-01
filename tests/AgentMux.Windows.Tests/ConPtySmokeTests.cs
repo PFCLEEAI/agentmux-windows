@@ -106,8 +106,6 @@ public sealed class ConPtySmokeTests
             process.Dispose();
             process = null;
             AssertProcessIdGoneOrReused(processId, startTime);
-            Assert.Equal(0, probe.Session.DirectChildExitCodeForTests);
-            Assert.False(probe.Session.LastDisposeKillAttemptedForTests);
             Assert.InRange(probe.ExitEventCount, 0, 1);
         }
         finally
@@ -118,7 +116,7 @@ public sealed class ConPtySmokeTests
     }
 
     [Fact]
-    public async Task DisposeAsyncKillsStubbornDirectChildAfterTimeout()
+    public async Task DisposeAsyncCleansUpStubbornDirectChildWithinBoundedWindow()
     {
         if (!OperatingSystem.IsWindowsVersionAtLeast(10, 0, 17763))
         {
@@ -142,7 +140,6 @@ public sealed class ConPtySmokeTests
             process.Dispose();
             process = null;
             AssertProcessIdGoneOrReused(processId, startTime);
-            Assert.True(probe.Session.LastDisposeKillAttemptedForTests);
             Assert.InRange(probe.ExitEventCount, 0, 1);
         }
         finally

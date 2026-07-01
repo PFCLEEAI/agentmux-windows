@@ -11,7 +11,7 @@
 - Launch a shell through ConPTY. Passing in hosted Windows smoke for process output and stdin echo.
 - Input/output pump. Passing in hosted Windows smoke.
 - Resize support. Preview implemented through WPF pane-size propagation, explicit `surface.resize_terminal`, and hosted ConPTY resize smoke.
-- Process cleanup and timeout handling. Preview implemented for the direct ConPTY child: disposal closes input, waits briefly for cooperative exit, and kills the direct child after a bounded timeout. Full process-tree cleanup and Windows Job Object containment remain future work.
+- Process cleanup and timeout handling. Preview implemented for the direct ConPTY child: disposal closes input, waits briefly for child exit, and attempts to kill the direct child if it is still running after a bounded timeout. Full process-tree cleanup and Windows Job Object containment remain future work.
 - Headless Windows smoke tests. Passing as a blocking GitHub Actions gate; real Windows desktop smoke still required before release-ready status.
 
 ## Sprint 2 - Workspace UI
