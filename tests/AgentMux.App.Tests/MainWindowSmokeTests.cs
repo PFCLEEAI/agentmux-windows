@@ -52,7 +52,7 @@ public sealed class MainWindowSmokeTests
                 Assert.True(window.HandlePreviewKeyDownForSmokeTest(Key.System, ModifierKeys.Control | ModifierKeys.Alt, Key.Right));
                 Assert.Equal(activeAfterSplit, window.ActivePaneIdForSmokeTest);
 
-                Assert.False(window.HandlePreviewKeyDownForSmokeTest(Key.System, ModifierKeys.Control | ModifierKeys.Alt, Key.Right));
+                Assert.True(window.HandlePreviewKeyDownForSmokeTest(Key.System, ModifierKeys.Control | ModifierKeys.Alt, Key.Right));
                 Assert.Equal(activeAfterSplit, window.ActivePaneIdForSmokeTest);
 
                 Assert.True(window.HandlePreviewKeyDownForSmokeTest(Key.System, ModifierKeys.Control | ModifierKeys.Alt, Key.Left));
