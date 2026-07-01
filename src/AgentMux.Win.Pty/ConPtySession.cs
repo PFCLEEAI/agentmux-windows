@@ -123,11 +123,15 @@ public sealed class ConPtySession : IPtySession
             await stop.CancelAsync().ConfigureAwait(false);
         }
 
+        _inputWriter?.Dispose();
+        _outputReader?.Dispose();
+        DisposeNative();
+
         if (reader is not null)
         {
             try
             {
-                await reader.ConfigureAwait(false);
+                await reader.WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
@@ -137,11 +141,12 @@ public sealed class ConPtySession : IPtySession
             {
                 // Pipes often close while the pseudoconsole is shutting down.
             }
+            catch (TimeoutException)
+            {
+                // Do not let a blocked pipe reader hang app shutdown.
+            }
         }
 
-        _inputWriter?.Dispose();
-        _outputReader?.Dispose();
-        DisposeNative();
         _process?.Dispose();
         stop?.Dispose();
     }
