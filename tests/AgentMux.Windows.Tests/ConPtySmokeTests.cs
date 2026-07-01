@@ -36,6 +36,11 @@ public sealed class ConPtySmokeTests
         });
 
         await session.WriteAsync("echo AGENTMUX_SMOKE\r"u8.ToArray());
-        await sawSmoke.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        var completed = await Task.WhenAny(sawSmoke.Task, Task.Delay(TimeSpan.FromSeconds(10)));
+        if (completed != sawSmoke.Task)
+        {
+            throw new TimeoutException($"Timed out waiting for ConPTY echo. Captured output: {output}");
+        }
     }
 }

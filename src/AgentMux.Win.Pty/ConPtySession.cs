@@ -13,6 +13,8 @@ public sealed class ConPtySession : IPtySession
 
     private readonly object _gate = new();
     private IntPtr _pseudoConsole;
+    private SafeFileHandle? _inputReadForPseudoConsole;
+    private SafeFileHandle? _outputWriteForPseudoConsole;
     private FileStream? _inputWriter;
     private FileStream? _outputReader;
     private Process? _process;
@@ -40,9 +42,9 @@ public sealed class ConPtySession : IPtySession
             }
         }
 
-        using var inputReadForPseudoConsole = CreatePipe(out var inputWrite);
+        var inputReadForPseudoConsole = CreatePipe(out var inputWrite);
         var outputReadForApp = CreatePipe(out var outputWrite);
-        using var outputWriteForPseudoConsole = outputWrite;
+        var outputWriteForPseudoConsole = outputWrite;
 
         try
         {
@@ -57,6 +59,8 @@ public sealed class ConPtySession : IPtySession
 
             _inputWriter = new FileStream(inputWrite, FileAccess.Write, 4096, isAsync: false);
             _outputReader = new FileStream(outputReadForApp, FileAccess.Read, 4096, isAsync: false);
+            _inputReadForPseudoConsole = inputReadForPseudoConsole;
+            _outputWriteForPseudoConsole = outputWriteForPseudoConsole;
             _readerStop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             _readerTask = Task.Run(() => ReadOutputLoopAsync(_readerStop.Token), CancellationToken.None);
 
@@ -69,6 +73,8 @@ public sealed class ConPtySession : IPtySession
         {
             inputWrite.Dispose();
             outputReadForApp.Dispose();
+            inputReadForPseudoConsole.Dispose();
+            outputWriteForPseudoConsole.Dispose();
             DisposeNative();
             throw;
         }
@@ -126,6 +132,8 @@ public sealed class ConPtySession : IPtySession
 
         _inputWriter?.Dispose();
         _outputReader?.Dispose();
+        _inputReadForPseudoConsole?.Dispose();
+        _outputWriteForPseudoConsole?.Dispose();
         DisposeNative();
 
         if (reader is not null)
