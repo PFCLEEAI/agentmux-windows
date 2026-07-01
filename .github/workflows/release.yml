@@ -1,0 +1,197 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Optional package version label for manual artifact builds"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build-release-assets:
+    name: Build Windows release assets
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    env:
+      PACKAGE_DIR: ${{ runner.temp }}\agentmux-windows-package
+      RELEASE_DIR: ${{ runner.temp }}\agentmux-release
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+      - name: Restore
+        run: dotnet restore AgentMux.sln
+      - name: Build
+        run: dotnet build AgentMux.sln -c Release --no-restore
+      - name: Test
+        run: dotnet test tests/AgentMux.Tests/AgentMux.Tests.csproj -c Release --no-build
+      - name: Windows app smoke
+        run: dotnet test tests/AgentMux.App.Tests/AgentMux.App.Tests.csproj -c Release --no-build
+        env:
+          AGENTMUX_SMOKE_ARTIFACT_DIR: ${{ runner.temp }}\agentmux-smoke-artifacts
+      - name: Upload Windows app smoke artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-app-smoke-artifacts
+          path: ${{ runner.temp }}\agentmux-smoke-artifacts
+          if-no-files-found: ignore
+      - name: Windows ConPTY smoke
+        run: dotnet test tests/AgentMux.Windows.Tests/AgentMux.Windows.Tests.csproj -c Release --no-build
+      - name: Resolve package version
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}"
+          $releaseTag = ""
+          $inputVersion = "${{ inputs.version }}"
+
+          if ("${{ github.event_name }}" -eq "workflow_dispatch" -and -not [string]::IsNullOrWhiteSpace($inputVersion)) {
+            $version = $inputVersion
+          }
+
+          if ("${{ github.event_name }}" -eq "push" -and "${{ github.ref_type }}" -eq "tag") {
+            $releaseTag = "${{ github.ref_name }}"
+          }
+
+          if ([string]::IsNullOrWhiteSpace($version) -or $version -eq "main") {
+            $version = "manual-${{ github.run_number }}"
+          }
+
+          $safeVersion = $version -replace "[^0-9A-Za-z._-]", "-"
+          "AGENTMUX_RELEASE_VERSION=$safeVersion" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "AGENTMUX_RELEASE_TAG=$releaseTag" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "AGENTMUX_ASSET_BASE=agentmux-windows-$safeVersion-framework-dependent" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Publish Windows package
+        shell: pwsh
+        run: |
+          .\tools\package-windows.ps1 `
+            -OutputPath "$env:PACKAGE_DIR" `
+            -Configuration Release `
+            -Commit "${{ github.sha }}" `
+            -RunId "${{ github.run_id }}" `
+            -RunNumber "${{ github.run_number }}" `
+            -RunAttempt "${{ github.run_attempt }}" `
+            -ReleaseTag "$env:AGENTMUX_RELEASE_TAG" `
+            -AssetBase "$env:AGENTMUX_ASSET_BASE" `
+            -PackageLayout "zip-root" `
+            -NoBuild
+      - name: Create release ZIP and checksum
+        shell: pwsh
+        run: |
+          if (Test-Path $env:RELEASE_DIR) {
+            Remove-Item -Recurse -Force $env:RELEASE_DIR
+          }
+
+          New-Item -ItemType Directory -Force -Path $env:RELEASE_DIR | Out-Null
+          $zipPath = Join-Path $env:RELEASE_DIR "$env:AGENTMUX_ASSET_BASE.zip"
+
+          Compress-Archive `
+            -Path (Join-Path $env:PACKAGE_DIR "*") `
+            -DestinationPath $zipPath `
+            -CompressionLevel Optimal
+
+          $hash = (Get-FileHash $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $(Split-Path -Leaf $zipPath)" | Set-Content -Encoding ASCII "$zipPath.sha256"
+
+          Get-ChildItem $env:RELEASE_DIR | Sort-Object Name | Select-Object Name,Length
+      - name: Smoke release ZIP layout
+        shell: pwsh
+        run: |
+          $zipPath = Join-Path $env:RELEASE_DIR "$env:AGENTMUX_ASSET_BASE.zip"
+          $smokeDir = Join-Path $env:RUNNER_TEMP "agentmux-release-smoke"
+
+          if (Test-Path $smokeDir) {
+            Remove-Item -Recurse -Force $smokeDir
+          }
+
+          Expand-Archive $zipPath -DestinationPath $smokeDir -Force
+
+          if (Test-Path (Join-Path $smokeDir "agentmux-windows-package")) {
+            throw "Release ZIP contains an extra package parent folder."
+          }
+
+          foreach ($file in @("AgentMux.exe", "cli\agentmux.exe", "PACKAGE.json", "SHA256SUMS.txt")) {
+            if (-not (Test-Path (Join-Path $smokeDir $file))) {
+              throw "Release ZIP missing root file: $file"
+            }
+          }
+
+          $cliHelp = & (Join-Path $smokeDir "cli\agentmux.exe") --help
+          if ($LASTEXITCODE -ne 0 -or ($cliHelp -join "`n") -notmatch "agentmux - CLI") {
+            throw "Release ZIP CLI smoke failed."
+          }
+
+          foreach ($line in Get-Content (Join-Path $smokeDir "SHA256SUMS.txt")) {
+            if ([string]::IsNullOrWhiteSpace($line)) {
+              continue
+            }
+
+            $parts = $line -split "  ", 2
+            if ($parts.Length -ne 2) {
+              throw "Invalid checksum line: $line"
+            }
+
+            $relativePath = $parts[1].Replace("/", [System.IO.Path]::DirectorySeparatorChar)
+            $path = Join-Path $smokeDir $relativePath
+            if (-not (Test-Path $path)) {
+              throw "Checksum file entry is missing from ZIP: $($parts[1])"
+            }
+
+            $actual = (Get-FileHash $path -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($actual -ne $parts[0]) {
+              throw "Checksum mismatch for $($parts[1])"
+            }
+          }
+      - name: Upload release package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: agentmux-windows-release
+          path: ${{ runner.temp }}\agentmux-release
+          if-no-files-found: error
+
+  publish-prerelease:
+    name: Publish GitHub prerelease
+    needs: build-release-assets
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download release package artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: agentmux-windows-release
+          path: release-assets
+      - name: Create or update GitHub prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          cat > release-notes.md <<'EOF'
+          Pre-alpha framework-dependent AgentMux Windows package.
+
+          Requires:
+          - .NET 9 Desktop Runtime
+          - Microsoft Edge WebView2 Runtime
+
+          This is a smoke-ready preview package, not an installer. Manual Windows desktop QA is still required before release-ready status.
+          EOF
+
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" release-assets/* --clobber
+          else
+            gh release create "$RELEASE_TAG" release-assets/* \
+              --title "AgentMux Windows $RELEASE_TAG" \
+              --notes-file release-notes.md \
+              --prerelease
+          fi

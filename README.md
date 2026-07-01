@@ -18,7 +18,7 @@ It is inspired by the terminal/workspace workflow category popularized by cmux, 
 
 Pre-alpha scaffold.
 
-This repository currently contains the public-safe foundation: project structure, core models, OSC notification parsing, named-pipe JSON-RPC contracts, CLI skeleton, a WPF shell with workspace sidebar and recursive split panes, per-pane ConPTY session hosting, a WebView2/xterm terminal-renderer bridge with WPF fallback, a WebView2 browser-pane preview, direct terminal/browser input, lightweight browser automation commands, configurable app shortcuts, tests, CI, and a framework-dependent Windows package artifact. Broader browser automation semantics and true manual Windows desktop smoke remain future implementation work.
+This repository currently contains the public-safe foundation: project structure, core models, OSC notification parsing, named-pipe JSON-RPC contracts, CLI skeleton, a WPF shell with workspace sidebar and recursive split panes, per-pane ConPTY session hosting, a WebView2/xterm terminal-renderer bridge with WPF fallback, a WebView2 browser-pane preview, direct terminal/browser input, lightweight browser automation commands, configurable app shortcuts, tests, CI, a framework-dependent Windows package artifact, and a prerelease ZIP workflow. Broader browser automation semantics and true manual Windows desktop smoke remain future implementation work.
 
 Required Windows CI proves the solution restores, builds, runs deterministic unit tests, composes the WPF split-pane window in an STA smoke test, and passes a headless ConPTY smoke test for command output plus stdin echo. A real visible Windows desktop smoke test is still required before calling this release-ready.
 
@@ -46,18 +46,26 @@ dotnet build AgentMux.sln -c Release
 dotnet run --project src/AgentMux.Win.App/AgentMux.Win.App.csproj
 ```
 
-CI publishes a lightweight framework-dependent artifact named `agentmux-windows-package` after the Windows smoke gates pass. It contains:
+CI publishes a lightweight framework-dependent artifact named `agentmux-windows-package` after the Windows smoke gates pass. The Release workflow uses the same package script to produce `agentmux-windows-<version>-framework-dependent.zip` plus a sibling `.sha256` file. `v*` tag pushes create GitHub prereleases; manual workflow dispatch builds uploadable artifacts only.
+
+The package contains:
 
 - `AgentMux.exe`: WPF desktop app
 - `cli\agentmux.exe`: CLI for the running app
 - runtime config, dependency files, WebView2/xterm assets, `PACKAGE.json`, `SHA256SUMS.txt`, README, and license
 
-It expects .NET 9 Desktop Runtime and WebView2 Runtime on the Windows machine. It is a smoke-ready package, not an installer.
+It expects .NET 9 Desktop Runtime and WebView2 Runtime on the Windows machine. It is a smoke-ready pre-alpha package, not an installer.
 
 After extracting the artifact on Windows, run this from the package root for a quick CLI sanity check:
 
 ```powershell
 .\cli\agentmux.exe --help
+```
+
+To produce the package from a Windows checkout after building:
+
+```powershell
+.\tools\package-windows.ps1 -OutputPath .\artifacts\agentmux-windows-package -Configuration Release -NoBuild
 ```
 
 Experimental ConPTY smoke tests:

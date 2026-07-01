@@ -58,6 +58,8 @@
 
 - Framework-dependent Windows CI package. Implemented as `agentmux-windows-package` after smoke gates pass.
 - Package provenance, checksums, and packaged CLI smoke. Implemented in CI.
+- Shared package script. Implemented so CI artifacts and release assets use the same required-file and CLI-smoke gate.
+- Prerelease ZIP workflow. Implemented for `v*` tags with ZIP round-trip smoke and outer SHA-256 checksum.
 - Installer/MSIX/signing. Future work after real desktop QA.
 
 ## Sprint 6 - Browser Parity
