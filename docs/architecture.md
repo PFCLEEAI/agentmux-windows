@@ -23,6 +23,7 @@ AgentMux.Win.App
     +-- notification state
     +-- per-pane ConPTY terminal hosts
     +-- WebView2/xterm terminal renderer bridge
+    +-- WebView2 browser pane bridge
 ```
 
 ## MVP Data Model
@@ -33,7 +34,7 @@ AgentMux.Win.App
 - Split leaves contain panes.
 - Terminal panes own independent ConPTY sessions, started lazily when a pane becomes active or receives input.
 - Terminal panes render through a cached WebView2/xterm bridge with a WPF text fallback. The bridge displays current pane text and keeps `PaneState.LastScreenText` as the automation/read-screen source.
-- Browser panes are planned for a later sprint.
+- Browser panes render through a cached WebView2 bridge with a WPF fallback. `PaneState.Url` is the current browser navigation source, and `surface.open_url` converts or navigates the active pane.
 
 ## IPC
 

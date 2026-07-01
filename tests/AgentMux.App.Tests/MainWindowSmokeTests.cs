@@ -26,6 +26,7 @@ public sealed class MainWindowSmokeTests
 
                 Assert.True(window.HasButtonForSmokeTest("Split right"));
                 Assert.True(window.HasButtonForSmokeTest("Split down"));
+                Assert.True(window.HasButtonForSmokeTest("Browser"));
                 Assert.Equal(1, window.PaneCountForSmokeTest);
                 Assert.Equal(1, window.RenderedTerminalPaneCountForSmokeTest);
 
@@ -43,6 +44,16 @@ public sealed class MainWindowSmokeTests
 
                 window.AppendActivePaneTextForSmokeTest("_STREAM_APPEND");
                 Assert.True(window.RenderedTextContainsForSmokeTest("AGENTMUX_UI_SMOKE_STREAM_APPEND"));
+
+                var browserUrl = window.OpenBrowserInActivePaneForSmokeTest("example.com");
+                Assert.Equal("https://example.com/", browserUrl);
+                Assert.Equal(1, window.RenderedBrowserPaneCountForSmokeTest);
+                Assert.Equal(1, window.RenderedTerminalPaneCountForSmokeTest);
+                Assert.True(window.RenderedTextContainsForSmokeTest(browserUrl));
+
+                var safeUrl = window.OpenBrowserInActivePaneForSmokeTest("https://");
+                Assert.Equal("about:blank", safeUrl);
+                Assert.True(window.RenderedTextContainsForSmokeTest(safeUrl));
             }
             finally
             {

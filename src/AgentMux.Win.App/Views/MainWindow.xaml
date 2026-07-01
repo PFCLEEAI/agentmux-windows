@@ -81,7 +81,7 @@
 
                     <DockPanel Grid.Row="0" Margin="0,0,0,12" LastChildFill="False">
                         <StackPanel DockPanel.Dock="Left" Orientation="Horizontal">
-                            <TextBlock Text="Terminal"
+                            <TextBlock Text="Surface"
                                        FontSize="18"
                                        FontWeight="SemiBold"
                                        VerticalAlignment="Center" />
@@ -95,6 +95,11 @@
                                     Height="28"
                                     Margin="8,0,0,0"
                                     Click="SplitDown_Click" />
+                            <Button Content="Browser"
+                                    Width="72"
+                                    Height="28"
+                                    Margin="8,0,0,0"
+                                    Click="OpenBrowser_Click" />
                         </StackPanel>
                         <TextBlock x:Name="TerminalStatus"
                                    DockPanel.Dock="Right"

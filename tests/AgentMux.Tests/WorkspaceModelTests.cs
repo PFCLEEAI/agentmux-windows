@@ -50,4 +50,22 @@ public sealed class WorkspaceModelTests
         Assert.Equal(paneId, loaded.ActivePaneId);
         Assert.Equal(paneId, loaded.Root.Pane?.Id);
     }
+
+    [Fact]
+    public void BrowserPaneUrlRoundTripsThroughJson()
+    {
+        var surface = SurfaceState.CreateDefault();
+        var pane = surface.Root.Pane!;
+        pane.Kind = PaneKind.Browser;
+        pane.Url = "https://example.com";
+        pane.Title = "example.com";
+
+        var json = JsonSerializer.Serialize(surface, AgentMuxJson.Options);
+        var loaded = JsonSerializer.Deserialize<SurfaceState>(json, AgentMuxJson.Options);
+
+        Assert.NotNull(loaded);
+        Assert.Equal(PaneKind.Browser, loaded.Root.Pane?.Kind);
+        Assert.Equal("https://example.com", loaded.Root.Pane?.Url);
+        Assert.Equal("example.com", loaded.Root.Pane?.Title);
+    }
 }

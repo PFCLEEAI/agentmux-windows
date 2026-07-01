@@ -54,9 +54,9 @@
 
 ## Sprint 6 - Browser Parity
 
-- WebView2 browser pane.
-- Open/navigate.
+- WebView2 browser pane. Preview implemented with WPF fallback.
+- Open/navigate. Preview implemented through `surface.open_url`, `agentmux open-url`, and the browser pane address bar.
 - Snapshot/click/fill/eval.
 - Screenshot.
 
-Browser parity starts after the terminal-agent workflow is stable.
+Browser automation parity still needs click/fill/eval/screenshot and visible WebView2 runtime smoke.

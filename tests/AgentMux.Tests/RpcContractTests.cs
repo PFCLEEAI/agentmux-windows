@@ -39,4 +39,10 @@ public sealed class RpcContractTests
     {
         Assert.Equal("surface.send_key", AgentMuxMethods.SendKey);
     }
+
+    [Fact]
+    public void OpenUrlMethodIsStable()
+    {
+        Assert.Equal("surface.open_url", AgentMuxMethods.OpenUrl);
+    }
 }

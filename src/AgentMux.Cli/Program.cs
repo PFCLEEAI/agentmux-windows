@@ -27,6 +27,8 @@ public static class Program
                 "notify" => await client.SendAsync(AgentMuxMethods.Notify, ParseNotify(args[1..])).ConfigureAwait(false),
                 "workspace" => await HandleWorkspaceAsync(client, args[1..]).ConfigureAwait(false),
                 "split" => await HandleSplitAsync(client, args[1..]).ConfigureAwait(false),
+                "open-url" => await HandleOpenUrlAsync(client, args[1..]).ConfigureAwait(false),
+                "browser" or "browse" or "open" => await HandleBrowserAsync(client, args[1..]).ConfigureAwait(false),
                 "send" => await client.SendAsync(AgentMuxMethods.SendText, new { text = string.Join(' ', args[1..]) }).ConfigureAwait(false),
                 "send-key" => await client.SendAsync(AgentMuxMethods.SendKey, ParseSendKey(args[1..])).ConfigureAwait(false),
                 "read-screen" => await client.SendAsync(AgentMuxMethods.ReadScreen, ParseNamed(args[1..])).ConfigureAwait(false),
@@ -67,6 +69,53 @@ public static class Program
         }
 
         return await client.SendAsync(AgentMuxMethods.Split, new { direction = args[0] }).ConfigureAwait(false);
+    }
+
+    private static async Task<AgentMuxResponse> HandleBrowserAsync(NamedPipeRpcClient client, string[] args)
+    {
+        if (args.Length == 0)
+        {
+            return AgentMuxResponse.Failure("", "Usage: agentmux browser open <url>");
+        }
+
+        if (args[0].Equals("open", StringComparison.OrdinalIgnoreCase)
+            || args[0].Equals("navigate", StringComparison.OrdinalIgnoreCase))
+        {
+            if (args.Length == 1)
+            {
+                return AgentMuxResponse.Failure("", "Usage: agentmux browser open <url>");
+            }
+
+            return await client.SendAsync(AgentMuxMethods.OpenUrl, ParseOpenUrl(args[1..])).ConfigureAwait(false);
+        }
+
+        if (args.Length == 1)
+        {
+            return await client.SendAsync(AgentMuxMethods.OpenUrl, ParseOpenUrl(args)).ConfigureAwait(false);
+        }
+
+        return AgentMuxResponse.Failure("", $"Unknown browser command: {args[0]}");
+    }
+
+    private static async Task<AgentMuxResponse> HandleOpenUrlAsync(NamedPipeRpcClient client, string[] args)
+    {
+        if (args.Length == 0)
+        {
+            return AgentMuxResponse.Failure("", "Usage: agentmux open-url <url>");
+        }
+
+        return await client.SendAsync(AgentMuxMethods.OpenUrl, ParseOpenUrl(args)).ConfigureAwait(false);
+    }
+
+    private static object ParseOpenUrl(string[] args)
+    {
+        var named = ParseNamed(args);
+        if (!named.ContainsKey("url") && named.TryGetValue("_arg0", out var positional))
+        {
+            named["url"] = positional;
+        }
+
+        return named;
     }
 
     private static object ParseNotify(string[] args)
@@ -160,6 +209,8 @@ public static class Program
           agentmux workspace select --index 0
           agentmux split right
           agentmux split down
+          agentmux open-url https://example.com
+          agentmux browser open https://example.com
           agentmux send "npm test"
           agentmux send-key Enter
           agentmux read-screen --lines 50

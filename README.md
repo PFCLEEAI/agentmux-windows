@@ -18,7 +18,7 @@ It is inspired by the terminal/workspace workflow category popularized by cmux, 
 
 Pre-alpha scaffold.
 
-This repository currently contains the public-safe foundation: project structure, core models, OSC notification parsing, named-pipe JSON-RPC contracts, CLI skeleton, a WPF shell with workspace sidebar and recursive split panes, per-pane ConPTY session hosting, a WebView2/xterm terminal-renderer bridge with WPF fallback, direct terminal input, tests, and CI. Richer keyboard navigation and browser panes remain future implementation work.
+This repository currently contains the public-safe foundation: project structure, core models, OSC notification parsing, named-pipe JSON-RPC contracts, CLI skeleton, a WPF shell with workspace sidebar and recursive split panes, per-pane ConPTY session hosting, a WebView2/xterm terminal-renderer bridge with WPF fallback, a WebView2 browser-pane preview, direct terminal/browser input, tests, and CI. Richer keyboard navigation, visible WebView2 desktop smoke, and browser automation remain future implementation work.
 
 Required Windows CI proves the solution restores, builds, runs deterministic unit tests, composes the WPF split-pane window in an STA smoke test, and passes a headless ConPTY smoke test for command output plus stdin echo. A real visible Windows desktop smoke test is still required before calling this release-ready.
 
@@ -63,6 +63,8 @@ agentmux notify --title "Codex" --body "Waiting for input"
 agentmux workspace list
 agentmux workspace create --title "API"
 agentmux split right
+agentmux open-url https://example.com
+agentmux browser open https://example.com
 agentmux send "npm test"
 agentmux read-screen --lines 50
 ```

@@ -18,6 +18,7 @@ public partial class MainWindow : Window
     private readonly List<TerminalNotification> _notifications = [];
     private readonly Dictionary<string, ConPtySession> _ptySessions = [];
     private readonly Dictionary<string, TerminalPaneView> _terminalViews = [];
+    private readonly Dictionary<string, BrowserPaneView> _browserViews = [];
     private readonly HashSet<string> _ptyStartFailedPaneIds = [];
     private NamedPipeRpcServer? _server;
     private int _activeWorkspaceIndex;
@@ -91,6 +92,12 @@ public partial class MainWindow : Window
         RefreshWorkspaceView();
     }
 
+    private void OpenBrowser_Click(object sender, RoutedEventArgs e)
+    {
+        OpenBrowserInActivePane("about:blank");
+        RefreshWorkspaceView();
+    }
+
     private void WorkspaceList_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (WorkspaceList.SelectedIndex >= 0)
@@ -150,6 +157,7 @@ public partial class MainWindow : Window
             AgentMuxMethods.SendText => AgentMuxResponse.Success(request.Id, HandleSendText(request.Params)),
             AgentMuxMethods.SendKey => AgentMuxResponse.Success(request.Id, HandleSendKey(request.Params)),
             AgentMuxMethods.ReadScreen => AgentMuxResponse.Success(request.Id, new { text = ActivePane()?.LastScreenText ?? "" }),
+            AgentMuxMethods.OpenUrl => AgentMuxResponse.Success(request.Id, HandleOpenUrl(request.Params)),
             _ => AgentMuxResponse.Failure(request.Id, $"Unsupported method: {request.Method}")
         };
 
@@ -164,7 +172,8 @@ public partial class MainWindow : Window
         workspaceCount = _workspaces.Count,
         activeWorkspaceIndex = _activeWorkspaceIndex,
         notificationCount = _notifications.Count,
-        terminalSessionCount = _ptySessions.Count
+        terminalSessionCount = _ptySessions.Count,
+        browserPaneCount = CountPaneKind(ActiveSurface().Root, PaneKind.Browser)
     };
 
     private WorkspaceState HandleWorkspaceCreate(JsonElement? parameters)
@@ -213,9 +222,9 @@ public partial class MainWindow : Window
     {
         var parsed = Deserialize<SendTextParams>(parameters);
         var pane = ActivePane();
-        if (pane is null)
+        if (pane?.Kind != PaneKind.Terminal)
         {
-            return new { sent = false };
+            return new { sent = false, reason = "active pane is not a terminal" };
         }
 
         var text = parsed?.Text ?? "";
@@ -226,6 +235,11 @@ public partial class MainWindow : Window
 
     private object HandleSendKey(JsonElement? parameters)
     {
+        if (ActivePane()?.Kind != PaneKind.Terminal)
+        {
+            return new { sent = false, reason = "active pane is not a terminal" };
+        }
+
         var parsed = Deserialize<Dictionary<string, string>>(parameters);
         string? key = null;
         parsed?.TryGetValue("key", out key);
@@ -241,6 +255,19 @@ public partial class MainWindow : Window
 
         _ = SendTerminalSequenceAsync(sequence, $"[key: {key}]{Environment.NewLine}");
         return new { sent = true, key, bytes = Encoding.UTF8.GetByteCount(sequence) };
+    }
+
+    private object HandleOpenUrl(JsonElement? parameters)
+    {
+        var parsed = Deserialize<OpenUrlParams>(parameters);
+        var pane = ActivePane();
+        if (pane is null)
+        {
+            return new { opened = false, reason = "no active pane" };
+        }
+
+        var url = OpenBrowserInPane(pane, parsed?.Url);
+        return new { opened = true, paneId = pane.Id, url };
     }
 
     private async Task<ConPtySession?> EnsurePanePtyAsync(PaneState? pane)
@@ -351,6 +378,17 @@ public partial class MainWindow : Window
         text = TerminalInput.Text;
         TerminalInput.Clear();
 
+        if (ActivePane() is { Kind: PaneKind.Browser } pane)
+        {
+            if (!string.IsNullOrWhiteSpace(text))
+            {
+                OpenBrowserInPane(pane, text);
+                RefreshWorkspaceView();
+            }
+
+            return;
+        }
+
         await SendTextToTerminalAsync(text).ConfigureAwait(false);
     }
 
@@ -371,7 +409,7 @@ public partial class MainWindow : Window
 
     private async Task SendTerminalSequenceToPaneAsync(PaneState? pane, string sequence, string? fallbackText = null)
     {
-        if (string.IsNullOrEmpty(sequence))
+        if (string.IsNullOrEmpty(sequence) || pane?.Kind != PaneKind.Terminal)
         {
             return;
         }
@@ -626,7 +664,9 @@ public partial class MainWindow : Window
         var activeSessionRunning = activePane is not null
             && _ptySessions.TryGetValue(activePane.Id, out var activeSession)
             && activeSession.IsRunning;
-        TerminalStatus.Text = $"{(activeSessionRunning ? "running" : "stopped")}  |  active: {activePane?.Title ?? "none"}";
+        var activeKind = activePane?.Kind.ToString().ToLowerInvariant() ?? "none";
+        TerminalStatus.Text = $"{(activeSessionRunning ? "running" : "stopped")}  |  active: {activePane?.Title ?? "none"}  |  {activeKind}";
+        TerminalInput.IsEnabled = activePane is not null;
         PaneHost.Children.Clear();
         PaneHost.Children.Add(BuildSplitElement(surface.Root, activePane?.Id));
         WorkspaceList.Items.Refresh();
@@ -725,7 +765,11 @@ public partial class MainWindow : Window
         border.PreviewMouseDown += async (_, _) =>
         {
             ActiveSurface().ActivePaneId = pane.Id;
-            await EnsurePanePtyAsync(pane).ConfigureAwait(true);
+            if (pane.Kind == PaneKind.Terminal)
+            {
+                await EnsurePanePtyAsync(pane).ConfigureAwait(true);
+            }
+
             RefreshWorkspaceView();
         };
 
@@ -754,9 +798,11 @@ public partial class MainWindow : Window
 
         layout.Children.Add(header);
 
-        var terminalView = GetTerminalView(pane);
-        Grid.SetRow(terminalView, 1);
-        layout.Children.Add(terminalView);
+        FrameworkElement paneContent = pane.Kind == PaneKind.Browser
+            ? GetBrowserView(pane)
+            : GetTerminalView(pane);
+        Grid.SetRow(paneContent, 1);
+        layout.Children.Add(paneContent);
 
         border.Child = layout;
         return border;
@@ -780,6 +826,24 @@ public partial class MainWindow : Window
         return view;
     }
 
+    private BrowserPaneView GetBrowserView(PaneState pane)
+    {
+        if (!_browserViews.TryGetValue(pane.Id, out var view))
+        {
+            view = new BrowserPaneView();
+            view.NavigateRequested += (_, url) =>
+            {
+                OpenBrowserInPane(pane, url);
+                RefreshWorkspaceView();
+            };
+            _browserViews[pane.Id] = view;
+        }
+
+        DetachFromParent(view);
+        view.SetUrl(pane.Url);
+        return view;
+    }
+
     private void UpdateTerminalView(PaneState pane)
     {
         if (_terminalViews.TryGetValue(pane.Id, out var view))
@@ -793,6 +857,47 @@ public partial class MainWindow : Window
         if (_terminalViews.TryGetValue(pane.Id, out var view))
         {
             view.AppendScreenText(text);
+        }
+    }
+
+    private void UpdateBrowserView(PaneState pane)
+    {
+        if (_browserViews.TryGetValue(pane.Id, out var view))
+        {
+            view.SetUrl(pane.Url);
+        }
+    }
+
+    private string OpenBrowserInActivePane(string? url)
+    {
+        var pane = ActivePane();
+        return pane is null ? NormalizeBrowserUrl(url) : OpenBrowserInPane(pane, url);
+    }
+
+    private string OpenBrowserInPane(PaneState pane, string? url)
+    {
+        var normalizedUrl = NormalizeBrowserUrl(url);
+        if (pane.Kind == PaneKind.Terminal)
+        {
+            StopPanePty(pane.Id);
+            _terminalViews.Remove(pane.Id);
+        }
+
+        pane.Kind = PaneKind.Browser;
+        pane.Title = BrowserTitle(normalizedUrl);
+        pane.Url = normalizedUrl;
+        pane.LastScreenText = null;
+        ActiveSurface().ActivePaneId = pane.Id;
+        UpdateBrowserView(pane);
+        return normalizedUrl;
+    }
+
+    private void StopPanePty(string paneId)
+    {
+        _ptyStartFailedPaneIds.Remove(paneId);
+        if (_ptySessions.Remove(paneId, out var session))
+        {
+            _ = session.DisposeAsync().AsTask();
         }
     }
 
@@ -823,6 +928,69 @@ public partial class MainWindow : Window
             + (node.Second is null ? 0 : CountPanes(node.Second));
     }
 
+    private static int CountPaneKind(SplitNodeState node, PaneKind kind)
+    {
+        if (node.Pane is not null)
+        {
+            return node.Pane.Kind == kind ? 1 : 0;
+        }
+
+        return (node.First is null ? 0 : CountPaneKind(node.First, kind))
+            + (node.Second is null ? 0 : CountPaneKind(node.Second, kind));
+    }
+
+    private static string NormalizeBrowserUrl(string? url)
+    {
+        var trimmed = string.IsNullOrWhiteSpace(url) ? "about:blank" : url.Trim();
+        if (TryNormalizeAbsoluteBrowserUrl(trimmed, out var absoluteUrl))
+        {
+            return absoluteUrl;
+        }
+
+        if (trimmed.Contains("://", StringComparison.Ordinal)
+            || trimmed.StartsWith("about:", StringComparison.OrdinalIgnoreCase)
+            || trimmed.StartsWith("file:", StringComparison.OrdinalIgnoreCase))
+        {
+            return "about:blank";
+        }
+
+        if (trimmed.StartsWith("localhost", StringComparison.OrdinalIgnoreCase)
+            || trimmed.StartsWith("127.", StringComparison.Ordinal)
+            || trimmed.StartsWith("[::1]", StringComparison.Ordinal))
+        {
+            return TryNormalizeAbsoluteBrowserUrl($"http://{trimmed}", out absoluteUrl)
+                ? absoluteUrl
+                : "about:blank";
+        }
+
+        return TryNormalizeAbsoluteBrowserUrl($"https://{trimmed}", out absoluteUrl)
+            ? absoluteUrl
+            : "about:blank";
+    }
+
+    private static bool TryNormalizeAbsoluteBrowserUrl(string value, out string normalizedUrl)
+    {
+        normalizedUrl = "";
+        if (!Uri.TryCreate(value, UriKind.Absolute, out var uri)
+            || uri.Scheme is not ("http" or "https" or "about" or "file"))
+        {
+            return false;
+        }
+
+        normalizedUrl = uri.AbsoluteUri;
+        return true;
+    }
+
+    private static string BrowserTitle(string url)
+    {
+        if (Uri.TryCreate(url, UriKind.Absolute, out var uri) && !string.IsNullOrWhiteSpace(uri.Host))
+        {
+            return uri.Host;
+        }
+
+        return "Browser";
+    }
+
     private static double RatioFromActual(double first, double second)
     {
         var total = first + second;
@@ -839,6 +1007,8 @@ public partial class MainWindow : Window
     internal int PaneCountForSmokeTest => CountPanes(ActiveSurface().Root);
 
     internal int RenderedTerminalPaneCountForSmokeTest => CountVisualDescendants<TerminalPaneView>(PaneHost);
+
+    internal int RenderedBrowserPaneCountForSmokeTest => CountVisualDescendants<BrowserPaneView>(PaneHost);
 
     internal string? ActivePaneIdForSmokeTest => ActivePane()?.Id;
 
@@ -874,6 +1044,13 @@ public partial class MainWindow : Window
 
         pane.LastScreenText = string.Concat(pane.LastScreenText, text);
         AppendTerminalView(pane, text);
+    }
+
+    internal string OpenBrowserInActivePaneForSmokeTest(string url)
+    {
+        var normalizedUrl = OpenBrowserInActivePane(url);
+        RefreshWorkspaceView();
+        return normalizedUrl;
     }
 
     private static int CountVisualDescendants<T>(DependencyObject root)
@@ -915,6 +1092,11 @@ public partial class MainWindow : Window
         foreach (var child in LogicalTreeHelper.GetChildren(root).OfType<DependencyObject>())
         {
             if (child is TextBox textBox && textBox.Text.Contains(marker, StringComparison.Ordinal))
+            {
+                return true;
+            }
+
+            if (child is TextBlock textBlock && textBlock.Text.Contains(marker, StringComparison.Ordinal))
             {
                 return true;
             }
@@ -963,5 +1145,10 @@ public partial class MainWindow : Window
     private sealed class SendTextParams
     {
         public string? Text { get; set; }
+    }
+
+    private sealed class OpenUrlParams
+    {
+        public string? Url { get; set; }
     }
 }

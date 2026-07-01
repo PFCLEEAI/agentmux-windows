@@ -55,6 +55,7 @@ public static class AgentMuxMethods
     public const string SendText = "surface.send_text";
     public const string SendKey = "surface.send_key";
     public const string ReadScreen = "surface.read_screen";
+    public const string OpenUrl = "surface.open_url";
 }
 
 public static class AgentMuxJson

@@ -66,6 +66,7 @@ public sealed class PaneState
     public int Rows { get; set; } = 30;
     public bool HasUnreadNotification { get; set; }
     public string? LastScreenText { get; set; }
+    public string? Url { get; set; }
 }
 
 public sealed class TerminalNotification
