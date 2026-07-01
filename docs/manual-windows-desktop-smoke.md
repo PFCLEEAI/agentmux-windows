@@ -244,6 +244,8 @@ Before closing the app, run and capture these CLI/RPC checks:
 .\cli\agentmux.exe workspace list
 .\cli\agentmux.exe focus right
 .\cli\agentmux.exe pane resize --cols 100 --rows 30
+.\cli\agentmux.exe send "Read-Host AGENTMUX_SEND_KEY_SMOKE"
+.\cli\agentmux.exe send-key Enter
 .\cli\agentmux.exe read-screen --lines 50
 ```
 
@@ -252,11 +254,12 @@ Expected:
 - Each command exits with code 0.
 - `status` and `workspace list` return the running app state.
 - UI-affecting commands match visible pane behavior.
+- `send-key Enter` completes the `Read-Host` prompt in the active terminal.
 - `read-screen` includes the latest terminal smoke output.
 
 Evidence:
 
-- CLI output copied to `logs\rpc-ping-status-workspace-focus-resize.txt`.
+- CLI output copied to `logs\rpc-ping-status-workspace-focus-resize-sendkey.txt`.
 
 ### 8. Session Restore
 

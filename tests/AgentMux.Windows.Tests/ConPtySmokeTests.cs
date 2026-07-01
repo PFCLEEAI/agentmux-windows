@@ -57,6 +57,28 @@ public sealed class ConPtySmokeTests
         await probe.WaitForOutputAsync("ECHO:AGENTMUX_AFTER_RESIZE", TimeSpan.FromSeconds(10));
     }
 
+    [Fact]
+    public async Task RawControlSequencesFlowThroughConPty()
+    {
+        if (!OperatingSystem.IsWindowsVersionAtLeast(10, 0, 17763))
+        {
+            return;
+        }
+
+        var hostPath = ResolveTestHostPath();
+        await using var probe = await StartAndCaptureAsync($"{QuoteCommand(hostPath)} --raw-bytes");
+
+        await probe.WaitForOutputAsync("AGENTMUX_RAW_READY", TimeSpan.FromSeconds(5));
+        await probe.Session.WriteAsync(new byte[] { 0x1b, 0x5b, 0x36, 0x7e });
+        await probe.WaitForOutputAsync("RAW:1B", TimeSpan.FromSeconds(10));
+        await probe.WaitForOutputAsync("RAW:5B", TimeSpan.FromSeconds(10));
+        await probe.WaitForOutputAsync("RAW:36", TimeSpan.FromSeconds(10));
+        await probe.WaitForOutputAsync("RAW:7E", TimeSpan.FromSeconds(10));
+
+        await probe.Session.WriteAsync(new byte[] { 0x04 });
+        await probe.WaitForOutputAsync("RAW:04", TimeSpan.FromSeconds(10));
+    }
+
     private static async Task<ConPtyProbe> StartAndCaptureAsync(string commandLine)
     {
         var probe = new ConPtyProbe();

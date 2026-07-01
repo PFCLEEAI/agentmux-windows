@@ -17,5 +17,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\AgentMux.Win.App\AgentMux.Win.App.csproj" />
+    <ProjectReference Include="..\AgentMux.Pty.TestHost\AgentMux.Pty.TestHost.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
 </Project>

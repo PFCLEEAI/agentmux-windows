@@ -1,7 +1,14 @@
 using System.Text;
+using System.Runtime.InteropServices;
 
 Console.InputEncoding = Encoding.UTF8;
 Console.OutputEncoding = Encoding.UTF8;
+
+if (args.Contains("--raw-bytes", StringComparer.OrdinalIgnoreCase))
+{
+    RunRawByteEcho();
+    return;
+}
 
 Console.WriteLine("AGENTMUX_READY");
 Console.Out.Flush();
@@ -24,4 +31,58 @@ while (Console.ReadLine() is { } line)
 
     Console.WriteLine($"ECHO:{line}");
     Console.Out.Flush();
+}
+
+static void RunRawByteEcho()
+{
+    TryEnableRawConsoleInput();
+    Console.WriteLine("AGENTMUX_RAW_READY");
+    Console.Out.Flush();
+
+    using var input = Console.OpenStandardInput();
+    while (true)
+    {
+        var value = input.ReadByte();
+        if (value < 0)
+        {
+            return;
+        }
+
+        Console.WriteLine($"RAW:{value:X2}");
+        Console.Out.Flush();
+    }
+}
+
+static void TryEnableRawConsoleInput()
+{
+    var inputHandle = NativeMethods.GetStdHandle(NativeMethods.StdInputHandle);
+    if (inputHandle == IntPtr.Zero || inputHandle == new IntPtr(-1))
+    {
+        return;
+    }
+
+    if (!NativeMethods.GetConsoleMode(inputHandle, out var mode))
+    {
+        return;
+    }
+
+    var rawMode = mode & ~(NativeMethods.EnableLineInput | NativeMethods.EnableEchoInput | NativeMethods.EnableProcessedInput);
+    _ = NativeMethods.SetConsoleMode(inputHandle, rawMode);
+}
+
+internal static class NativeMethods
+{
+    public const int StdInputHandle = -10;
+    public const uint EnableProcessedInput = 0x0001;
+    public const uint EnableLineInput = 0x0002;
+    public const uint EnableEchoInput = 0x0004;
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern IntPtr GetStdHandle(int nStdHandle);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool GetConsoleMode(IntPtr hConsoleHandle, out uint lpMode);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool SetConsoleMode(IntPtr hConsoleHandle, uint dwMode);
 }

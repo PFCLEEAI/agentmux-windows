@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Sockets;
+using System.Reflection;
 using System.Text;
 using System.Threading;
 using System.Windows;
@@ -231,6 +232,7 @@ public sealed class MainWindowSmokeTests
 
             await RunNotificationSmokeAsync();
             await RunReadScreenSmokeAsync();
+            await RunSendKeySmokeAsync();
             await RunWorkspaceSwitcherSmokeAsync();
             await RunSurfaceTabsSmokeAsync();
             await RunSessionRestoreSmokeAsync();
@@ -672,6 +674,45 @@ public sealed class MainWindowSmokeTests
             Assert.False(browserRead.GetProperty("truncated").GetBoolean());
             Assert.Equal(browserPaneId, browserRead.GetProperty("paneId").GetString());
             Assert.Equal("browser", browserRead.GetProperty("paneKind").GetString());
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    private static async Task RunSendKeySmokeAsync()
+    {
+        var window = new MainWindow(ShortcutSettings.Default());
+        try
+        {
+            window.InitializeForSmokeTest();
+            var testHostPath = ResolvePtyTestHostPath();
+            window.SetActivePaneShellForSmokeTest($"{QuoteCommand(testHostPath)} --raw-bytes", System.IO.Path.GetDirectoryName(testHostPath));
+            await window.StartActivePanePtyForSmokeTestAsync();
+            await WaitForReadScreenContainsAsync(window, "AGENTMUX_RAW_READY");
+
+            await AssertSendKeyDeliveredAsync(window, "PageDown", "\u001b[6~", "RAW:1B", "RAW:5B", "RAW:36", "RAW:7E");
+            await AssertSendKeyDeliveredAsync(window, "Ctrl+Z", "\u001a", "RAW:1A");
+
+            var unsupportedResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.SendKey, new
+            {
+                key = "LaunchRocket"
+            });
+            Assert.True(unsupportedResponse.Ok, unsupportedResponse.Error);
+            var unsupported = System.Text.Json.JsonSerializer.SerializeToElement(unsupportedResponse.Result, AgentMuxJson.Options);
+            Assert.False(unsupported.GetProperty("sent").GetBoolean());
+            Assert.Equal("unsupported key", unsupported.GetProperty("reason").GetString());
+
+            window.OpenBrowserInActivePaneForSmokeTest("about:blank");
+            var browserResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.SendKey, new
+            {
+                key = "Enter"
+            });
+            Assert.True(browserResponse.Ok, browserResponse.Error);
+            var browser = System.Text.Json.JsonSerializer.SerializeToElement(browserResponse.Result, AgentMuxJson.Options);
+            Assert.False(browser.GetProperty("sent").GetBoolean());
+            Assert.Equal("active pane is not a terminal", browser.GetProperty("reason").GetString());
         }
         finally
         {
@@ -1563,6 +1604,45 @@ public sealed class MainWindowSmokeTests
         return lastResult ?? default;
     }
 
+    private static async Task AssertSendKeyDeliveredAsync(MainWindow window, string key, string expectedSequence, params string[] markers)
+    {
+        var response = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.SendKey, new { key }).ConfigureAwait(true);
+        Assert.True(response.Ok, response.Error);
+        var result = System.Text.Json.JsonSerializer.SerializeToElement(response.Result, AgentMuxJson.Options);
+        Assert.True(result.GetProperty("sent").GetBoolean());
+        Assert.Equal(key, result.GetProperty("key").GetString());
+        Assert.Equal(Encoding.UTF8.GetByteCount(expectedSequence), result.GetProperty("bytes").GetInt32());
+
+        foreach (var marker in markers)
+        {
+            await WaitForReadScreenContainsAsync(window, marker).ConfigureAwait(true);
+        }
+    }
+
+    private static async Task WaitForReadScreenContainsAsync(MainWindow window, string marker)
+    {
+        var lastText = "";
+        for (var attempt = 0; attempt < 40; attempt++)
+        {
+            var response = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.ReadScreen, new
+            {
+                lines = 200
+            }).ConfigureAwait(true);
+            Assert.True(response.Ok, response.Error);
+
+            var result = System.Text.Json.JsonSerializer.SerializeToElement(response.Result, AgentMuxJson.Options);
+            lastText = result.GetProperty("text").GetString() ?? "";
+            if (lastText.Contains(marker, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            await Task.Delay(250).ConfigureAwait(true);
+        }
+
+        throw new TimeoutException($"Timed out waiting for read-screen marker '{marker}'. Last text: {lastText}");
+    }
+
     private static async Task<System.Text.Json.JsonElement> WaitForBrowserEvalTrueAsync(MainWindow window, string script)
     {
         System.Text.Json.JsonElement? lastResult = null;
@@ -1874,6 +1954,48 @@ public sealed class MainWindowSmokeTests
     private static string SmokeArtifactDirectory()
     {
         return SmokeArtifactDirectoryPath;
+    }
+
+    private static string ResolvePtyTestHostPath()
+    {
+        var configuration = typeof(MainWindowSmokeTests).Assembly
+            .GetCustomAttribute<AssemblyConfigurationAttribute>()?.Configuration ?? "Release";
+        var path = System.IO.Path.Combine(
+            FindRepositoryRoot(),
+            "tests",
+            "AgentMux.Pty.TestHost",
+            "bin",
+            configuration,
+            "net9.0-windows10.0.17763.0",
+            "AgentMux.Pty.TestHost.exe");
+
+        if (!System.IO.File.Exists(path))
+        {
+            throw new System.IO.FileNotFoundException("ConPTY test host was not built.", path);
+        }
+
+        return path;
+    }
+
+    private static string FindRepositoryRoot()
+    {
+        var directory = new System.IO.DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null)
+        {
+            if (System.IO.File.Exists(System.IO.Path.Combine(directory.FullName, "AgentMux.sln")))
+            {
+                return directory.FullName;
+            }
+
+            directory = directory.Parent;
+        }
+
+        throw new InvalidOperationException($"Could not locate repository root from {AppContext.BaseDirectory}.");
+    }
+
+    private static string QuoteCommand(string path)
+    {
+        return $"\"{path}\"";
     }
 
     private static string ResolveSmokeArtifactDirectory()

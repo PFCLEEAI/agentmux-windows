@@ -2388,6 +2388,11 @@ public partial class MainWindow : Window
         return await HandleRpcOnUiAsync(request, CancellationToken.None).ConfigureAwait(true);
     }
 
+    internal async Task StartActivePanePtyForSmokeTestAsync()
+    {
+        await EnsurePanePtyAsync(ActivePane()).ConfigureAwait(true);
+    }
+
     internal int PaneCountForSmokeTest => CountPanes(ActiveSurface().Root);
 
     internal int WorkspaceCountForSmokeTest => _workspaces.Count;
@@ -2489,6 +2494,24 @@ public partial class MainWindow : Window
         {
             _terminalOutputProcessors.Remove(pane.Id);
             pane.LastScreenText = text;
+        }
+
+        RefreshWorkspaceView();
+    }
+
+    internal void SetActivePaneShellForSmokeTest(string shell, string? workingDirectory = null)
+    {
+        if (ActivePane() is { Kind: PaneKind.Terminal } pane)
+        {
+            pane.Shell = shell;
+            if (!string.IsNullOrWhiteSpace(workingDirectory))
+            {
+                pane.WorkingDirectory = workingDirectory;
+            }
+
+            _ptyStartFailedPaneIds.Remove(pane.Id);
+            _terminalOutputProcessors.Remove(pane.Id);
+            pane.LastScreenText = "";
         }
 
         RefreshWorkspaceView();

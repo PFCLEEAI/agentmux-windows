@@ -34,7 +34,7 @@
 - Focus pane. Preview implemented.
 - Zoom and close pane. Preview implemented.
 - Send text. Preview implemented.
-- Send key.
+- Send key. Preview implemented with Enter/Tab/Escape/navigation/function keys, generic Ctrl letter/symbol keys, Alt/Meta-prefixed terminal keys, RPC/CLI coverage, and hosted raw-byte ConPTY smoke; trusted physical input remains future work.
 - Resize terminal. Preview implemented for the active terminal pane.
 - Read screen. Preview implemented for active terminal `LastScreenText`, with optional bounded `--lines` tail output and hosted app-smoke coverage.
 

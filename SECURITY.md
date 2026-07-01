@@ -16,6 +16,7 @@ Security-sensitive areas:
 
 - named-pipe API authorization,
 - shell command execution,
+- terminal input automation through `send` and `send-key`,
 - transcript and scrollback storage,
 - notification and status text,
 - environment variables,
@@ -38,6 +39,7 @@ Browser preview boundaries:
 Surface/session boundaries:
 
 - `agentmux read-screen` / `surface.read_screen` exposes the active terminal pane's current `PaneState.LastScreenText` to same-user local callers over the AgentMux named pipe. `--lines <count>` bounds the returned tail, but it is not redaction and does not make the output safe to share. Returned text may contain secrets, prompts, file paths, command output, or proprietary data. Browser panes return empty text rather than DOM content. CLI stdout can persist returned text in terminal scrollback, shell transcripts, redirected files, CI logs, screenshots, copied manual-smoke evidence, or other logs outside AgentMux.
+- `agentmux send-key` / `surface.send_key` lets any same-user local caller with AgentMux named-pipe access send supported logical terminal key sequences to the active terminal pane, including Ctrl, Alt/Meta, function, and navigation keys. These sequences can interrupt commands, submit input, navigate a terminal UI, or mutate shell/application state. The feature writes encoded terminal bytes to ConPTY; it is not Windows `SendInput`, trusted physical input, administrator elevation, arbitrary-window control, global hotkeys, or browser keyboard automation.
 - Workspace `list/create/select` commands are exposed through the same per-user named pipe as other automation APIs. `workspace.list` returns compact metadata for all workspaces, including workspace ids, titles, indexes, active state, working directories, unread counts, surface counts, active surface title/index, active pane id, pane counts, and browser pane counts. Treat workspace titles, cwd values, and unread metadata as visible to any same-user local process with AgentMux pipe access. These fields may reveal repository paths, client names, task names, prompts, or private project context. Workspace selection changes local UI/session state; it is not an authorization boundary.
 - Surface tabs are local active-workspace state. Switching surfaces changes the rendered split tree but does not clear WebView2 profile data, cookies, local storage, browser logs, downloaded files, or hidden ConPTY/WebView2 resources.
 - Surface `list/create/select` commands are exposed through the same per-user named pipe as other automation APIs. Any same-user local process with pipe access should be treated as able to reveal hidden-surface titles, pane ids, pane counts, browser URLs, and last terminal screen text through session/API state.

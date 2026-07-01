@@ -795,6 +795,11 @@ public static class Program
         };
     }
 
+    internal static object ParseSendKeyForTests(string[] args)
+    {
+        return ParseSendKey(args);
+    }
+
     private static object ParseSendKey(string[] args)
     {
         var named = ParseNamed(args);
@@ -928,6 +933,10 @@ public static class Program
           agentmux browser downloads-clear
           agentmux send "npm test"
           agentmux send-key Enter
+          agentmux send-key Ctrl+C
+          agentmux send-key PageDown
+          agentmux send-key F5
+          agentmux send-key Alt+Left
           agentmux read-screen --lines 50
         """);
     }
