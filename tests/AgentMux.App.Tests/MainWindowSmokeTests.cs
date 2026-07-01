@@ -762,10 +762,20 @@ public sealed class MainWindowSmokeTests
 
     private static async Task RunSendKeySmokeAsync()
     {
-        var window = new MainWindow(ShortcutSettings.Default());
+        var window = new MainWindow(ShortcutSettings.Default())
+        {
+            Width = 900,
+            Height = 560,
+            ShowActivated = false,
+            ShowInTaskbar = false,
+            WindowStartupLocation = WindowStartupLocation.Manual
+        };
         try
         {
             window.InitializeForSmokeTest();
+            window.Show();
+            await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+
             var testHostPath = ResolvePtyTestHostPath();
             window.SetActivePaneShellForSmokeTest($"{QuoteCommand(testHostPath)} --raw-bytes", System.IO.Path.GetDirectoryName(testHostPath));
             await window.StartActivePanePtyForSmokeTestAsync();
