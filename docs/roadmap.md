@@ -36,7 +36,7 @@
 - Send text. Preview implemented.
 - Send key.
 - Resize terminal. Preview implemented for the active terminal pane.
-- Read screen. Preview implemented for active pane text.
+- Read screen. Preview implemented for active terminal `LastScreenText`, with optional bounded `--lines` tail output and hosted app-smoke coverage.
 
 ## Sprint 4 - Notifications
 
@@ -53,7 +53,7 @@
 - App-level layout restore. Implemented for workspaces, active workspace, surfaces, active surface, split layout, active pane, pane titles, browser URLs, and last terminal screen text.
 - Corrupt snapshot fallback. Implemented so bad `session.json` starts with a default workspace.
 - Working directory restore. Implemented in the saved model for workspaces and panes.
-- Scrollback best effort. Preview implemented through `PaneState.LastScreenText`; live terminal processes are not restored.
+- Last screen text best effort. Preview implemented through `PaneState.LastScreenText`; full xterm scrollback, transcript storage, and live terminal process restore are not implemented.
 
 ## Sprint 5.5 - Windows UI Smoke
 

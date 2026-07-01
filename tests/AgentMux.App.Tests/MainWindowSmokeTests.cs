@@ -230,6 +230,7 @@ public sealed class MainWindowSmokeTests
             }
 
             await RunNotificationSmokeAsync();
+            await RunReadScreenSmokeAsync();
             await RunWorkspaceSwitcherSmokeAsync();
             await RunSurfaceTabsSmokeAsync();
             await RunSessionRestoreSmokeAsync();
@@ -610,6 +611,67 @@ public sealed class MainWindowSmokeTests
             Assert.Contains(finalWorkspaces, workspace =>
                 workspace.GetProperty("id").GetString() == createdWorkspaceId
                 && workspace.GetProperty("isActive").GetBoolean());
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    private static async Task RunReadScreenSmokeAsync()
+    {
+        var window = new MainWindow(ShortcutSettings.Default());
+        try
+        {
+            window.InitializeForSmokeTest();
+            window.SetActivePaneTextForSmokeTest("line-one\nline-two\nline-three\n");
+            var terminalPaneId = window.ActivePaneIdForSmokeTest;
+
+            var fullResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.ReadScreen);
+            Assert.True(fullResponse.Ok, fullResponse.Error);
+            var fullRead = System.Text.Json.JsonSerializer.SerializeToElement(fullResponse.Result, AgentMuxJson.Options);
+            Assert.Equal("line-one\nline-two\nline-three\n", fullRead.GetProperty("text").GetString());
+            Assert.Equal(System.Text.Json.JsonValueKind.Null, fullRead.GetProperty("lines").ValueKind);
+            Assert.False(fullRead.GetProperty("truncated").GetBoolean());
+            Assert.Equal(terminalPaneId, fullRead.GetProperty("paneId").GetString());
+            Assert.Equal("terminal", fullRead.GetProperty("paneKind").GetString());
+
+            var tailResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.ReadScreen, new
+            {
+                lines = 2
+            });
+            Assert.True(tailResponse.Ok, tailResponse.Error);
+            var tailRead = System.Text.Json.JsonSerializer.SerializeToElement(tailResponse.Result, AgentMuxJson.Options);
+            Assert.Equal("line-two\nline-three", tailRead.GetProperty("text").GetString());
+            Assert.Equal(2, tailRead.GetProperty("lines").GetInt32());
+            Assert.True(tailRead.GetProperty("truncated").GetBoolean());
+            Assert.Equal(terminalPaneId, tailRead.GetProperty("paneId").GetString());
+            Assert.Equal("terminal", tailRead.GetProperty("paneKind").GetString());
+
+            var invalidResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.ReadScreen, new
+            {
+                lines = 0
+            });
+            Assert.True(invalidResponse.Ok, invalidResponse.Error);
+            var invalidRead = System.Text.Json.JsonSerializer.SerializeToElement(invalidResponse.Result, AgentMuxJson.Options);
+            Assert.False(invalidRead.GetProperty("ok").GetBoolean());
+            Assert.Equal("lines must be a positive integer", invalidRead.GetProperty("reason").GetString());
+            Assert.Equal("", invalidRead.GetProperty("text").GetString());
+
+            window.OpenBrowserInActivePaneForSmokeTest("about:blank");
+            Assert.Equal(PaneKind.Browser, window.ActivePaneKindForSmokeTest);
+            var browserPaneId = window.ActivePaneIdForSmokeTest;
+            var browserResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.ReadScreen, new
+            {
+                lines = 5
+            });
+            Assert.True(browserResponse.Ok, browserResponse.Error);
+            var browserRead = System.Text.Json.JsonSerializer.SerializeToElement(browserResponse.Result, AgentMuxJson.Options);
+            Assert.Equal("", browserRead.GetProperty("text").GetString());
+            Assert.Equal(5, browserRead.GetProperty("lines").GetInt32());
+            Assert.False(browserRead.GetProperty("truncated").GetBoolean());
+            Assert.Equal(browserPaneId, browserRead.GetProperty("paneId").GetString());
+            Assert.Equal("browser", browserRead.GetProperty("paneKind").GetString());
         }
         finally
         {

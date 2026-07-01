@@ -39,7 +39,7 @@ public static class Program
                 "browser" or "browse" or "open" => await HandleBrowserAsync(client, args[1..]).ConfigureAwait(false),
                 "send" => await client.SendAsync(AgentMuxMethods.SendText, new { text = string.Join(' ', args[1..]) }).ConfigureAwait(false),
                 "send-key" => await client.SendAsync(AgentMuxMethods.SendKey, ParseSendKey(args[1..])).ConfigureAwait(false),
-                "read-screen" => await client.SendAsync(AgentMuxMethods.ReadScreen, ParseNamed(args[1..])).ConfigureAwait(false),
+                "read-screen" => await HandleReadScreenAsync(client, args[1..]).ConfigureAwait(false),
                 _ => AgentMuxResponse.Failure("", $"Unknown command: {command}")
             };
 
@@ -121,6 +121,17 @@ public static class Program
     private static async Task<AgentMuxResponse> HandlePaneAsync(NamedPipeRpcClient client, string[] args)
     {
         var request = ParsePaneRequestForTests(args, out var error);
+        if (request is null)
+        {
+            return AgentMuxResponse.Failure("", error);
+        }
+
+        return await client.SendAsync(request.Method, request.Parameters).ConfigureAwait(false);
+    }
+
+    private static async Task<AgentMuxResponse> HandleReadScreenAsync(NamedPipeRpcClient client, string[] args)
+    {
+        var request = ParseReadScreenRequestForTests(args, out var error);
         if (request is null)
         {
             return AgentMuxResponse.Failure("", error);
@@ -674,6 +685,26 @@ public static class Program
         return null;
     }
 
+    internal static CliRequest? ParseReadScreenRequestForTests(string[] args, out string error)
+    {
+        if (args.Length == 0)
+        {
+            error = "";
+            return new CliRequest(AgentMuxMethods.ReadScreen, new { lines = (int?)null });
+        }
+
+        if (args.Length != 2
+            || !args[0].Equals("--lines", StringComparison.OrdinalIgnoreCase)
+            || !TryParseStrictPositiveInt(args[1], out var lines))
+        {
+            error = "Usage: agentmux read-screen [--lines <count>]";
+            return null;
+        }
+
+        error = "";
+        return new CliRequest(AgentMuxMethods.ReadScreen, new { lines });
+    }
+
     private static async Task<AgentMuxResponse> HandleOpenUrlAsync(NamedPipeRpcClient client, string[] args)
     {
         if (args.Length == 0)
@@ -777,6 +808,17 @@ public static class Program
 
     private static bool TryParsePositiveInt(string? value, out int number)
     {
+        return int.TryParse(value, out number) && number > 0;
+    }
+
+    private static bool TryParseStrictPositiveInt(string? value, out int number)
+    {
+        number = 0;
+        if (string.IsNullOrWhiteSpace(value) || value.Any(character => character < '0' || character > '9'))
+        {
+            return false;
+        }
+
         return int.TryParse(value, out number) && number > 0;
     }
 

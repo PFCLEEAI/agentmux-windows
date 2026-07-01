@@ -47,6 +47,12 @@ public sealed class RpcContractTests
     }
 
     [Fact]
+    public void ReadScreenMethodIsStable()
+    {
+        Assert.Equal("surface.read_screen", AgentMuxMethods.ReadScreen);
+    }
+
+    [Fact]
     public void FocusPaneMethodIsStable()
     {
         Assert.Equal("surface.focus_pane", AgentMuxMethods.FocusPane);

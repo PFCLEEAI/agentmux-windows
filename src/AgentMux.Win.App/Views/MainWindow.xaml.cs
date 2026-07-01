@@ -10,6 +10,7 @@ using AgentMux.Core.Ipc;
 using AgentMux.Core.Models;
 using AgentMux.Core.Notifications;
 using AgentMux.Core.Persistence;
+using AgentMux.Core.Terminals;
 using AgentMux.Win.App.Controls;
 using AgentMux.Win.App.Input;
 using AgentMux.Win.Pty;
@@ -482,7 +483,7 @@ public partial class MainWindow : Window
             AgentMuxMethods.SendText => AgentMuxResponse.Success(request.Id, HandleSendText(request.Params)),
             AgentMuxMethods.SendKey => AgentMuxResponse.Success(request.Id, HandleSendKey(request.Params)),
             AgentMuxMethods.ResizeTerminal => AgentMuxResponse.Success(request.Id, HandleResizeTerminal(request.Params)),
-            AgentMuxMethods.ReadScreen => AgentMuxResponse.Success(request.Id, new { text = ActivePane()?.LastScreenText ?? "" }),
+            AgentMuxMethods.ReadScreen => AgentMuxResponse.Success(request.Id, HandleReadScreen(request.Params)),
             AgentMuxMethods.FocusPane => HandleFocusPane(request.Id, request.Params),
             AgentMuxMethods.ToggleZoom => AgentMuxResponse.Success(request.Id, HandleToggleZoom()),
             AgentMuxMethods.ClosePane => AgentMuxResponse.Success(request.Id, HandleClosePane()),
@@ -760,6 +761,35 @@ public partial class MainWindow : Window
         _ = SendTextToTerminalAsync(text);
 
         return new { sent = true, bytes = (parsed?.Text ?? "").Length };
+    }
+
+    private object HandleReadScreen(JsonElement? parameters)
+    {
+        var pane = ActivePane();
+        if (!TryReadOptionalPositiveIntParam(parameters, "lines", out var lines, out var error))
+        {
+            return new
+            {
+                text = "",
+                lines = (int?)null,
+                truncated = false,
+                paneId = pane?.Id,
+                paneKind = pane?.Kind.ToString().ToLowerInvariant(),
+                ok = false,
+                reason = error
+            };
+        }
+
+        var sourceText = pane?.Kind == PaneKind.Terminal ? pane.LastScreenText : "";
+        var result = TerminalScreenReader.Read(sourceText, lines);
+        return new
+        {
+            result.Text,
+            result.Lines,
+            result.Truncated,
+            paneId = pane?.Id,
+            paneKind = pane?.Kind.ToString().ToLowerInvariant()
+        };
     }
 
     private object HandleSendKey(JsonElement? parameters)
@@ -2562,6 +2592,38 @@ public partial class MainWindow : Window
             return false;
         }
 
+        return property.ValueKind switch
+        {
+            JsonValueKind.Number => property.TryGetInt32(out value) && value > 0,
+            JsonValueKind.String => int.TryParse(property.GetString(), out value) && value > 0,
+            _ => false
+        };
+    }
+
+    private static bool TryReadOptionalPositiveIntParam(JsonElement? parameters, string name, out int? value, out string error)
+    {
+        value = null;
+        error = "";
+        if (parameters is not { ValueKind: JsonValueKind.Object } element
+            || !element.TryGetProperty(name, out var property)
+            || property.ValueKind == JsonValueKind.Null)
+        {
+            return true;
+        }
+
+        if (!TryReadPositiveInt(property, out var parsed))
+        {
+            error = $"{name} must be a positive integer";
+            return false;
+        }
+
+        value = parsed;
+        return true;
+    }
+
+    private static bool TryReadPositiveInt(JsonElement property, out int value)
+    {
+        value = 0;
         return property.ValueKind switch
         {
             JsonValueKind.Number => property.TryGetInt32(out value) && value > 0,
