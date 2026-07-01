@@ -18,16 +18,16 @@ It is inspired by the terminal/workspace workflow category popularized by cmux, 
 
 Pre-alpha scaffold.
 
-This repository currently contains the public-safe foundation: project structure, core models, OSC notification parsing, named-pipe JSON-RPC contracts, CLI skeleton, a WPF shell with workspace sidebar and recursive split panes, per-pane ConPTY session hosting, direct terminal input, tests, and CI. The WebView2/xterm terminal renderer, richer keyboard navigation, and browser panes remain future implementation work.
+This repository currently contains the public-safe foundation: project structure, core models, OSC notification parsing, named-pipe JSON-RPC contracts, CLI skeleton, a WPF shell with workspace sidebar and recursive split panes, per-pane ConPTY session hosting, a WebView2 terminal-renderer bridge with WPF fallback, direct terminal input, tests, and CI. Full xterm.js terminal emulation, richer keyboard navigation, and browser panes remain future implementation work.
 
-Required Windows CI proves the solution restores, builds, runs deterministic unit tests, and passes a headless ConPTY smoke test for command output plus stdin echo. A real Windows desktop smoke test is still required before calling this release-ready.
+Required Windows CI proves the solution restores, builds, runs deterministic unit tests, composes the WPF split-pane window in an STA smoke test, and passes a headless ConPTY smoke test for command output plus stdin echo. A real visible Windows desktop smoke test is still required before calling this release-ready.
 
 ## Tech Stack
 
 - C# / .NET 9
 - WPF for the Windows shell
 - ConPTY for terminal hosting
-- WebView2-hosted terminal renderer planned for terminal correctness without Electron
+- WebView2-hosted terminal renderer bridge without Electron
 - Named pipes for local CLI/API automation
 - JSON persistence under the user's local app data directory
 

@@ -19,6 +19,7 @@
 - Workspace sidebar. Implemented in WPF shell.
 - Surface tabs.
 - Split pane layout. Implemented as recursive WPF panes with persisted split ratios.
+- WebView2 renderer bridge. Preview implemented with WPF fallback.
 - Focus movement.
 - Keyboard shortcuts.
 - Each terminal pane now owns an independent ConPTY session started lazily.
@@ -45,6 +46,11 @@
 - Layout restore. Core split tree and active pane id round-trip through JSON snapshot tests.
 - Working directory restore.
 - Scrollback best effort.
+
+## Sprint 5.5 - Windows UI Smoke
+
+- WPF split-pane composition smoke. Implemented in Windows CI.
+- Real visible desktop smoke. Still required before release-ready status.
 
 ## Sprint 6 - Browser Parity
 

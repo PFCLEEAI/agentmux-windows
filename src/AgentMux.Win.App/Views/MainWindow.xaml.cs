@@ -7,6 +7,7 @@ using System.Windows.Input;
 using System.Windows.Media;
 using AgentMux.Core.Ipc;
 using AgentMux.Core.Models;
+using AgentMux.Win.App.Controls;
 using AgentMux.Win.Pty;
 
 namespace AgentMux.Win.App.Views;
@@ -16,6 +17,7 @@ public partial class MainWindow : Window
     private readonly ObservableCollection<WorkspaceState> _workspaces = [];
     private readonly List<TerminalNotification> _notifications = [];
     private readonly Dictionary<string, ConPtySession> _ptySessions = [];
+    private readonly Dictionary<string, TerminalPaneView> _terminalViews = [];
     private readonly HashSet<string> _ptyStartFailedPaneIds = [];
     private NamedPipeRpcServer? _server;
     private int _activeWorkspaceIndex;
@@ -253,6 +255,7 @@ public partial class MainWindow : Window
             await session.DisposeAsync().ConfigureAwait(true);
 
             pane.LastScreenText = $"ConPTY did not start: {ex.Message}";
+            UpdateTerminalView(pane);
             RefreshWorkspaceView();
             return null;
         }
@@ -268,9 +271,8 @@ public partial class MainWindow : Window
                 if (FindPaneById(paneId) is { } pane)
                 {
                     pane.LastScreenText = string.Concat(pane.LastScreenText, text);
+                    UpdateTerminalView(pane);
                 }
-
-                RefreshWorkspaceView();
             });
         };
         session.Exited += exitCode =>
@@ -280,6 +282,7 @@ public partial class MainWindow : Window
                 if (FindPaneById(paneId) is { } pane)
                 {
                     pane.LastScreenText = string.Concat(pane.LastScreenText, Environment.NewLine, $"[process exited: {exitCode}]", Environment.NewLine);
+                    UpdateTerminalView(pane);
                 }
 
                 RefreshWorkspaceView();
@@ -318,6 +321,7 @@ public partial class MainWindow : Window
                 if (pane is not null)
                 {
                     pane.LastScreenText = string.Concat(pane.LastScreenText, Environment.NewLine, $"[send failed: {ex.Message}]", Environment.NewLine);
+                    UpdateTerminalView(pane);
                 }
 
                 RefreshWorkspaceView();
@@ -328,6 +332,7 @@ public partial class MainWindow : Window
             if (pane is not null)
             {
                 pane.LastScreenText = string.Concat(pane.LastScreenText, "> ", text, Environment.NewLine);
+                UpdateTerminalView(pane);
             }
 
             RefreshWorkspaceView();
@@ -632,25 +637,49 @@ public partial class MainWindow : Window
 
         layout.Children.Add(header);
 
-        var text = new TextBox
-        {
-            Text = pane.LastScreenText ?? "No terminal output yet.",
-            Background = new SolidColorBrush(Color.FromRgb(15, 19, 26)),
-            Foreground = Brush("AgentMuxText"),
-            BorderBrush = Brush("AgentMuxBorder"),
-            FontFamily = new FontFamily("Consolas"),
-            FontSize = 13,
-            TextWrapping = TextWrapping.Wrap,
-            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-            AcceptsReturn = true,
-            IsReadOnly = true
-        };
-        text.Loaded += (_, _) => text.ScrollToEnd();
-        Grid.SetRow(text, 1);
-        layout.Children.Add(text);
+        var terminalView = GetTerminalView(pane);
+        Grid.SetRow(terminalView, 1);
+        layout.Children.Add(terminalView);
 
         border.Child = layout;
         return border;
+    }
+
+    private TerminalPaneView GetTerminalView(PaneState pane)
+    {
+        if (!_terminalViews.TryGetValue(pane.Id, out var view))
+        {
+            view = new TerminalPaneView();
+            _terminalViews[pane.Id] = view;
+        }
+
+        DetachFromParent(view);
+        view.SetScreenText(pane.LastScreenText);
+        return view;
+    }
+
+    private void UpdateTerminalView(PaneState pane)
+    {
+        if (_terminalViews.TryGetValue(pane.Id, out var view))
+        {
+            view.SetScreenText(pane.LastScreenText);
+        }
+    }
+
+    private static void DetachFromParent(FrameworkElement element)
+    {
+        switch (element.Parent)
+        {
+            case Panel panel:
+                panel.Children.Remove(element);
+                break;
+            case ContentControl contentControl when ReferenceEquals(contentControl.Content, element):
+                contentControl.Content = null;
+                break;
+            case Decorator decorator when ReferenceEquals(decorator.Child, element):
+                decorator.Child = null;
+                break;
+        }
     }
 
     private static int CountPanes(SplitNodeState node)
@@ -668,6 +697,93 @@ public partial class MainWindow : Window
     {
         var total = first + second;
         return total <= 0 ? 0.5 : Math.Clamp(first / total, 0.1, 0.9);
+    }
+
+    internal void InitializeForSmokeTest()
+    {
+        WorkspaceList.ItemsSource = _workspaces;
+        WorkspaceList.SelectedIndex = 0;
+        RefreshWorkspaceView();
+    }
+
+    internal int PaneCountForSmokeTest => CountPanes(ActiveSurface().Root);
+
+    internal int RenderedTerminalPaneCountForSmokeTest => CountVisualDescendants<TerminalPaneView>(PaneHost);
+
+    internal bool HasButtonForSmokeTest(string content) => VisualTreeContainsButton(this, content);
+
+    internal bool RenderedTextContainsForSmokeTest(string marker) => VisualTreeTextContains(PaneHost, marker);
+
+    internal bool SplitActivePaneForSmokeTest(SplitDirection direction)
+    {
+        var changed = SplitActivePane(direction);
+        RefreshWorkspaceView();
+        return changed;
+    }
+
+    internal void SetActivePaneTextForSmokeTest(string text)
+    {
+        if (ActivePane() is { } pane)
+        {
+            pane.LastScreenText = text;
+        }
+
+        RefreshWorkspaceView();
+    }
+
+    private static int CountVisualDescendants<T>(DependencyObject root)
+    {
+        var count = 0;
+        for (var i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
+        {
+            var child = VisualTreeHelper.GetChild(root, i);
+            if (child is T)
+            {
+                count++;
+            }
+
+            count += CountVisualDescendants<T>(child);
+        }
+
+        return count;
+    }
+
+    private static bool VisualTreeContainsButton(DependencyObject root, string content)
+    {
+        for (var i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
+        {
+            var child = VisualTreeHelper.GetChild(root, i);
+            if (child is Button button && string.Equals(button.Content?.ToString(), content, StringComparison.Ordinal))
+            {
+                return true;
+            }
+
+            if (VisualTreeContainsButton(child, content))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool VisualTreeTextContains(DependencyObject root, string marker)
+    {
+        for (var i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
+        {
+            var child = VisualTreeHelper.GetChild(root, i);
+            if (child is TextBox textBox && textBox.Text.Contains(marker, StringComparison.Ordinal))
+            {
+                return true;
+            }
+
+            if (VisualTreeTextContains(child, marker))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private Brush Brush(string resourceKey) => (Brush)FindResource(resourceKey);

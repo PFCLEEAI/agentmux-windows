@@ -22,7 +22,7 @@ AgentMux.Win.App
     +-- workspace/session model
     +-- notification state
     +-- per-pane ConPTY terminal hosts
-    +-- terminal renderer preview
+    +-- WebView2 terminal renderer bridge
 ```
 
 ## MVP Data Model
@@ -32,6 +32,7 @@ AgentMux.Win.App
 - Surface contains a split tree.
 - Split leaves contain panes.
 - Terminal panes own independent ConPTY sessions, started lazily when a pane becomes active or receives input.
+- Terminal panes render through a cached WebView2 bridge with a WPF text fallback. The bridge displays current pane text and keeps `PaneState.LastScreenText` as the automation/read-screen source.
 - Browser panes are planned for a later sprint.
 
 ## IPC
@@ -52,4 +53,4 @@ The default pipe is per-user named and intended for the current user session onl
 
 ## Verification Boundary
 
-macOS can verify shared library tests and documentation. Windows is required for WPF, ConPTY, WebView2, keyboard behavior, clipboard behavior, and release readiness.
+macOS can verify shared library tests, Windows-targeted builds, and documentation. Hosted Windows CI verifies WPF composition, ConPTY output/input smoke, and Windows builds. A visible Windows desktop smoke is still required for WebView2 runtime behavior, keyboard behavior, clipboard behavior, and release readiness.
