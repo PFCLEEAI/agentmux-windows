@@ -241,7 +241,7 @@ public sealed class ConPtySession : IPtySession
             ConPtyNative.CloseHandle(processInformation.Thread);
             ConPtyNative.CloseHandle(processInformation.Process);
 
-            _process = Process.GetProcessById(processInformation.ProcessId);
+            _process = Process.GetProcessById((int)processInformation.dwProcessId);
             _process.EnableRaisingEvents = true;
             _process.Exited += (_, _) =>
             {
@@ -359,7 +359,7 @@ internal static partial class ConPtyNative
 }
 
 [StructLayout(LayoutKind.Sequential)]
-internal readonly struct Coord
+internal struct Coord
 {
     public Coord(short x, short y)
     {
@@ -367,17 +367,17 @@ internal readonly struct Coord
         Y = y;
     }
 
-    public short X { get; }
-    public short Y { get; }
+    public short X;
+    public short Y;
 }
 
-[StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+[StructLayout(LayoutKind.Sequential)]
 internal struct StartupInfo
 {
     public int cb;
-    public string? Reserved;
-    public string? Desktop;
-    public string? Title;
+    public IntPtr Reserved;
+    public IntPtr Desktop;
+    public IntPtr Title;
     public int X;
     public int Y;
     public int XSize;
@@ -402,18 +402,10 @@ internal struct StartupInfoEx
 }
 
 [StructLayout(LayoutKind.Sequential)]
-internal readonly struct ProcessInformation
+internal struct ProcessInformation
 {
-    public ProcessInformation(IntPtr process, IntPtr thread, int processId, int threadId)
-    {
-        Process = process;
-        Thread = thread;
-        ProcessId = processId;
-        ThreadId = threadId;
-    }
-
-    public IntPtr Process { get; }
-    public IntPtr Thread { get; }
-    public int ProcessId { get; }
-    public int ThreadId { get; }
+    public IntPtr Process;
+    public IntPtr Thread;
+    public uint dwProcessId;
+    public uint dwThreadId;
 }
