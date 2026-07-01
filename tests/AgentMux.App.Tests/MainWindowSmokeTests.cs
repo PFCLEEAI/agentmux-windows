@@ -32,6 +32,10 @@ public sealed class MainWindowSmokeTests
                 Assert.True(window.SplitActivePaneForSmokeTest(SplitDirection.Right));
                 Assert.Equal(2, window.PaneCountForSmokeTest);
                 Assert.Equal(2, window.RenderedTerminalPaneCountForSmokeTest);
+                var activeAfterSplit = window.ActivePaneIdForSmokeTest;
+
+                Assert.True(window.CycleActivePaneForSmokeTest(reverse: false));
+                Assert.NotEqual(activeAfterSplit, window.ActivePaneIdForSmokeTest);
 
                 window.SetActivePaneTextForSmokeTest("AGENTMUX_UI_SMOKE");
                 Assert.Equal(2, window.RenderedTerminalPaneCountForSmokeTest);

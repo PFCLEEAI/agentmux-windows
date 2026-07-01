@@ -19,7 +19,7 @@
 - Workspace sidebar. Implemented in WPF shell.
 - Surface tabs.
 - Split pane layout. Implemented as recursive WPF panes with persisted split ratios.
-- WebView2 renderer bridge. Preview implemented with WPF fallback.
+- WebView2/xterm renderer bridge. Preview implemented with WPF fallback.
 - Focus movement.
 - Keyboard shortcuts.
 - Each terminal pane now owns an independent ConPTY session started lazily.

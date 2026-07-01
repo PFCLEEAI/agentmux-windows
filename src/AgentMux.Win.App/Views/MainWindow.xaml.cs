@@ -116,6 +116,16 @@ public partial class MainWindow : Window
         await SendTerminalInputAsync().ConfigureAwait(false);
     }
 
+    private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Tab || !Keyboard.Modifiers.HasFlag(ModifierKeys.Control))
+        {
+            return;
+        }
+
+        e.Handled = CycleActivePane(Keyboard.Modifiers.HasFlag(ModifierKeys.Shift));
+    }
+
     private Task<AgentMuxResponse> HandleRpcAsync(AgentMuxRequest request, CancellationToken cancellationToken)
     {
         var response = Dispatcher.CheckAccess()
@@ -138,6 +148,7 @@ public partial class MainWindow : Window
             AgentMuxMethods.Notify => AgentMuxResponse.Success(request.Id, HandleNotify(request.Params)),
             AgentMuxMethods.Split => AgentMuxResponse.Success(request.Id, HandleSplit(request.Params)),
             AgentMuxMethods.SendText => AgentMuxResponse.Success(request.Id, HandleSendText(request.Params)),
+            AgentMuxMethods.SendKey => AgentMuxResponse.Success(request.Id, HandleSendKey(request.Params)),
             AgentMuxMethods.ReadScreen => AgentMuxResponse.Success(request.Id, new { text = ActivePane()?.LastScreenText ?? "" }),
             _ => AgentMuxResponse.Failure(request.Id, $"Unsupported method: {request.Method}")
         };
@@ -211,6 +222,25 @@ public partial class MainWindow : Window
         _ = SendTextToTerminalAsync(text);
 
         return new { sent = true, bytes = (parsed?.Text ?? "").Length };
+    }
+
+    private object HandleSendKey(JsonElement? parameters)
+    {
+        var parsed = Deserialize<Dictionary<string, string>>(parameters);
+        string? key = null;
+        parsed?.TryGetValue("key", out key);
+        if (string.IsNullOrWhiteSpace(key))
+        {
+            parsed?.TryGetValue("_arg0", out key);
+        }
+
+        if (!TerminalKeyEncoder.TryEncode(key, out var sequence))
+        {
+            return new { sent = false, key = key ?? "", reason = "unsupported key" };
+        }
+
+        _ = SendTerminalSequenceAsync(sequence, $"[key: {key}]{Environment.NewLine}");
+        return new { sent = true, key, bytes = Encoding.UTF8.GetByteCount(sequence) };
     }
 
     private async Task<ConPtySession?> EnsurePanePtyAsync(PaneState? pane)
@@ -307,6 +337,16 @@ public partial class MainWindow : Window
             return;
         }
 
+        await SendTerminalSequenceAsync(text + Environment.NewLine, $"> {text}{Environment.NewLine}").ConfigureAwait(true);
+    }
+
+    private async Task SendTerminalSequenceAsync(string sequence, string? fallbackText = null)
+    {
+        if (string.IsNullOrEmpty(sequence))
+        {
+            return;
+        }
+
         Dispatcher.VerifyAccess();
         var pane = ActivePane();
         var pty = await EnsurePanePtyAsync(pane).ConfigureAwait(true);
@@ -314,7 +354,7 @@ public partial class MainWindow : Window
         {
             try
             {
-                await pty.WriteAsync(Encoding.UTF8.GetBytes(text + Environment.NewLine)).ConfigureAwait(true);
+                await pty.WriteAsync(Encoding.UTF8.GetBytes(sequence)).ConfigureAwait(true);
             }
             catch (InvalidOperationException ex)
             {
@@ -331,7 +371,7 @@ public partial class MainWindow : Window
         {
             if (pane is not null)
             {
-                pane.LastScreenText = string.Concat(pane.LastScreenText, "> ", text, Environment.NewLine);
+                pane.LastScreenText = string.Concat(pane.LastScreenText, fallbackText ?? sequence);
                 UpdateTerminalView(pane);
             }
 
@@ -469,6 +509,53 @@ public partial class MainWindow : Window
         }
 
         return changed;
+    }
+
+    private bool CycleActivePane(bool reverse)
+    {
+        var surface = ActiveSurface();
+        var panes = FlattenPanes(surface.Root);
+        if (panes.Count < 2)
+        {
+            return false;
+        }
+
+        var activePane = ActivePane();
+        var activeIndex = activePane is null ? -1 : panes.FindIndex(pane => pane.Id == activePane.Id);
+        var nextIndex = activeIndex < 0
+            ? 0
+            : reverse
+                ? (activeIndex - 1 + panes.Count) % panes.Count
+                : (activeIndex + 1) % panes.Count;
+        surface.ActivePaneId = panes[nextIndex].Id;
+        RefreshWorkspaceView();
+        return true;
+    }
+
+    private static List<PaneState> FlattenPanes(SplitNodeState root)
+    {
+        var panes = new List<PaneState>();
+        CollectPanes(root, panes);
+        return panes;
+    }
+
+    private static void CollectPanes(SplitNodeState node, List<PaneState> panes)
+    {
+        if (node.Pane is not null)
+        {
+            panes.Add(node.Pane);
+            return;
+        }
+
+        if (node.First is not null)
+        {
+            CollectPanes(node.First, panes);
+        }
+
+        if (node.Second is not null)
+        {
+            CollectPanes(node.Second, panes);
+        }
     }
 
     private static bool SplitPane(SplitNodeState node, string paneId, SplitDirection direction, out PaneState? newPane)
@@ -710,6 +797,8 @@ public partial class MainWindow : Window
 
     internal int RenderedTerminalPaneCountForSmokeTest => CountVisualDescendants<TerminalPaneView>(PaneHost);
 
+    internal string? ActivePaneIdForSmokeTest => ActivePane()?.Id;
+
     internal bool HasButtonForSmokeTest(string content) => VisualTreeContainsButton(this, content);
 
     internal bool RenderedTextContainsForSmokeTest(string marker) => VisualTreeTextContains(PaneHost, marker);
@@ -720,6 +809,8 @@ public partial class MainWindow : Window
         RefreshWorkspaceView();
         return changed;
     }
+
+    internal bool CycleActivePaneForSmokeTest(bool reverse) => CycleActivePane(reverse);
 
     internal void SetActivePaneTextForSmokeTest(string text)
     {

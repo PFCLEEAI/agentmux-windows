@@ -33,4 +33,10 @@ public sealed class RpcContractTests
         Assert.DoesNotContain('\\', pipe);
         Assert.DoesNotContain('/', pipe);
     }
+
+    [Fact]
+    public void SendKeyMethodIsStable()
+    {
+        Assert.Equal("surface.send_key", AgentMuxMethods.SendKey);
+    }
 }

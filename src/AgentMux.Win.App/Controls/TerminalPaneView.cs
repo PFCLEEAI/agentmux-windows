@@ -1,3 +1,4 @@
+using System.IO;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
@@ -64,6 +65,13 @@ internal sealed class TerminalPaneView : Grid
 
         try
         {
+            var terminalHtmlPath = Path.Combine(AppContext.BaseDirectory, "Assets", "Terminal", "terminal.html");
+            if (!File.Exists(terminalHtmlPath))
+            {
+                UseFallback();
+                return;
+            }
+
             await _webView.EnsureCoreWebView2Async().ConfigureAwait(true);
             _webView.NavigationCompleted += async (_, _) =>
             {
@@ -72,13 +80,11 @@ internal sealed class TerminalPaneView : Grid
                 _fallback.Visibility = Visibility.Collapsed;
                 await PushScreenTextOrFallbackAsync().ConfigureAwait(true);
             };
-            _webView.NavigateToString(TerminalHtml);
+            _webView.Source = new Uri(terminalHtmlPath);
         }
         catch
         {
-            _webViewFailed = true;
-            _webView.Visibility = Visibility.Collapsed;
-            _fallback.Visibility = Visibility.Visible;
+            UseFallback();
         }
     }
 
@@ -90,10 +96,7 @@ internal sealed class TerminalPaneView : Grid
         }
         catch
         {
-            _webViewReady = false;
-            _webViewFailed = true;
-            _webView.Visibility = Visibility.Collapsed;
-            _fallback.Visibility = Visibility.Visible;
+            UseFallback();
         }
     }
 
@@ -108,46 +111,11 @@ internal sealed class TerminalPaneView : Grid
         await _webView.ExecuteScriptAsync($"window.agentmuxSetText({json});").ConfigureAwait(true);
     }
 
-    private const string TerminalHtml = """
-<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'" />
-  <style>
-    html, body {
-      height: 100%;
-      width: 100%;
-      margin: 0;
-      background: #0f131a;
-      color: #eef2f8;
-      overflow: hidden;
-      font: 13px Consolas, "Cascadia Mono", "Courier New", monospace;
+    private void UseFallback()
+    {
+        _webViewReady = false;
+        _webViewFailed = true;
+        _webView.Visibility = Visibility.Collapsed;
+        _fallback.Visibility = Visibility.Visible;
     }
-
-    #terminal {
-      box-sizing: border-box;
-      height: 100%;
-      width: 100%;
-      margin: 0;
-      padding: 8px;
-      overflow: auto;
-      white-space: pre-wrap;
-      word-break: break-word;
-    }
-  </style>
-</head>
-<body>
-  <pre id="terminal"></pre>
-  <script>
-    const terminal = document.getElementById('terminal');
-    window.agentmuxSetText = value => {
-      terminal.textContent = value || 'No terminal output yet.';
-      terminal.scrollTop = terminal.scrollHeight;
-    };
-    window.agentmuxSetText('');
-  </script>
-</body>
-</html>
-""";
 }

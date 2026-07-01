@@ -9,7 +9,8 @@
         Background="{StaticResource AgentMuxBackground}"
         Foreground="{StaticResource AgentMuxText}"
         Loaded="Window_Loaded"
-        Closed="Window_Closed">
+        Closed="Window_Closed"
+        PreviewKeyDown="Window_PreviewKeyDown">
     <Grid>
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="260" />

@@ -8,6 +8,7 @@ AgentMux Windows is intended to be a clean, independent implementation.
 - Use MIT-compatible code only when the license notice is preserved.
 - Link to reference projects in attribution sections.
 - Write original code and original documentation.
+- Vendor small MIT-compatible third-party runtime assets when their license text and version are recorded.
 
 ## Not Allowed
 
@@ -21,5 +22,6 @@ AgentMux Windows is intended to be a clean, independent implementation.
 - macOS cmux: GPL-licensed public project plus commercial licensing option.
 - mkurman/cmux-windows: MIT-licensed Windows-oriented reference project.
 - wmux: MIT-licensed Windows-oriented reference project.
+- xterm.js: MIT-licensed terminal renderer used as a vendored runtime asset.
 
 If any source code is imported from a reference project, record it in `NOTICE.md` before merging and verify license compatibility.

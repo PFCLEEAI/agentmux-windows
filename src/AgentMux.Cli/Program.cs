@@ -28,7 +28,7 @@ public static class Program
                 "workspace" => await HandleWorkspaceAsync(client, args[1..]).ConfigureAwait(false),
                 "split" => await HandleSplitAsync(client, args[1..]).ConfigureAwait(false),
                 "send" => await client.SendAsync(AgentMuxMethods.SendText, new { text = string.Join(' ', args[1..]) }).ConfigureAwait(false),
-                "send-key" => await client.SendAsync(AgentMuxMethods.SendKey, ParseNamed(args[1..])).ConfigureAwait(false),
+                "send-key" => await client.SendAsync(AgentMuxMethods.SendKey, ParseSendKey(args[1..])).ConfigureAwait(false),
                 "read-screen" => await client.SendAsync(AgentMuxMethods.ReadScreen, ParseNamed(args[1..])).ConfigureAwait(false),
                 _ => AgentMuxResponse.Failure("", $"Unknown command: {command}")
             };
@@ -87,6 +87,17 @@ public static class Program
             subtitle,
             body = body ?? ""
         };
+    }
+
+    private static object ParseSendKey(string[] args)
+    {
+        var named = ParseNamed(args);
+        if (!named.ContainsKey("key") && named.TryGetValue("_arg0", out var positional))
+        {
+            named["key"] = positional;
+        }
+
+        return named;
     }
 
     private static Dictionary<string, string> ParseNamed(string[] args)

@@ -1,0 +1,49 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'" />
+  <link rel="stylesheet" href="vendor/xterm/xterm.css" />
+  <style>
+    html, body, #terminal {
+      height: 100%;
+      width: 100%;
+      margin: 0;
+      background: #0f131a;
+      overflow: hidden;
+    }
+
+    .xterm {
+      height: 100%;
+      padding: 8px;
+      box-sizing: border-box;
+    }
+  </style>
+</head>
+<body>
+  <div id="terminal"></div>
+  <script src="vendor/xterm/xterm.js"></script>
+  <script>
+    const terminal = new Terminal({
+      convertEol: true,
+      cursorBlink: true,
+      fontFamily: 'Consolas, "Cascadia Mono", "Courier New", monospace',
+      fontSize: 13,
+      theme: {
+        background: '#0f131a',
+        foreground: '#eef2f8',
+        cursor: '#3aa7ff',
+        selectionBackground: '#265d8c'
+      }
+    });
+
+    terminal.open(document.getElementById('terminal'));
+    terminal.write('No terminal output yet.');
+
+    window.agentmuxSetText = value => {
+      terminal.reset();
+      terminal.write(value || 'No terminal output yet.');
+    };
+  </script>
+</body>
+</html>
