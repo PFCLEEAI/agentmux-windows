@@ -109,6 +109,16 @@
       postTerminalInput(text);
       return true;
     };
+
+    window.agentmuxEmitXtermInputForSmoke = value => {
+      const text = String(value || '');
+      if (!text || typeof terminal.input !== 'function') {
+        return false;
+      }
+
+      terminal.input(text, true);
+      return true;
+    };
   </script>
 </body>
 </html>
