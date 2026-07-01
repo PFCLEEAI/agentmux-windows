@@ -9,6 +9,7 @@ namespace AgentMux.Win.Pty;
 public sealed class ConPtySession : IPtySession
 {
     private const int ExtendedStartupInfoPresent = 0x00080000;
+    private const int StartfUseStdHandles = 0x00000100;
     private static readonly IntPtr ProcThreadAttributePseudoConsole = 0x00020016;
 
     private readonly object _gate = new();
@@ -226,6 +227,7 @@ public sealed class ConPtySession : IPtySession
     {
         var startupInfo = new StartupInfoEx();
         startupInfo.StartupInfo.cb = Marshal.SizeOf<StartupInfoEx>();
+        startupInfo.StartupInfo.Flags = StartfUseStdHandles;
 
         var attributeListSize = IntPtr.Zero;
         _ = ConPtyNative.InitializeProcThreadAttributeList(IntPtr.Zero, 1, 0, ref attributeListSize);
