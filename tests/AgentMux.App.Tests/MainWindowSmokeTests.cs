@@ -40,6 +40,9 @@ public sealed class MainWindowSmokeTests
                 window.SetActivePaneTextForSmokeTest("AGENTMUX_UI_SMOKE");
                 Assert.Equal(2, window.RenderedTerminalPaneCountForSmokeTest);
                 Assert.True(window.RenderedTextContainsForSmokeTest("AGENTMUX_UI_SMOKE"));
+
+                window.AppendActivePaneTextForSmokeTest("_STREAM_APPEND");
+                Assert.True(window.RenderedTextContainsForSmokeTest("AGENTMUX_UI_SMOKE_STREAM_APPEND"));
             }
             finally
             {

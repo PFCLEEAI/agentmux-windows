@@ -293,31 +293,55 @@ public partial class MainWindow : Window
 
     private void WirePanePtyEvents(string paneId, ConPtySession session)
     {
+        var decoder = Encoding.UTF8.GetDecoder();
         session.OutputReceived += bytes =>
         {
-            var text = Encoding.UTF8.GetString(bytes.Span);
+            var text = DecodePtyOutput(decoder, bytes.Span);
+            if (text.Length == 0)
+            {
+                return;
+            }
+
             Dispatcher.Invoke(() =>
             {
                 if (FindPaneById(paneId) is { } pane)
                 {
                     pane.LastScreenText = string.Concat(pane.LastScreenText, text);
-                    UpdateTerminalView(pane);
+                    AppendTerminalView(pane, text);
                 }
             });
         };
         session.Exited += exitCode =>
         {
+            var tail = DecodePtyOutput(decoder, ReadOnlySpan<byte>.Empty, flush: true);
             Dispatcher.Invoke(() =>
             {
                 if (FindPaneById(paneId) is { } pane)
                 {
-                    pane.LastScreenText = string.Concat(pane.LastScreenText, Environment.NewLine, $"[process exited: {exitCode}]", Environment.NewLine);
-                    UpdateTerminalView(pane);
+                    var text = string.Concat(tail, Environment.NewLine, $"[process exited: {exitCode}]", Environment.NewLine);
+                    pane.LastScreenText = string.Concat(pane.LastScreenText, text);
+                    AppendTerminalView(pane, text);
                 }
 
                 RefreshWorkspaceView();
             });
         };
+    }
+
+    private static string DecodePtyOutput(Decoder decoder, ReadOnlySpan<byte> bytes, bool flush = false)
+    {
+        lock (decoder)
+        {
+            var charCount = decoder.GetCharCount(bytes, flush);
+            if (charCount == 0)
+            {
+                return "";
+            }
+
+            var chars = new char[charCount];
+            var charsWritten = decoder.GetChars(bytes, chars, flush);
+            return new string(chars, 0, charsWritten);
+        }
     }
 
     private async Task SendTerminalInputAsync()
@@ -342,13 +366,17 @@ public partial class MainWindow : Window
 
     private async Task SendTerminalSequenceAsync(string sequence, string? fallbackText = null)
     {
+        await SendTerminalSequenceToPaneAsync(ActivePane(), sequence, fallbackText).ConfigureAwait(true);
+    }
+
+    private async Task SendTerminalSequenceToPaneAsync(PaneState? pane, string sequence, string? fallbackText = null)
+    {
         if (string.IsNullOrEmpty(sequence))
         {
             return;
         }
 
         Dispatcher.VerifyAccess();
-        var pane = ActivePane();
         var pty = await EnsurePanePtyAsync(pane).ConfigureAwait(true);
         if (pty is { IsRunning: true })
         {
@@ -360,8 +388,9 @@ public partial class MainWindow : Window
             {
                 if (pane is not null)
                 {
-                    pane.LastScreenText = string.Concat(pane.LastScreenText, Environment.NewLine, $"[send failed: {ex.Message}]", Environment.NewLine);
-                    UpdateTerminalView(pane);
+                    var text = string.Concat(Environment.NewLine, $"[send failed: {ex.Message}]", Environment.NewLine);
+                    pane.LastScreenText = string.Concat(pane.LastScreenText, text);
+                    AppendTerminalView(pane, text);
                 }
 
                 RefreshWorkspaceView();
@@ -371,8 +400,9 @@ public partial class MainWindow : Window
         {
             if (pane is not null)
             {
-                pane.LastScreenText = string.Concat(pane.LastScreenText, fallbackText ?? sequence);
-                UpdateTerminalView(pane);
+                var text = fallbackText ?? sequence;
+                pane.LastScreenText = string.Concat(pane.LastScreenText, text);
+                AppendTerminalView(pane, text);
             }
 
             RefreshWorkspaceView();
@@ -737,6 +767,11 @@ public partial class MainWindow : Window
         if (!_terminalViews.TryGetValue(pane.Id, out var view))
         {
             view = new TerminalPaneView();
+            view.InputReceived += (_, data) =>
+            {
+                ActiveSurface().ActivePaneId = pane.Id;
+                _ = SendTerminalSequenceToPaneAsync(pane, data);
+            };
             _terminalViews[pane.Id] = view;
         }
 
@@ -750,6 +785,14 @@ public partial class MainWindow : Window
         if (_terminalViews.TryGetValue(pane.Id, out var view))
         {
             view.SetScreenText(pane.LastScreenText);
+        }
+    }
+
+    private void AppendTerminalView(PaneState pane, string text)
+    {
+        if (_terminalViews.TryGetValue(pane.Id, out var view))
+        {
+            view.AppendScreenText(text);
         }
     }
 
@@ -820,6 +863,17 @@ public partial class MainWindow : Window
         }
 
         RefreshWorkspaceView();
+    }
+
+    internal void AppendActivePaneTextForSmokeTest(string text)
+    {
+        if (ActivePane() is not { } pane)
+        {
+            return;
+        }
+
+        pane.LastScreenText = string.Concat(pane.LastScreenText, text);
+        AppendTerminalView(pane, text);
     }
 
     private static int CountVisualDescendants<T>(DependencyObject root)

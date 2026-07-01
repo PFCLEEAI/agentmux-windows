@@ -37,12 +37,48 @@
       }
     });
 
+    let hasOutput = false;
+    const emptyText = 'No terminal output yet.';
+    let writeQueue = Promise.resolve();
+
+    const writeAsync = text => new Promise(resolve => terminal.write(text, resolve));
+    const enqueueWrite = operation => {
+      writeQueue = writeQueue.then(operation, operation);
+      return writeQueue;
+    };
+
     terminal.open(document.getElementById('terminal'));
-    terminal.write('No terminal output yet.');
+    enqueueWrite(() => writeAsync(emptyText));
+
+    terminal.onData(data => {
+      if (window.chrome?.webview) {
+        window.chrome.webview.postMessage({ type: 'input', data });
+      }
+    });
 
     window.agentmuxSetText = value => {
-      terminal.reset();
-      terminal.write(value || 'No terminal output yet.');
+      const text = value || emptyText;
+      return enqueueWrite(async () => {
+        terminal.reset();
+        hasOutput = text !== emptyText;
+        await writeAsync(text);
+      });
+    };
+
+    window.agentmuxAppendText = value => {
+      const text = value || '';
+      if (!text) {
+        return;
+      }
+
+      return enqueueWrite(async () => {
+        if (!hasOutput) {
+          terminal.reset();
+          hasOutput = true;
+        }
+
+        await writeAsync(text);
+      });
     };
   </script>
 </body>
