@@ -18,6 +18,8 @@ public sealed class ConPtySession : IPtySession
     private Process? _process;
     private CancellationTokenSource? _readerStop;
     private Task? _readerTask;
+    private int? _exitCode;
+    private bool _exitReported;
 
     public string Id { get; } = $"pty-{Guid.NewGuid():N}";
     public bool IsRunning { get; private set; }
@@ -38,6 +40,9 @@ public sealed class ConPtySession : IPtySession
             {
                 throw new InvalidOperationException("PTY session is already running.");
             }
+
+            _exitCode = null;
+            _exitReported = false;
         }
 
         var inputReadForPseudoConsole = CreatePipe(out var inputWrite);
@@ -62,9 +67,14 @@ public sealed class ConPtySession : IPtySession
             _readerStop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             _readerTask = Task.Run(() => ReadOutputLoopAsync(_readerStop.Token), CancellationToken.None);
 
+            var process = _process;
             lock (_gate)
             {
-                IsRunning = true;
+                IsRunning = process is { HasExited: false };
+                if (!IsRunning && process is not null && _exitCode is null)
+                {
+                    _exitCode = process.ExitCode;
+                }
             }
         }
         catch
@@ -83,9 +93,18 @@ public sealed class ConPtySession : IPtySession
     public async Task WriteAsync(ReadOnlyMemory<byte> bytes, CancellationToken cancellationToken = default)
     {
         var writer = _inputWriter;
-        if (!IsRunning || writer is null)
+        bool isRunning;
+        int? exitCode;
+        lock (_gate)
         {
-            throw new InvalidOperationException("PTY session is not running.");
+            isRunning = IsRunning;
+            exitCode = _exitCode;
+        }
+
+        if (!isRunning || writer is null)
+        {
+            var exitDetails = exitCode is null ? string.Empty : $" Process exited with code {exitCode.Value}.";
+            throw new InvalidOperationException($"PTY session is not running.{exitDetails}");
         }
 
         await Task.Run(() =>
@@ -218,7 +237,7 @@ public sealed class ConPtySession : IPtySession
                 throw new Win32Exception(Marshal.GetLastWin32Error(), "Could not attach pseudoconsole to process attributes.");
             }
 
-            var commandLine = new StringBuilder(BuildCommandLine(options.ShellPath));
+            var commandLine = new StringBuilder(BuildCommandLine(options.CommandLine));
             if (!ConPtyNative.CreateProcessW(
                     null,
                     commandLine,
@@ -231,23 +250,26 @@ public sealed class ConPtySession : IPtySession
                     ref startupInfo,
                     out var processInformation))
             {
-                throw new Win32Exception(Marshal.GetLastWin32Error(), $"Could not start shell: {options.ShellPath}");
+                throw new Win32Exception(Marshal.GetLastWin32Error(), $"Could not start shell: {options.CommandLine}");
             }
 
-            ConPtyNative.CloseHandle(processInformation.Thread);
-            ConPtyNative.CloseHandle(processInformation.Process);
-
-            _process = Process.GetProcessById((int)processInformation.dwProcessId);
-            _process.EnableRaisingEvents = true;
-            _process.Exited += (_, _) =>
+            try
             {
-                lock (_gate)
-                {
-                    IsRunning = false;
-                }
+                var process = Process.GetProcessById((int)processInformation.dwProcessId);
+                process.Exited += (_, _) => MarkProcessExited(process.ExitCode);
+                process.EnableRaisingEvents = true;
+                _process = process;
 
-                Exited?.Invoke(_process.ExitCode);
-            };
+                if (process.HasExited)
+                {
+                    MarkProcessExited(process.ExitCode);
+                }
+            }
+            finally
+            {
+                ConPtyNative.CloseHandle(processInformation.Thread);
+                ConPtyNative.CloseHandle(processInformation.Process);
+            }
         }
         finally
         {
@@ -257,6 +279,23 @@ public sealed class ConPtySession : IPtySession
                 Marshal.FreeHGlobal(startupInfo.AttributeList);
             }
         }
+    }
+
+    private void MarkProcessExited(int exitCode)
+    {
+        lock (_gate)
+        {
+            if (_exitReported)
+            {
+                return;
+            }
+
+            _exitCode = exitCode;
+            _exitReported = true;
+            IsRunning = false;
+        }
+
+        Exited?.Invoke(exitCode);
     }
 
     private void DisposeNative()
