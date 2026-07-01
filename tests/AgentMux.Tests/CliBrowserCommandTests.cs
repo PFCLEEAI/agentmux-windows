@@ -44,6 +44,18 @@ public sealed class CliBrowserCommandTests
         Assert.True(Path.IsPathFullyQualified(parameters.GetProperty("path").GetString()!));
     }
 
+    [Theory]
+    [InlineData("frames")]
+    [InlineData("frame-tree")]
+    public void BrowserFramesParsesFrameTreeCommand(string command)
+    {
+        var request = Program.ParseBrowserRequestForTests([command], out var error);
+
+        Assert.Equal("", error);
+        Assert.NotNull(request);
+        Assert.Equal(AgentMuxMethods.BrowserFrameTree, request.Method);
+    }
+
     [Fact]
     public void BrowserTypeKeepsPositionalText()
     {

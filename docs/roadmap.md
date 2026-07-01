@@ -71,5 +71,6 @@
 - Open/navigate. Preview implemented through `surface.open_url`, `agentmux open-url`, and the browser pane address bar.
 - Eval/click/fill/type/press. Preview implemented through lightweight WebView2 helpers; click/type/press use WebView2 input automation where practical.
 - Screenshot. Preview implemented as WebView2 PNG capture to a local path.
+- Frame tree. Preview implemented through WebView2/CDP `Page.getFrameTree` for active-pane inspection.
 
-Browser automation has hosted WebView2 runtime smoke and CI PNG artifacts. Click/type/press now cover richer pointer/key preview semantics, but full Playwright-style automation such as frames, downloads, tracing, network interception, and trusted physical input remains future work.
+Browser automation has hosted WebView2 runtime smoke and CI PNG artifacts. Click/type/press now cover richer pointer/key preview semantics, and frame-tree inspection covers the first frame-parity step. Full Playwright-style automation such as frame-targeted selector actions, downloads, tracing, network interception, and trusted physical input remains future work.

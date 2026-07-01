@@ -220,6 +220,13 @@ public static class Program
             return new CliRequest(AgentMuxMethods.BrowserScreenshot, new { path = Path.GetFullPath(path) });
         }
 
+        if (args[0].Equals("frames", StringComparison.OrdinalIgnoreCase)
+            || args[0].Equals("frame-tree", StringComparison.OrdinalIgnoreCase))
+        {
+            error = "";
+            return new CliRequest(AgentMuxMethods.BrowserFrameTree, new { });
+        }
+
         if (args.Length == 1)
         {
             error = "";
@@ -454,6 +461,7 @@ public static class Program
           agentmux browser type "#prompt" "write tests"
           agentmux browser press Enter --selector "#prompt"
           agentmux browser screenshot .\browser.png
+          agentmux browser frames
           agentmux send "npm test"
           agentmux send-key Enter
           agentmux read-screen --lines 50

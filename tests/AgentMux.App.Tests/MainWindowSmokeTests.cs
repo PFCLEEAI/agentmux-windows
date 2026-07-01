@@ -343,7 +343,7 @@ public sealed class MainWindowSmokeTests
             var setup = await WaitForRpcOkAsync(window, AgentMuxMethods.BrowserEval, new
             {
                 script = """
-                    document.body.innerHTML = '<input id="rpc-name"><button id="rpc-go">go</button><output id="rpc-result"></output><input id="rpc-typed"><output id="rpc-typed-result"></output>';
+                    document.body.innerHTML = '<input id="rpc-name"><button id="rpc-go">go</button><output id="rpc-result"></output><input id="rpc-typed"><output id="rpc-typed-result"></output><iframe id="rpc-frame" name="agentmux-child-frame" srcdoc="<p>agentmux-frame-smoke</p>"></iframe>';
                     window.__agentMuxRpcClicked = 0;
                     window.__agentMuxRpcMouseDown = 0;
                     window.__agentMuxRpcTypedInput = 0;
@@ -413,6 +413,15 @@ public sealed class MainWindowSmokeTests
             Assert.True(state.GetProperty("typedInput").GetInt32() >= 1);
             Assert.Equal(1, state.GetProperty("pressedEnter").GetInt32());
             Assert.Equal("agentmux-rpc-type-smoke", state.GetProperty("typedResult").GetString());
+
+            var frameTree = await WaitForFrameTreeWithChildAsync(window, "agentmux-child-frame").ConfigureAwait(true);
+            Assert.True(frameTree.GetProperty("ok").GetBoolean(), frameTree.ToString());
+            var rootFrameTree = frameTree.GetProperty("frameTree");
+            Assert.True(rootFrameTree.TryGetProperty("frame", out var rootFrame), frameTree.ToString());
+            Assert.False(string.IsNullOrWhiteSpace(rootFrame.GetProperty("id").GetString()));
+            Assert.True(TryFindFrameByName(rootFrameTree, "agentmux-child-frame", out var childFrame), frameTree.ToString());
+            Assert.Equal("agentmux-child-frame", childFrame.GetProperty("name").GetString());
+            Assert.False(string.IsNullOrWhiteSpace(childFrame.GetProperty("parentId").GetString()));
         }
         finally
         {
@@ -617,6 +626,65 @@ public sealed class MainWindowSmokeTests
 
         AssertRpcOk(lastResponse ?? AgentMuxResponse.Failure("smoke", "RPC did not complete"));
         return lastResult ?? default;
+    }
+
+    private static async Task<System.Text.Json.JsonElement> WaitForFrameTreeWithChildAsync(MainWindow window, string frameName)
+    {
+        System.Text.Json.JsonElement? lastResult = null;
+        for (var attempt = 0; attempt < 10; attempt++)
+        {
+            var response = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserFrameTree).ConfigureAwait(true);
+            if (response.Ok)
+            {
+                var result = System.Text.Json.JsonSerializer.SerializeToElement(response.Result, AgentMuxJson.Options);
+                lastResult = result.Clone();
+                if (result.TryGetProperty("ok", out var ok)
+                    && ok.GetBoolean()
+                    && result.TryGetProperty("frameTree", out var frameTree)
+                    && TryFindFrameByName(frameTree, frameName, out _))
+                {
+                    return result.Clone();
+                }
+            }
+
+            await Task.Delay(250).ConfigureAwait(true);
+        }
+
+        throw new InvalidOperationException($"Browser frame tree did not contain a child frame. Last result: {lastResult?.ToString() ?? "<none>"}");
+    }
+
+    private static bool TryFindFrameByName(System.Text.Json.JsonElement frameTree, string frameName, out System.Text.Json.JsonElement frame)
+    {
+        frame = default;
+        if (frameTree.ValueKind != System.Text.Json.JsonValueKind.Object)
+        {
+            return false;
+        }
+
+        if (frameTree.TryGetProperty("frame", out var candidate)
+            && candidate.ValueKind == System.Text.Json.JsonValueKind.Object
+            && candidate.TryGetProperty("name", out var name)
+            && string.Equals(name.GetString(), frameName, StringComparison.Ordinal))
+        {
+            frame = candidate.Clone();
+            return true;
+        }
+
+        if (!frameTree.TryGetProperty("childFrames", out var childFrames)
+            || childFrames.ValueKind != System.Text.Json.JsonValueKind.Array)
+        {
+            return false;
+        }
+
+        foreach (var child in childFrames.EnumerateArray())
+        {
+            if (TryFindFrameByName(child, frameName, out frame))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static string SmokeArtifactDirectory()

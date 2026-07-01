@@ -66,6 +66,7 @@ public static class AgentMuxMethods
     public const string BrowserType = "surface.browser_type_text";
     public const string BrowserPress = "surface.browser_press_key";
     public const string BrowserScreenshot = "surface.capture_screenshot";
+    public const string BrowserFrameTree = "surface.browser_frame_tree";
 }
 
 public static class AgentMuxJson

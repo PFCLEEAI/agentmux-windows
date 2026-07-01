@@ -403,6 +403,7 @@ public partial class MainWindow : Window
             AgentMuxMethods.BrowserType => AgentMuxResponse.Success(request.Id, await HandleBrowserTypeAsync(request.Params).ConfigureAwait(true)),
             AgentMuxMethods.BrowserPress => AgentMuxResponse.Success(request.Id, await HandleBrowserPressAsync(request.Params).ConfigureAwait(true)),
             AgentMuxMethods.BrowserScreenshot => AgentMuxResponse.Success(request.Id, await HandleBrowserScreenshotAsync(request.Params).ConfigureAwait(true)),
+            AgentMuxMethods.BrowserFrameTree => AgentMuxResponse.Success(request.Id, await HandleBrowserFrameTreeAsync().ConfigureAwait(true)),
             _ => AgentMuxResponse.Failure(request.Id, $"Unsupported method: {request.Method}")
         };
 
@@ -680,6 +681,11 @@ public partial class MainWindow : Window
         {
             return new { ok = false, reason = ex.Message };
         }
+    }
+
+    private async Task<object> HandleBrowserFrameTreeAsync()
+    {
+        return await RunBrowserScriptAsync(view => view.GetFrameTreeAsync()).ConfigureAwait(true);
     }
 
     private async Task<ConPtySession?> EnsurePanePtyAsync(PaneState? pane)
@@ -1473,7 +1479,8 @@ public partial class MainWindow : Window
             or AgentMuxMethods.BrowserFill
             or AgentMuxMethods.BrowserType
             or AgentMuxMethods.BrowserPress
-            or AgentMuxMethods.BrowserScreenshot;
+            or AgentMuxMethods.BrowserScreenshot
+            or AgentMuxMethods.BrowserFrameTree;
     }
 
     private void StopPanePty(string paneId)

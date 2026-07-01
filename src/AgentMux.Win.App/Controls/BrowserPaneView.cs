@@ -357,6 +357,31 @@ internal sealed class BrowserPaneView : Grid
         return fullPath;
     }
 
+    public async Task<string> GetFrameTreeAsync()
+    {
+        await EnsureReadyAsync().ConfigureAwait(true);
+        try
+        {
+            var frameTreeJson = await _webView.CoreWebView2!.CallDevToolsProtocolMethodAsync("Page.getFrameTree", "{}").ConfigureAwait(true);
+            using var document = JsonDocument.Parse(frameTreeJson);
+            if (!document.RootElement.TryGetProperty("frameTree", out var frameTree)
+                || frameTree.ValueKind != JsonValueKind.Object)
+            {
+                return JsonSerializer.Serialize(new { ok = false, reason = "frame tree unavailable" });
+            }
+
+            return JsonSerializer.Serialize(new
+            {
+                ok = true,
+                frameTree = frameTree.Clone()
+            });
+        }
+        catch (JsonException)
+        {
+            return JsonSerializer.Serialize(new { ok = false, reason = "frame tree unavailable" });
+        }
+    }
+
     private void AddressBox_KeyDown(object sender, KeyEventArgs e)
     {
         if (e.Key != Key.Enter)
