@@ -734,9 +734,8 @@ public partial class MainWindow : Window
     private static int CountVisualDescendants<T>(DependencyObject root)
     {
         var count = 0;
-        for (var i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
+        foreach (var child in LogicalTreeHelper.GetChildren(root).OfType<DependencyObject>())
         {
-            var child = VisualTreeHelper.GetChild(root, i);
             if (child is T)
             {
                 count++;
@@ -750,9 +749,8 @@ public partial class MainWindow : Window
 
     private static bool VisualTreeContainsButton(DependencyObject root, string content)
     {
-        for (var i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
+        foreach (var child in LogicalTreeHelper.GetChildren(root).OfType<DependencyObject>())
         {
-            var child = VisualTreeHelper.GetChild(root, i);
             if (child is Button button && string.Equals(button.Content?.ToString(), content, StringComparison.Ordinal))
             {
                 return true;
@@ -769,9 +767,8 @@ public partial class MainWindow : Window
 
     private static bool VisualTreeTextContains(DependencyObject root, string marker)
     {
-        for (var i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
+        foreach (var child in LogicalTreeHelper.GetChildren(root).OfType<DependencyObject>())
         {
-            var child = VisualTreeHelper.GetChild(root, i);
             if (child is TextBox textBox && textBox.Text.Contains(marker, StringComparison.Ordinal))
             {
                 return true;
