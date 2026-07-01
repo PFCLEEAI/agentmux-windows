@@ -774,6 +774,15 @@ public sealed class MainWindowSmokeTests
             await AssertSendKeyDeliveredAsync(window, "PageDown", "\u001b[6~", "RAW:1B", "RAW:5B", "RAW:36", "RAW:7E");
             await AssertSendKeyDeliveredAsync(window, "Ctrl+A", "\u0001", "RAW:01");
 
+            var rendererInputPane = window.ActivePaneIdForSmokeTest;
+            Assert.True(await window.EmitActiveTerminalRendererInputForSmokeTestAsync("KM"));
+            Assert.Equal(rendererInputPane, window.ActivePaneIdForSmokeTest);
+            await WaitForReadScreenContainsAsync(window, "RAW:4B");
+            await WaitForReadScreenContainsAsync(window, "RAW:4D");
+            var terminalKeyCapture = await window.CaptureActiveTerminalPngForSmokeTestAsync(
+                System.IO.Path.Combine(SmokeArtifactDirectory(), "terminal-key-capture.png"));
+            AssertPngFile(terminalKeyCapture);
+
             var unsupportedResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.SendKey, new
             {
                 key = "LaunchRocket"
@@ -1753,7 +1762,8 @@ public sealed class MainWindowSmokeTests
                     hasXtermElement: !!document.querySelector(".xterm"),
                     hasSetText: typeof window.agentmuxSetText === "function",
                     hasAppendText: typeof window.agentmuxAppendText === "function",
-                    hasSmokeProbe: typeof window.agentmuxGetTextForSmoke === "function"
+                    hasSmokeProbe: typeof window.agentmuxGetTextForSmoke === "function",
+                    hasInputProbe: typeof window.agentmuxEmitInputForSmoke === "function"
                 }))()
                 """);
             using (var diagnostics = System.Text.Json.JsonDocument.Parse(diagnosticsJson))
@@ -1763,7 +1773,13 @@ public sealed class MainWindowSmokeTests
                 Assert.True(root.GetProperty("hasSetText").GetBoolean());
                 Assert.True(root.GetProperty("hasAppendText").GetBoolean());
                 Assert.True(root.GetProperty("hasSmokeProbe").GetBoolean());
+                Assert.True(root.GetProperty("hasInputProbe").GetBoolean());
             }
+
+            var inputReceived = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+            terminal.InputReceived += (_, data) => inputReceived.TrySetResult(data);
+            Assert.True(await terminal.EmitInputForSmokeTestAsync("AGENTMUX_RENDERER_INPUT"));
+            Assert.Equal("AGENTMUX_RENDERER_INPUT", await inputReceived.Task.WaitAsync(TimeSpan.FromSeconds(5)));
 
             var runtimeText = await terminal.WaitForRuntimeTextForSmokeTestAsync(terminalMarker);
             Assert.Contains(terminalMarker, runtimeText);

@@ -51,11 +51,13 @@
     terminal.open(document.getElementById('terminal'));
     enqueueWrite(() => writeAsync(emptyText));
 
-    terminal.onData(data => {
+    const postTerminalInput = data => {
       if (window.chrome?.webview) {
         window.chrome.webview.postMessage({ type: 'input', data });
       }
-    });
+    };
+
+    terminal.onData(postTerminalInput);
 
     window.agentmuxSetText = value => {
       const text = value || emptyText;
@@ -98,6 +100,15 @@
 
     window.agentmuxGetTextForSmoke = () => smokeScreenText;
     window.agentmuxGetGeometryForSmoke = () => ({ cols: terminal.cols, rows: terminal.rows });
+    window.agentmuxEmitInputForSmoke = value => {
+      const text = String(value || '');
+      if (!text) {
+        return false;
+      }
+
+      postTerminalInput(text);
+      return true;
+    };
   </script>
 </body>
 </html>
