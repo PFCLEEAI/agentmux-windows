@@ -229,10 +229,96 @@ public sealed class MainWindowSmokeTests
                 fallbackWindow.Close();
             }
 
+            await RunNotificationSmokeAsync();
             await RunSessionRestoreSmokeAsync();
             await RunHostedWebView2RuntimeSmokeAsync();
             await RunActiveBrowserRpcSmokeAsync();
         });
+    }
+
+    private static async Task RunNotificationSmokeAsync()
+    {
+        var root = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "agentmux-notification-smoke", Guid.NewGuid().ToString("N"));
+        var store = new SessionSnapshotStore(root);
+        var firstToken = $"agentmux-osc-secret-{Guid.NewGuid():N}";
+        var secondToken = $"agentmux-osc-clear-secret-{Guid.NewGuid():N}";
+
+        try
+        {
+            var window = new MainWindow(
+                ShortcutSettings.Default(),
+                store,
+                restoreSessionOnStartup: false,
+                persistSession: true);
+            try
+            {
+                window.InitializeForSmokeTest();
+
+                var rightPaneCreated = window.SplitActivePaneForSmokeTest(SplitDirection.Right);
+                Assert.True(rightPaneCreated);
+                var rightPane = window.ActivePaneIdForSmokeTest;
+                Assert.True(window.HandlePreviewKeyDownForSmokeTest(Key.Tab, ModifierKeys.Control));
+                var notifiedPane = window.ActivePaneIdForSmokeTest;
+                Assert.NotEqual(rightPane, notifiedPane);
+
+                window.AppendActivePaneTextForSmokeTest($"visible-before\u001b]99;t=Codex;s=Plan;b={firstToken}\u0007visible-after");
+                Assert.Equal(1, window.ActiveWorkspaceUnreadCountForSmokeTest);
+                Assert.True(window.ActivePaneHasUnreadNotificationForSmokeTest);
+                Assert.Contains("visible-beforevisible-after", window.ActivePaneLastScreenTextForSmokeTest, StringComparison.Ordinal);
+                Assert.DoesNotContain(firstToken, window.ActivePaneLastScreenTextForSmokeTest, StringComparison.Ordinal);
+                Assert.DoesNotContain("\u001b]99", window.ActivePaneLastScreenTextForSmokeTest, StringComparison.Ordinal);
+
+                var listResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.NotificationsList, new { limit = 10 });
+                Assert.True(listResponse.Ok, listResponse.Error);
+                var listRoot = System.Text.Json.JsonSerializer.SerializeToElement(listResponse.Result, AgentMuxJson.Options);
+                Assert.Equal(1, listRoot.GetProperty("unreadCount").GetInt32());
+                var notification = listRoot.GetProperty("notifications").EnumerateArray().Single();
+                Assert.Equal(firstToken, notification.GetProperty("body").GetString());
+                Assert.Equal("Codex", notification.GetProperty("title").GetString());
+                Assert.Equal("Plan", notification.GetProperty("subtitle").GetString());
+                Assert.Equal(notifiedPane, notification.GetProperty("paneId").GetString());
+                Assert.False(notification.GetProperty("isRead").GetBoolean());
+
+                Assert.True(window.HandlePreviewKeyDownForSmokeTest(Key.System, ModifierKeys.Control | ModifierKeys.Alt, Key.Right));
+                Assert.Equal(rightPane, window.ActivePaneIdForSmokeTest);
+
+                var jumpResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.NotificationsJumpLatest);
+                Assert.True(jumpResponse.Ok, jumpResponse.Error);
+                var jumpRoot = System.Text.Json.JsonSerializer.SerializeToElement(jumpResponse.Result, AgentMuxJson.Options);
+                Assert.True(jumpRoot.GetProperty("jumped").GetBoolean());
+                Assert.Equal(notifiedPane, jumpRoot.GetProperty("paneId").GetString());
+                Assert.Equal(notifiedPane, window.ActivePaneIdForSmokeTest);
+                Assert.Equal(0, window.ActiveWorkspaceUnreadCountForSmokeTest);
+                Assert.False(window.ActivePaneHasUnreadNotificationForSmokeTest);
+
+                window.AppendActivePaneTextForSmokeTest($"again\u001b]777;notify;Codex;{secondToken}\u001b\\done");
+                Assert.Equal(1, window.ActiveWorkspaceUnreadCountForSmokeTest);
+
+                var clearResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.NotificationsClear);
+                Assert.True(clearResponse.Ok, clearResponse.Error);
+                var clearRoot = System.Text.Json.JsonSerializer.SerializeToElement(clearResponse.Result, AgentMuxJson.Options);
+                Assert.Equal(1, clearRoot.GetProperty("cleared").GetInt32());
+                Assert.Equal(0, window.ActiveWorkspaceUnreadCountForSmokeTest);
+                Assert.False(window.ActivePaneHasUnreadNotificationForSmokeTest);
+
+                await window.SaveSessionForSmokeTestAsync();
+                var snapshotText = await System.IO.File.ReadAllTextAsync(store.FilePath);
+                Assert.DoesNotContain(firstToken, snapshotText, StringComparison.Ordinal);
+                Assert.DoesNotContain(secondToken, snapshotText, StringComparison.Ordinal);
+                Assert.DoesNotContain("hasUnreadNotification\":true", snapshotText, StringComparison.OrdinalIgnoreCase);
+            }
+            finally
+            {
+                window.Close();
+            }
+        }
+        finally
+        {
+            if (System.IO.Directory.Exists(root))
+            {
+                System.IO.Directory.Delete(root, recursive: true);
+            }
+        }
     }
 
     private static async Task RunSessionRestoreSmokeAsync()

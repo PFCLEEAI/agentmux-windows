@@ -85,4 +85,12 @@ public sealed class RpcContractTests
         Assert.Equal("surface.browser_downloads", AgentMuxMethods.BrowserDownloads);
         Assert.Equal("surface.browser_clear_downloads", AgentMuxMethods.BrowserDownloadsClear);
     }
+
+    [Fact]
+    public void NotificationMethodsAreStable()
+    {
+        Assert.Equal("notifications.list", AgentMuxMethods.NotificationsList);
+        Assert.Equal("notifications.clear", AgentMuxMethods.NotificationsClear);
+        Assert.Equal("notifications.jump_latest", AgentMuxMethods.NotificationsJumpLatest);
+    }
 }

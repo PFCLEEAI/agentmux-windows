@@ -48,6 +48,9 @@ public static class AgentMuxMethods
     public const string Status = "status";
     public const string Tree = "tree";
     public const string Notify = "notify";
+    public const string NotificationsList = "notifications.list";
+    public const string NotificationsClear = "notifications.clear";
+    public const string NotificationsJumpLatest = "notifications.jump_latest";
     public const string WorkspaceList = "workspace.list";
     public const string WorkspaceCreate = "workspace.create";
     public const string WorkspaceSelect = "workspace.select";

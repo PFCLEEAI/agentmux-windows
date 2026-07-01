@@ -8,6 +8,7 @@ using System.Windows.Input;
 using System.Windows.Media;
 using AgentMux.Core.Ipc;
 using AgentMux.Core.Models;
+using AgentMux.Core.Notifications;
 using AgentMux.Core.Persistence;
 using AgentMux.Win.App.Controls;
 using AgentMux.Win.App.Input;
@@ -17,10 +18,13 @@ namespace AgentMux.Win.App.Views;
 
 public partial class MainWindow : Window
 {
+    private const int MaxNotifications = 200;
+
     private readonly ObservableCollection<WorkspaceState> _workspaces = [];
     private readonly List<TerminalNotification> _notifications = [];
     private readonly Dictionary<string, ConPtySession> _ptySessions = [];
     private readonly Dictionary<string, TerminalPaneView> _terminalViews = [];
+    private readonly Dictionary<string, TerminalOutputProcessor> _terminalOutputProcessors = [];
     private readonly Dictionary<string, BrowserPaneView> _browserViews = [];
     private readonly HashSet<string> _ptyStartFailedPaneIds = [];
     private readonly SemaphoreSlim _browserSelectorWaitGate = new(1, 1);
@@ -271,8 +275,38 @@ public partial class MainWindow : Window
         return new SessionSnapshot
         {
             ActiveWorkspaceIndex = _activeWorkspaceIndex,
-            Workspaces = _workspaces.ToList()
+            Workspaces = _workspaces.Select(CloneWorkspaceForSnapshot).ToList()
         };
+    }
+
+    private static WorkspaceState CloneWorkspaceForSnapshot(WorkspaceState workspace)
+    {
+        var json = JsonSerializer.Serialize(workspace, AgentMuxJson.Options);
+        var clone = JsonSerializer.Deserialize<WorkspaceState>(json, AgentMuxJson.Options) ?? new WorkspaceState();
+        clone.UnreadCount = 0;
+        clone.LatestNotification = null;
+        foreach (var surface in clone.Surfaces)
+        {
+            ClearPaneNotificationState(surface.Root);
+        }
+
+        return clone;
+    }
+
+    private static void ClearPaneNotificationState(SplitNodeState? node)
+    {
+        if (node is null)
+        {
+            return;
+        }
+
+        if (node.Pane is not null)
+        {
+            node.Pane.HasUnreadNotification = false;
+        }
+
+        ClearPaneNotificationState(node.First);
+        ClearPaneNotificationState(node.Second);
     }
 
     private void QueueSessionSave()
@@ -389,6 +423,9 @@ public partial class MainWindow : Window
             AgentMuxMethods.WorkspaceCreate => AgentMuxResponse.Success(request.Id, HandleWorkspaceCreate(request.Params)),
             AgentMuxMethods.WorkspaceSelect => AgentMuxResponse.Success(request.Id, HandleWorkspaceSelect(request.Params)),
             AgentMuxMethods.Notify => AgentMuxResponse.Success(request.Id, HandleNotify(request.Params)),
+            AgentMuxMethods.NotificationsList => AgentMuxResponse.Success(request.Id, HandleNotificationsList(request.Params)),
+            AgentMuxMethods.NotificationsClear => AgentMuxResponse.Success(request.Id, HandleNotificationsClear()),
+            AgentMuxMethods.NotificationsJumpLatest => AgentMuxResponse.Success(request.Id, HandleNotificationsJumpLatest()),
             AgentMuxMethods.Split => AgentMuxResponse.Success(request.Id, HandleSplit(request.Params)),
             AgentMuxMethods.SendText => AgentMuxResponse.Success(request.Id, HandleSendText(request.Params)),
             AgentMuxMethods.SendKey => AgentMuxResponse.Success(request.Id, HandleSendKey(request.Params)),
@@ -461,6 +498,88 @@ public partial class MainWindow : Window
     {
         var parsed = Deserialize<NotifyParams>(parameters);
         return AddNotification(parsed?.Title ?? "Terminal", parsed?.Body ?? "", parsed?.Subtitle);
+    }
+
+    private object HandleNotificationsList(JsonElement? parameters)
+    {
+        var parsed = Deserialize<NotificationListParams>(parameters);
+        var limit = Math.Min(parsed?.Limit is > 0 ? parsed.Limit.Value : 50, MaxNotifications);
+        return new
+        {
+            notifications = _notifications
+                .OrderByDescending(notification => notification.CreatedAt)
+                .Take(limit)
+                .Select(notification => new
+                {
+                    notification.Id,
+                    notification.WorkspaceId,
+                    notification.PaneId,
+                    notification.Title,
+                    notification.Subtitle,
+                    notification.Body,
+                    notification.CreatedAt,
+                    isRead = notification.IsRead
+                })
+                .ToList(),
+            unreadCount = _notifications.Count(notification => !notification.IsRead)
+        };
+    }
+
+    private object HandleNotificationsClear()
+    {
+        var cleared = 0;
+        foreach (var notification in _notifications)
+        {
+            if (!notification.IsRead)
+            {
+                notification.IsRead = true;
+                cleared++;
+            }
+        }
+
+        RecalculateNotificationState();
+        RefreshWorkspaceView();
+        QueueSessionSave();
+        return new { cleared };
+    }
+
+    private object HandleNotificationsJumpLatest()
+    {
+        var notification = _notifications
+            .Where(candidate => !candidate.IsRead)
+            .OrderByDescending(candidate => candidate.CreatedAt)
+            .FirstOrDefault();
+
+        if (notification is null)
+        {
+            return new { jumped = false, reason = "no unread notifications" };
+        }
+
+        var target = FindWorkspaceSurfaceAndPane(notification.PaneId);
+        if (target is null)
+        {
+            notification.IsRead = true;
+            RecalculateNotificationState();
+            RefreshWorkspaceView();
+            QueueSessionSave();
+            return new { jumped = false, reason = "notification pane not found", notificationId = notification.Id };
+        }
+
+        _activeWorkspaceIndex = _workspaces.IndexOf(target.Value.Workspace);
+        target.Value.Workspace.ActiveSurfaceIndex = target.Value.Workspace.Surfaces.IndexOf(target.Value.Surface);
+        target.Value.Surface.ActivePaneId = target.Value.Pane.Id;
+        WorkspaceList.SelectedIndex = _activeWorkspaceIndex;
+        notification.IsRead = true;
+        RecalculateNotificationState();
+        RefreshWorkspaceView();
+        QueueSessionSave();
+        return new
+        {
+            jumped = true,
+            notificationId = notification.Id,
+            workspaceId = target.Value.Workspace.Id,
+            paneId = target.Value.Pane.Id
+        };
     }
 
     private object HandleSplit(JsonElement? parameters)
@@ -849,9 +968,7 @@ public partial class MainWindow : Window
             {
                 if (FindPaneById(paneId) is { } pane)
                 {
-                    pane.LastScreenText = string.Concat(pane.LastScreenText, text);
-                    AppendTerminalView(pane, text);
-                    QueueSessionSave();
+                    ApplyTerminalOutput(pane, text);
                 }
             });
         };
@@ -862,10 +979,8 @@ public partial class MainWindow : Window
             {
                 if (FindPaneById(paneId) is { } pane)
                 {
-                    var text = string.Concat(tail, Environment.NewLine, $"[process exited: {exitCode}]", Environment.NewLine);
-                    pane.LastScreenText = string.Concat(pane.LastScreenText, text);
-                    AppendTerminalView(pane, text);
-                    QueueSessionSave();
+                    ApplyTerminalOutput(pane, tail);
+                    AppendVisibleTerminalText(pane, string.Concat(Environment.NewLine, $"[process exited: {exitCode}]", Environment.NewLine));
                 }
 
                 RefreshWorkspaceView();
@@ -945,9 +1060,7 @@ public partial class MainWindow : Window
                 if (pane is not null)
                 {
                     var text = string.Concat(Environment.NewLine, $"[send failed: {ex.Message}]", Environment.NewLine);
-                    pane.LastScreenText = string.Concat(pane.LastScreenText, text);
-                    AppendTerminalView(pane, text);
-                    QueueSessionSave();
+                    AppendVisibleTerminalText(pane, text);
                 }
 
                 RefreshWorkspaceView();
@@ -958,9 +1071,7 @@ public partial class MainWindow : Window
             if (pane is not null)
             {
                 var text = fallbackText ?? sequence;
-                pane.LastScreenText = string.Concat(pane.LastScreenText, text);
-                AppendTerminalView(pane, text);
-                QueueSessionSave();
+                AppendVisibleTerminalText(pane, text);
             }
 
             RefreshWorkspaceView();
@@ -988,10 +1099,11 @@ public partial class MainWindow : Window
         return workspace;
     }
 
-    private TerminalNotification AddNotification(string title, string body, string? subtitle = null)
+    private TerminalNotification AddNotification(string title, string body, string? subtitle = null, PaneState? sourcePane = null)
     {
-        var workspace = ActiveWorkspace();
-        var pane = ActivePane();
+        var target = sourcePane is null ? null : FindWorkspaceSurfaceAndPane(sourcePane.Id);
+        var workspace = target.HasValue ? target.Value.Workspace : ActiveWorkspace();
+        var pane = target.HasValue ? target.Value.Pane : sourcePane ?? ActivePane();
         var notification = new TerminalNotification
         {
             WorkspaceId = workspace.Id,
@@ -1002,15 +1114,46 @@ public partial class MainWindow : Window
         };
 
         _notifications.Add(notification);
-        workspace.UnreadCount++;
-        workspace.LatestNotification = body;
-        if (pane is not null)
-        {
-            pane.HasUnreadNotification = true;
-        }
-
+        TrimNotificationLog();
+        RecalculateNotificationState();
         QueueSessionSave();
         return notification;
+    }
+
+    private void TrimNotificationLog()
+    {
+        while (_notifications.Count > MaxNotifications)
+        {
+            _notifications.RemoveAt(0);
+        }
+    }
+
+    private void RecalculateNotificationState()
+    {
+        foreach (var workspace in _workspaces)
+        {
+            workspace.UnreadCount = 0;
+            workspace.LatestNotification = null;
+            foreach (var surface in workspace.Surfaces)
+            {
+                ClearPaneNotificationState(surface.Root);
+            }
+        }
+
+        foreach (var notification in _notifications
+            .Where(candidate => !candidate.IsRead)
+            .OrderBy(candidate => candidate.CreatedAt))
+        {
+            var target = FindWorkspaceSurfaceAndPane(notification.PaneId);
+            if (target is null)
+            {
+                continue;
+            }
+
+            target.Value.Workspace.UnreadCount++;
+            target.Value.Workspace.LatestNotification = notification.Body;
+            target.Value.Pane.HasUnreadNotification = true;
+        }
     }
 
     private WorkspaceState ActiveWorkspace()
@@ -1076,6 +1219,27 @@ public partial class MainWindow : Window
                 if (FindPane(surface.Root, paneId) is { } pane)
                 {
                     return pane;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private PaneTarget? FindWorkspaceSurfaceAndPane(string paneId)
+    {
+        if (string.IsNullOrWhiteSpace(paneId))
+        {
+            return null;
+        }
+
+        foreach (var workspace in _workspaces)
+        {
+            foreach (var surface in workspace.Surfaces)
+            {
+                if (FindPane(surface.Root, paneId) is { } pane)
+                {
+                    return new PaneTarget(workspace, surface, pane);
                 }
             }
         }
@@ -1471,6 +1635,75 @@ public partial class MainWindow : Window
         }
     }
 
+    private void ApplyTerminalOutput(PaneState pane, string text)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            return;
+        }
+
+        if (!_terminalOutputProcessors.TryGetValue(pane.Id, out var processor))
+        {
+            processor = new TerminalOutputProcessor();
+            _terminalOutputProcessors[pane.Id] = processor;
+        }
+
+        var chunk = processor.Process(text);
+        var metadataChanged = false;
+        foreach (var terminalEvent in chunk.Events)
+        {
+            metadataChanged |= ApplyTerminalEvent(pane, terminalEvent);
+        }
+
+        if (!string.IsNullOrEmpty(chunk.Text))
+        {
+            AppendVisibleTerminalText(pane, chunk.Text);
+        }
+        else if (metadataChanged)
+        {
+            QueueSessionSave();
+        }
+
+        if (metadataChanged)
+        {
+            RefreshWorkspaceView();
+        }
+    }
+
+    private bool ApplyTerminalEvent(PaneState pane, OscEvent terminalEvent)
+    {
+        switch (terminalEvent.Kind)
+        {
+            case OscEventKind.Notification:
+                AddNotification(
+                    string.IsNullOrWhiteSpace(terminalEvent.Title) ? "Terminal" : terminalEvent.Title,
+                    terminalEvent.Body ?? "",
+                    terminalEvent.Subtitle,
+                    pane);
+                return true;
+            case OscEventKind.Title when !string.IsNullOrWhiteSpace(terminalEvent.Value):
+                pane.Title = terminalEvent.Value;
+                return true;
+            case OscEventKind.WorkingDirectory when !string.IsNullOrWhiteSpace(terminalEvent.Value):
+                pane.WorkingDirectory = terminalEvent.Value;
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private void AppendVisibleTerminalText(PaneState pane, string text)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            return;
+        }
+
+        pane.LastScreenText = string.Concat(pane.LastScreenText, text);
+        AppendTerminalView(pane, text);
+        QueueSessionSave();
+    }
+
     private void AppendTerminalView(PaneState pane, string text)
     {
         if (_terminalViews.TryGetValue(pane.Id, out var view))
@@ -1500,6 +1733,7 @@ public partial class MainWindow : Window
         {
             StopPanePty(pane.Id);
             _terminalViews.Remove(pane.Id);
+            _terminalOutputProcessors.Remove(pane.Id);
         }
 
         pane.Kind = PaneKind.Browser;
@@ -1603,6 +1837,7 @@ public partial class MainWindow : Window
     {
         StopPanePty(pane.Id);
         _terminalViews.Remove(pane.Id);
+        _terminalOutputProcessors.Remove(pane.Id);
         if (_browserViews.Remove(pane.Id, out var browserView))
         {
             browserView.Dispose();
@@ -1789,6 +2024,12 @@ public partial class MainWindow : Window
 
     internal int? ActivePaneRowsForSmokeTest => ActivePane()?.Rows;
 
+    internal string? ActivePaneLastScreenTextForSmokeTest => ActivePane()?.LastScreenText;
+
+    internal bool ActivePaneHasUnreadNotificationForSmokeTest => ActivePane()?.HasUnreadNotification ?? false;
+
+    internal int ActiveWorkspaceUnreadCountForSmokeTest => ActiveWorkspace().UnreadCount;
+
     internal bool IsActivePaneZoomedForSmokeTest => ActiveSurface().ZoomedPaneId == ActivePane()?.Id;
 
     internal bool HasButtonForSmokeTest(string content) => VisualTreeContainsButton(this, content);
@@ -1811,6 +2052,7 @@ public partial class MainWindow : Window
     {
         if (ActivePane() is { } pane)
         {
+            _terminalOutputProcessors.Remove(pane.Id);
             pane.LastScreenText = text;
         }
 
@@ -1824,8 +2066,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        pane.LastScreenText = string.Concat(pane.LastScreenText, text);
-        AppendTerminalView(pane, text);
+        ApplyTerminalOutput(pane, text);
     }
 
     internal bool ResizeActiveTerminalPaneForSmokeTest(double width, double height)
@@ -1930,6 +2171,13 @@ public partial class MainWindow : Window
         public string? Subtitle { get; set; }
         public string? Body { get; set; }
     }
+
+    private sealed class NotificationListParams
+    {
+        public int? Limit { get; set; }
+    }
+
+    private readonly record struct PaneTarget(WorkspaceState Workspace, SurfaceState Surface, PaneState Pane);
 
     private sealed class WorkspaceCreateParams
     {

@@ -38,10 +38,11 @@
 
 ## Sprint 4 - Notifications
 
-- OSC 9/99/777 parsing from terminal output.
-- CLI `notify`.
-- Pane ring and sidebar unread state.
-- Notification panel and jump latest unread.
+- OSC 9/99/777 parsing from terminal output. Preview implemented with chunk-safe OSC extraction before terminal text is stored/rendered.
+- CLI `notify`. Preview implemented.
+- Pane ring and sidebar unread state. Preview implemented as in-memory workspace unread counts and pane unread markers.
+- Notification list/clear and jump latest unread. Preview implemented through `notifications.list`, `notifications.clear`, `notifications.jump_latest`, and `agentmux notifications ...`.
+- Native Windows toast integration and a richer notification panel remain future work.
 
 ## Sprint 5 - Persistence
 

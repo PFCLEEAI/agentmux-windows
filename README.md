@@ -18,7 +18,7 @@ It is inspired by the terminal/workspace workflow category popularized by cmux, 
 
 Pre-alpha scaffold.
 
-This repository currently contains the public-safe foundation: project structure, core models, OSC notification parsing, named-pipe JSON-RPC contracts, CLI skeleton, a WPF shell with workspace sidebar and recursive split panes, per-pane ConPTY session hosting, terminal pane resize propagation, app-level session restore, a WebView2/xterm terminal-renderer bridge with WPF fallback, a WebView2 browser-pane preview, direct terminal/browser input, lightweight browser automation commands with same-origin frame targeting, frame-tree inspection, an in-memory console log, an in-memory network event log with explicit response-body lookup and metadata-only HAR-like export, and a local download event log, configurable app shortcuts, tests, CI, a framework-dependent Windows package artifact, and a prerelease ZIP workflow. Broader browser automation semantics and true manual Windows desktop smoke remain future implementation work.
+This repository currently contains the public-safe foundation: project structure, core models, streaming OSC notification parsing from terminal output, named-pipe JSON-RPC contracts, CLI skeleton, a WPF shell with workspace sidebar and recursive split panes, per-pane ConPTY session hosting, terminal pane resize propagation, app-level session restore, a WebView2/xterm terminal-renderer bridge with WPF fallback, a WebView2 browser-pane preview, direct terminal/browser input, lightweight browser automation commands with same-origin frame targeting, frame-tree inspection, an in-memory console log, an in-memory network event log with explicit response-body lookup and metadata-only HAR-like export, and a local download event log, configurable app shortcuts, tests, CI, a framework-dependent Windows package artifact, and a prerelease ZIP workflow. Broader browser automation semantics and true manual Windows desktop smoke remain future implementation work.
 
 Required Windows CI proves the solution restores, builds, runs deterministic unit tests, composes the WPF split-pane window in an STA smoke test, propagates terminal pane dimensions from WPF layout, and passes headless ConPTY smoke tests for command output, stdin echo, and live resize. A real visible Windows desktop smoke test is still required before calling this release-ready.
 
@@ -84,6 +84,9 @@ The CLI talks to a running AgentMux instance over a named pipe:
 agentmux ping
 agentmux status
 agentmux notify --title "Codex" --body "Waiting for input"
+agentmux notifications list --limit 20
+agentmux notifications jump-latest
+agentmux notifications clear
 agentmux workspace list
 agentmux workspace create --title "API"
 agentmux split right
@@ -119,6 +122,7 @@ Browser automation commands operate on the active browser pane. `browser eval` r
 Pane focus commands operate on the active split tree. `focus next` / `focus previous` cycle through panes, and `focus left` / `focus right` / `focus up` / `focus down` choose an adjacent pane from split geometry. The WPF shell also supports `Ctrl+Alt+Arrow` directional pane focus and `Ctrl+Tab` / `Ctrl+Shift+Tab` pane cycling.
 Pane action commands operate on the active pane. `zoom` toggles a single-pane view without destroying the split layout, and `close-pane` removes the active pane while preserving a remaining sibling pane.
 `pane resize --cols <cols> --rows <rows>` updates the active terminal pane's saved dimensions and resizes its live ConPTY session when one is running.
+Notification commands operate on local in-memory notification state capped at the most recent 200 events. Terminal panes strip OSC 9/99/777 notification sequences from visible terminal text, turn them into unread workspace/pane markers, and `notifications jump-latest` selects the pane for the newest unread notification when it still exists. Notification bodies are not written to session snapshots, but CLI output can still persist them in terminal scrollback, shell transcripts, redirected files, or logs.
 
 ## Shortcut Settings
 

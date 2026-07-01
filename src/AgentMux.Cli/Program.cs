@@ -27,6 +27,7 @@ public static class Program
                 "status" => await client.SendAsync(AgentMuxMethods.Status).ConfigureAwait(false),
                 "tree" => await client.SendAsync(AgentMuxMethods.Tree).ConfigureAwait(false),
                 "notify" => await client.SendAsync(AgentMuxMethods.Notify, ParseNotify(args[1..])).ConfigureAwait(false),
+                "notifications" or "notification" => await HandleNotificationsAsync(client, args[1..]).ConfigureAwait(false),
                 "workspace" => await HandleWorkspaceAsync(client, args[1..]).ConfigureAwait(false),
                 "split" => await HandleSplitAsync(client, args[1..]).ConfigureAwait(false),
                 "focus" => await HandleFocusAsync(client, args[1..]).ConfigureAwait(false),
@@ -65,6 +66,17 @@ public static class Program
             "select" => await client.SendAsync(AgentMuxMethods.WorkspaceSelect, ParseNamed(args[1..])).ConfigureAwait(false),
             _ => AgentMuxResponse.Failure("", $"Unknown workspace command: {args[0]}")
         };
+    }
+
+    private static async Task<AgentMuxResponse> HandleNotificationsAsync(NamedPipeRpcClient client, string[] args)
+    {
+        var request = ParseNotificationsRequestForTests(args, out var error);
+        if (request is null)
+        {
+            return AgentMuxResponse.Failure("", error);
+        }
+
+        return await client.SendAsync(request.Method, request.Parameters).ConfigureAwait(false);
     }
 
     private static async Task<AgentMuxResponse> HandleSplitAsync(NamedPipeRpcClient client, string[] args)
@@ -474,6 +486,53 @@ public static class Program
         return null;
     }
 
+    internal static CliRequest? ParseNotificationsRequestForTests(string[] args, out string error)
+    {
+        if (args.Length == 0)
+        {
+            error = "Usage: agentmux notifications <list|clear|jump-latest>";
+            return null;
+        }
+
+        if (args[0].Equals("list", StringComparison.OrdinalIgnoreCase)
+            || args[0].Equals("ls", StringComparison.OrdinalIgnoreCase))
+        {
+            var named = ParseNamed(args[1..]);
+            int? limit = null;
+            if (named.TryGetValue("limit", out var limitValue))
+            {
+                if (!TryParsePositiveInt(limitValue, out var parsedLimit))
+                {
+                    error = "Usage: agentmux notifications list [--limit <count>]";
+                    return null;
+                }
+
+                limit = parsedLimit;
+            }
+
+            error = "";
+            return new CliRequest(AgentMuxMethods.NotificationsList, new { limit });
+        }
+
+        if (args[0].Equals("clear", StringComparison.OrdinalIgnoreCase)
+            || args[0].Equals("clear-all", StringComparison.OrdinalIgnoreCase))
+        {
+            error = "";
+            return new CliRequest(AgentMuxMethods.NotificationsClear, new { });
+        }
+
+        if (args[0].Equals("jump-latest", StringComparison.OrdinalIgnoreCase)
+            || args[0].Equals("jump", StringComparison.OrdinalIgnoreCase)
+            || args[0].Equals("open-latest", StringComparison.OrdinalIgnoreCase))
+        {
+            error = "";
+            return new CliRequest(AgentMuxMethods.NotificationsJumpLatest, new { });
+        }
+
+        error = $"Unknown notifications command: {args[0]}";
+        return null;
+    }
+
     private static async Task<AgentMuxResponse> HandleOpenUrlAsync(NamedPipeRpcClient client, string[] args)
     {
         if (args.Length == 0)
@@ -644,6 +703,9 @@ public static class Program
           agentmux status
           agentmux tree
           agentmux notify --title "Codex" --body "Waiting"
+          agentmux notifications list --limit 20
+          agentmux notifications jump-latest
+          agentmux notifications clear
           agentmux workspace list
           agentmux workspace create --title "API" --cwd "C:\src\api"
           agentmux workspace select --index 0
