@@ -877,6 +877,45 @@ public sealed class MainWindowSmokeTests
             window.Show();
             await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
 
+            var waitLoadSecretToken = $"agentmux-wait-load-secret-{Guid.NewGuid():N}";
+            await using (var loadServer = LoopbackHttpServer.Start(
+                "/wait-load",
+                $"<!doctype html><html><body><h1>{waitLoadSecretToken}</h1></body></html>",
+                "text/html; charset=utf-8"))
+            {
+                var openLoadResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.OpenUrl, new
+                {
+                    url = loadServer.Url.ToString()
+                }).ConfigureAwait(true);
+                Assert.True(openLoadResponse.Ok, openLoadResponse.Error);
+                var openLoadResult = System.Text.Json.JsonSerializer.SerializeToElement(openLoadResponse.Result, AgentMuxJson.Options);
+                Assert.True(openLoadResult.GetProperty("opened").GetBoolean(), openLoadResult.ToString());
+
+                var domContentLoaded = AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserWaitForLoad, new
+                {
+                    state = "domcontentloaded",
+                    timeoutMs = 5000
+                }));
+                Assert.Equal("domcontentloaded", domContentLoaded.GetProperty("state").GetString());
+                var domReadyState = domContentLoaded.GetProperty("readyState").GetString();
+                Assert.True(domReadyState is "interactive" or "complete", domContentLoaded.ToString());
+                Assert.Equal(5000, domContentLoaded.GetProperty("timeoutMs").GetInt32());
+                Assert.True(domContentLoaded.GetProperty("maxTimeoutMs").GetInt32() >= 5000);
+
+                var load = AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserWaitForLoad, new
+                {
+                    state = "load",
+                    timeoutMs = 5000
+                }));
+                Assert.Equal("load", load.GetProperty("state").GetString());
+                Assert.Equal("complete", load.GetProperty("readyState").GetString());
+
+                await window.SaveSessionForSmokeTestAsync().ConfigureAwait(true);
+                Assert.True(System.IO.File.Exists(store.FilePath));
+                var waitLoadSnapshotText = await System.IO.File.ReadAllTextAsync(store.FilePath).ConfigureAwait(true);
+                Assert.DoesNotContain(waitLoadSecretToken, waitLoadSnapshotText, StringComparison.Ordinal);
+            }
+
             var setup = await WaitForRpcOkAsync(window, AgentMuxMethods.BrowserEval, new
             {
                 script = """
@@ -1235,6 +1274,16 @@ public sealed class MainWindowSmokeTests
                 window,
                 $"window.__agentMuxNetworkText === {System.Text.Json.JsonSerializer.Serialize(networkToken)}").ConfigureAwait(true);
 
+            var networkIdle = AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserWaitForLoad, new
+            {
+                state = "network-idle",
+                timeoutMs = 5000
+            }));
+            Assert.Equal("network-idle", networkIdle.GetProperty("state").GetString());
+            Assert.Equal("complete", networkIdle.GetProperty("readyState").GetString());
+            Assert.Equal(0, networkIdle.GetProperty("inFlightRequests").GetInt32());
+            Assert.True(networkIdle.GetProperty("networkIdleMs").GetInt32() >= 500);
+
             var networkLog = await WaitForNetworkEventAsync(window, networkToken, "responseReceived").ConfigureAwait(true);
             Assert.True(TryFindNetworkEvent(networkLog, networkToken, "requestWillBeSent", out var requestEvent), networkLog.ToString());
             Assert.Equal("GET", requestEvent.GetProperty("method").GetString());
@@ -1309,6 +1358,37 @@ public sealed class MainWindowSmokeTests
                 limit = 10
             }));
             Assert.Equal(0, emptyNetworkLog.GetProperty("count").GetInt32());
+
+            var slowNetworkToken = $"agentmux-wait-load-slow-{Guid.NewGuid():N}";
+            await using (var slowServer = LoopbackHttpServer.Start(
+                $"/{slowNetworkToken}",
+                slowNetworkToken,
+                "text/plain; charset=utf-8",
+                responseDelay: TimeSpan.FromSeconds(2)))
+            {
+                AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserNetworkClear));
+                AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserEval, new
+                {
+                    script = $$"""
+                        window.__agentMuxSlowNetworkText = "";
+                        fetch({{System.Text.Json.JsonSerializer.Serialize(slowServer.Url.ToString())}})
+                            .then(response => response.text())
+                            .then(text => { window.__agentMuxSlowNetworkText = text; })
+                            .catch(error => { window.__agentMuxSlowNetworkText = "ERROR:" + error.message; });
+                        true;
+                        """
+                }));
+                await WaitForNetworkEventAsync(window, slowNetworkToken, "requestWillBeSent").ConfigureAwait(true);
+
+                var slowNetworkIdle = AssertRpcNotOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserWaitForLoad, new
+                {
+                    state = "network-idle",
+                    timeoutMs = 100
+                }));
+                Assert.Equal("timeout", slowNetworkIdle.GetProperty("reason").GetString());
+                Assert.Equal("network-idle", slowNetworkIdle.GetProperty("state").GetString());
+                Assert.True(slowNetworkIdle.GetProperty("inFlightRequests").GetInt32() >= 1);
+            }
 
             var downloadToken = $"agentmux-download-{Guid.NewGuid():N}";
             var downloadFileName = $"{downloadToken}.txt";
@@ -2042,12 +2122,19 @@ public sealed class MainWindowSmokeTests
         private readonly string _body;
         private readonly string _contentType;
         private readonly string? _contentDisposition;
+        private readonly TimeSpan _responseDelay;
 
-        private LoopbackHttpServer(string path, string body, string contentType, string? contentDisposition = null)
+        private LoopbackHttpServer(
+            string path,
+            string body,
+            string contentType,
+            string? contentDisposition = null,
+            TimeSpan? responseDelay = null)
         {
             _body = body;
             _contentType = contentType;
             _contentDisposition = contentDisposition;
+            _responseDelay = responseDelay ?? TimeSpan.Zero;
             _listener = new TcpListener(IPAddress.Loopback, 0);
             _listener.Start();
             var port = ((IPEndPoint)_listener.LocalEndpoint).Port;
@@ -2057,8 +2144,8 @@ public sealed class MainWindowSmokeTests
 
         public Uri Url { get; }
 
-        public static LoopbackHttpServer Start(string path, string body) =>
-            new(path, body, "text/plain; charset=utf-8");
+        public static LoopbackHttpServer Start(string path, string body, string contentType = "text/plain; charset=utf-8", TimeSpan? responseDelay = null) =>
+            new(path, body, contentType, responseDelay: responseDelay);
 
         public static LoopbackHttpServer StartAttachment(string path, string body, string fileName) =>
             new(path, body, "text/plain", $"attachment; filename=\"{fileName}\"");
@@ -2085,6 +2172,10 @@ public sealed class MainWindowSmokeTests
                 using var client = await _listener.AcceptTcpClientAsync(_cancellation.Token).ConfigureAwait(false);
                 await using var stream = client.GetStream();
                 await ReadRequestHeadersAsync(stream).ConfigureAwait(false);
+                if (_responseDelay > TimeSpan.Zero)
+                {
+                    await Task.Delay(_responseDelay, _cancellation.Token).ConfigureAwait(false);
+                }
 
                 var bodyBytes = Encoding.UTF8.GetBytes(_body);
                 var contentDisposition = string.IsNullOrWhiteSpace(_contentDisposition)

@@ -1,4 +1,5 @@
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
@@ -19,6 +20,9 @@ internal sealed class BrowserPaneView : Grid, IDisposable
     private const int MaxConsoleMessageChars = 4_096;
     private const int DefaultWaitForSelectorTimeoutMs = 5_000;
     private const int MaxWaitForSelectorTimeoutMs = 30_000;
+    private const int DefaultWaitForLoadTimeoutMs = 5_000;
+    private const int MaxWaitForLoadTimeoutMs = 30_000;
+    private const int NetworkIdleQuietWindowMs = 500;
     private const int MaxDownloadEventCount = 100;
     private const int MaxDownloadFileNameLength = 120;
 
@@ -39,6 +43,7 @@ internal sealed class BrowserPaneView : Grid, IDisposable
     private TaskCompletionSource? _navigationCompletion;
     private ulong? _pendingNavigationId;
     private string _url = DefaultUrl;
+    private DateTimeOffset _lastNavigationStartedAtUtc = DateTimeOffset.UtcNow;
     private long _networkEventSequence;
     private long _consoleEventSequence;
     private long _downloadEventSequence;
@@ -176,6 +181,7 @@ internal sealed class BrowserPaneView : Grid, IDisposable
 
         try
         {
+            _lastNavigationStartedAtUtc = DateTimeOffset.UtcNow;
             _navigationCompletion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             _pendingNavigationId = null;
             _webView.CoreWebView2.Navigate(uri.AbsoluteUri);
@@ -462,6 +468,83 @@ internal sealed class BrowserPaneView : Grid, IDisposable
             frame = normalizedFrame,
             timeoutMs = cappedTimeoutMs,
             maxTimeoutMs = MaxWaitForSelectorTimeoutMs
+        }, AgentMuxJson.Options);
+    }
+
+    public async Task<string> WaitForLoadAsync(
+        string? state = null,
+        int? timeoutMs = null,
+        CancellationToken cancellationToken = default)
+    {
+        var normalizedState = string.IsNullOrWhiteSpace(state) ? "load" : state.Trim().ToLowerInvariant();
+        if (normalizedState is not ("domcontentloaded" or "load" or "network-idle"))
+        {
+            return JsonSerializer.Serialize(new { ok = false, reason = "unsupported state", state }, AgentMuxJson.Options);
+        }
+
+        if (timeoutMs is <= 0)
+        {
+            return JsonSerializer.Serialize(new { ok = false, reason = "timeoutMs must be positive", timeoutMs }, AgentMuxJson.Options);
+        }
+
+        var cappedTimeoutMs = timeoutMs is > 0
+            ? Math.Min(timeoutMs.Value, MaxWaitForLoadTimeoutMs)
+            : DefaultWaitForLoadTimeoutMs;
+        var startedAt = DateTimeOffset.UtcNow;
+        var deadline = startedAt.AddMilliseconds(cappedTimeoutMs);
+        var readyState = "";
+        var networkActivity = new NetworkActivitySnapshot(0, _lastNavigationStartedAtUtc, 0);
+
+        await EnsureRuntimeReadyAsync().ConfigureAwait(true);
+        while (DateTimeOffset.UtcNow <= deadline)
+        {
+            if (cancellationToken.IsCancellationRequested)
+            {
+                return JsonSerializer.Serialize(new { ok = false, reason = "cancelled", state = normalizedState }, AgentMuxJson.Options);
+            }
+
+            readyState = await ReadDocumentReadyStateAsync().ConfigureAwait(true);
+            networkActivity = GetNetworkActivitySnapshot(_lastNavigationStartedAtUtc);
+            var idleMs = Math.Max(0, (int)(DateTimeOffset.UtcNow - networkActivity.LastActivityUtc).TotalMilliseconds);
+
+            if (LoadStateMatched(normalizedState, readyState, networkActivity.InFlightRequests, idleMs))
+            {
+                return JsonSerializer.Serialize(new
+                {
+                    ok = true,
+                    state = normalizedState,
+                    readyState,
+                    elapsedMs = Math.Max(0, (int)(DateTimeOffset.UtcNow - startedAt).TotalMilliseconds),
+                    timeoutMs = cappedTimeoutMs,
+                    maxTimeoutMs = MaxWaitForLoadTimeoutMs,
+                    inFlightRequests = networkActivity.InFlightRequests,
+                    networkIdleMs = idleMs,
+                    networkEventCount = networkActivity.EventCount
+                }, AgentMuxJson.Options);
+            }
+
+            try
+            {
+                await Task.Delay(100, cancellationToken).ConfigureAwait(true);
+            }
+            catch (OperationCanceledException)
+            {
+                return JsonSerializer.Serialize(new { ok = false, reason = "cancelled", state = normalizedState }, AgentMuxJson.Options);
+            }
+        }
+
+        var finalIdleMs = Math.Max(0, (int)(DateTimeOffset.UtcNow - networkActivity.LastActivityUtc).TotalMilliseconds);
+        return JsonSerializer.Serialize(new
+        {
+            ok = false,
+            reason = "timeout",
+            state = normalizedState,
+            readyState,
+            timeoutMs = cappedTimeoutMs,
+            maxTimeoutMs = MaxWaitForLoadTimeoutMs,
+            inFlightRequests = networkActivity.InFlightRequests,
+            networkIdleMs = finalIdleMs,
+            networkEventCount = networkActivity.EventCount
         }, AgentMuxJson.Options);
     }
 
@@ -868,6 +951,12 @@ internal sealed class BrowserPaneView : Grid, IDisposable
 
     private async Task EnsureReadyAsync()
     {
+        await EnsureRuntimeReadyAsync().ConfigureAwait(true);
+        await WaitForNavigationAsync().ConfigureAwait(true);
+    }
+
+    private async Task EnsureRuntimeReadyAsync()
+    {
         if (!IsAutomationReady)
         {
             if (_webViewFailed)
@@ -878,8 +967,6 @@ internal sealed class BrowserPaneView : Grid, IDisposable
             _readyTask ??= InitializeWebViewAsync();
             await _readyTask.ConfigureAwait(true);
         }
-
-        await WaitForNavigationAsync().ConfigureAwait(true);
     }
 
     private async Task InitializeWebViewAsync()
@@ -912,6 +999,7 @@ internal sealed class BrowserPaneView : Grid, IDisposable
 
         _webView.CoreWebView2.NavigationStarting += (_, args) =>
         {
+            _lastNavigationStartedAtUtc = DateTimeOffset.UtcNow;
             _pendingNavigationId = args.NavigationId;
             if (_navigationCompletion is null || _navigationCompletion.Task.IsCompleted)
             {
@@ -1222,6 +1310,45 @@ internal sealed class BrowserPaneView : Grid, IDisposable
         return new NetworkRequestState(seenResponse, seenLoadingFinished);
     }
 
+    private NetworkActivitySnapshot GetNetworkActivitySnapshot(DateTimeOffset sinceUtc)
+    {
+        var inFlight = new HashSet<string>(StringComparer.Ordinal);
+        var lastActivityUtc = sinceUtc;
+        var eventCount = 0;
+        lock (_networkEvents)
+        {
+            foreach (var candidate in _networkEvents)
+            {
+                if (candidate.CapturedAtUtc < sinceUtc)
+                {
+                    continue;
+                }
+
+                eventCount++;
+                if (candidate.CapturedAtUtc > lastActivityUtc)
+                {
+                    lastActivityUtc = candidate.CapturedAtUtc;
+                }
+
+                if (string.IsNullOrWhiteSpace(candidate.RequestId))
+                {
+                    continue;
+                }
+
+                if (candidate.Event is "requestWillBeSent" or "responseReceived")
+                {
+                    inFlight.Add(candidate.RequestId);
+                }
+                else if (candidate.Event is "loadingFinished" or "loadingFailed")
+                {
+                    inFlight.Remove(candidate.RequestId);
+                }
+            }
+        }
+
+        return new NetworkActivitySnapshot(inFlight.Count, lastActivityUtc, eventCount);
+    }
+
     private static object[] BuildHarEntries(BrowserNetworkEvent[] events) =>
         events
             .Where(candidate => !string.IsNullOrWhiteSpace(candidate.RequestId))
@@ -1515,6 +1642,30 @@ internal sealed class BrowserPaneView : Grid, IDisposable
             return false;
         }
     }
+
+    private async Task<string> ReadDocumentReadyStateAsync()
+    {
+        try
+        {
+            var json = await _webView.CoreWebView2!.ExecuteScriptAsync("document.readyState").ConfigureAwait(true);
+            return JsonSerializer.Deserialize<string>(json, AgentMuxJson.Options) ?? "";
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or COMException or JsonException)
+        {
+            return "";
+        }
+    }
+
+    private static bool LoadStateMatched(string state, string readyState, int inFlightRequests, int networkIdleMs) =>
+        state switch
+        {
+            "domcontentloaded" => readyState is "interactive" or "complete",
+            "load" => readyState == "complete",
+            "network-idle" => readyState == "complete"
+                && inFlightRequests == 0
+                && networkIdleMs >= NetworkIdleQuietWindowMs,
+            _ => false
+        };
 
     private static BrowserNetworkEvent CreateNetworkEvent(long sequence, string eventName, string? sessionId, string parametersJson)
     {
@@ -1855,6 +2006,8 @@ internal sealed class BrowserPaneView : Grid, IDisposable
     private readonly record struct BrowserKey(string Key, string Code, int VirtualKeyCode);
 
     private readonly record struct NetworkRequestState(bool SeenResponse, bool SeenLoadingFinished);
+
+    private readonly record struct NetworkActivitySnapshot(int InFlightRequests, DateTimeOffset LastActivityUtc, int EventCount);
 
     private sealed class TrackedDownload(
         CoreWebView2DownloadOperation operation,

@@ -183,6 +183,7 @@ Then run:
 
 ```powershell
 .\cli\agentmux.exe browser wait-for-selector h1 --timeout-ms 10000
+.\cli\agentmux.exe browser wait-load --state load --timeout-ms 10000
 .\cli\agentmux.exe browser eval "document.title"
 .\cli\agentmux.exe browser fill "#prompt" "agentmux desktop smoke"
 .\cli\agentmux.exe browser click "#submit"

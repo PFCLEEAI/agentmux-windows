@@ -29,6 +29,7 @@ public partial class MainWindow : Window
     private readonly Dictionary<string, BrowserPaneView> _browserViews = [];
     private readonly HashSet<string> _ptyStartFailedPaneIds = [];
     private readonly SemaphoreSlim _browserSelectorWaitGate = new(1, 1);
+    private readonly SemaphoreSlim _browserLoadWaitGate = new(1, 1);
     private readonly ShortcutSettings _shortcutSettings;
     private readonly SessionSnapshotStore? _sessionStore;
     private readonly bool _restoreSessionOnStartup;
@@ -496,6 +497,7 @@ public partial class MainWindow : Window
             AgentMuxMethods.BrowserScreenshot => AgentMuxResponse.Success(request.Id, await HandleBrowserScreenshotAsync(request.Params).ConfigureAwait(true)),
             AgentMuxMethods.BrowserFrameTree => AgentMuxResponse.Success(request.Id, await HandleBrowserFrameTreeAsync().ConfigureAwait(true)),
             AgentMuxMethods.BrowserWaitForSelector => AgentMuxResponse.Success(request.Id, await HandleBrowserWaitForSelectorAsync(request.Params, cancellationToken).ConfigureAwait(true)),
+            AgentMuxMethods.BrowserWaitForLoad => AgentMuxResponse.Success(request.Id, await HandleBrowserWaitForLoadAsync(request.Params, cancellationToken).ConfigureAwait(true)),
             AgentMuxMethods.BrowserConsoleLog => AgentMuxResponse.Success(request.Id, await HandleBrowserConsoleLogAsync(request.Params).ConfigureAwait(true)),
             AgentMuxMethods.BrowserConsoleClear => AgentMuxResponse.Success(request.Id, await HandleBrowserConsoleClearAsync().ConfigureAwait(true)),
             AgentMuxMethods.BrowserNetworkLog => AgentMuxResponse.Success(request.Id, await HandleBrowserNetworkLogAsync(request.Params).ConfigureAwait(true)),
@@ -1026,6 +1028,32 @@ public partial class MainWindow : Window
         finally
         {
             _browserSelectorWaitGate.Release();
+        }
+    }
+
+    private async Task<object> HandleBrowserWaitForLoadAsync(JsonElement? parameters, CancellationToken cancellationToken)
+    {
+        var parsed = Deserialize<BrowserWaitForLoadParams>(parameters);
+        if (parsed?.TimeoutMs is <= 0)
+        {
+            return new { ok = false, reason = "timeoutMs must be positive", timeoutMs = parsed.TimeoutMs };
+        }
+
+        if (!await _browserLoadWaitGate.WaitAsync(0, cancellationToken).ConfigureAwait(true))
+        {
+            return new { ok = false, reason = "load wait already running" };
+        }
+
+        try
+        {
+            return await RunBrowserScriptAsync(view => view.WaitForLoadAsync(
+                parsed?.State,
+                parsed?.TimeoutMs,
+                cancellationToken)).ConfigureAwait(true);
+        }
+        finally
+        {
+            _browserLoadWaitGate.Release();
         }
     }
 
@@ -2164,6 +2192,7 @@ public partial class MainWindow : Window
             or AgentMuxMethods.BrowserScreenshot
             or AgentMuxMethods.BrowserFrameTree
             or AgentMuxMethods.BrowserWaitForSelector
+            or AgentMuxMethods.BrowserWaitForLoad
             or AgentMuxMethods.BrowserConsoleLog
             or AgentMuxMethods.BrowserConsoleClear
             or AgentMuxMethods.BrowserNetworkLog
@@ -2827,6 +2856,12 @@ public partial class MainWindow : Window
         public string? State { get; set; }
         public int? TimeoutMs { get; set; }
         public string? Frame { get; set; }
+    }
+
+    private sealed class BrowserWaitForLoadParams
+    {
+        public string? State { get; set; }
+        public int? TimeoutMs { get; set; }
     }
 
     private sealed class BrowserConsoleLogParams

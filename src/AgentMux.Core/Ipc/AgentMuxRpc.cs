@@ -74,6 +74,7 @@ public static class AgentMuxMethods
     public const string BrowserScreenshot = "surface.capture_screenshot";
     public const string BrowserFrameTree = "surface.browser_frame_tree";
     public const string BrowserWaitForSelector = "surface.browser_wait_for_selector";
+    public const string BrowserWaitForLoad = "surface.browser_wait_for_load";
     public const string BrowserConsoleLog = "surface.browser_console_log";
     public const string BrowserConsoleClear = "surface.browser_clear_console_log";
     public const string BrowserNetworkLog = "surface.browser_network_log";

@@ -179,6 +179,65 @@ public sealed class CliBrowserCommandTests
     }
 
     [Theory]
+    [InlineData("wait-load")]
+    [InlineData("wait-load-state")]
+    public void BrowserWaitLoadParsesStateAndTimeout(string command)
+    {
+        var request = Program.ParseBrowserRequestForTests([
+            command,
+            "--state",
+            "network-idle",
+            "--timeout-ms",
+            "2500"
+        ], out var error);
+
+        Assert.Equal("", error);
+        Assert.NotNull(request);
+        Assert.Equal(AgentMuxMethods.BrowserWaitForLoad, request.Method);
+        var parameters = JsonSerializer.SerializeToElement(request.Parameters, AgentMuxJson.Options);
+        Assert.Equal("network-idle", parameters.GetProperty("state").GetString());
+        Assert.Equal(2500, parameters.GetProperty("timeoutMs").GetInt32());
+    }
+
+    [Fact]
+    public void BrowserWaitLoadParsesDefaults()
+    {
+        var request = Program.ParseBrowserRequestForTests(["wait-load"], out var error);
+
+        Assert.Equal("", error);
+        Assert.NotNull(request);
+        Assert.Equal(AgentMuxMethods.BrowserWaitForLoad, request.Method);
+        var parameters = JsonSerializer.SerializeToElement(request.Parameters, AgentMuxJson.Options);
+        Assert.Equal(JsonValueKind.Null, parameters.GetProperty("state").ValueKind);
+        Assert.Equal(JsonValueKind.Null, parameters.GetProperty("timeoutMs").ValueKind);
+    }
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("-1")]
+    [InlineData("abc")]
+    [InlineData("true")]
+    public void BrowserWaitLoadRejectsInvalidTimeout(string timeoutMs)
+    {
+        var request = Program.ParseBrowserRequestForTests(["wait-load", "--timeout-ms", timeoutMs], out var error);
+
+        Assert.Null(request);
+        Assert.Equal("Usage: agentmux browser wait-load [--state <domcontentloaded|load|network-idle>] [--timeout-ms <ms>]", error);
+    }
+
+    [Theory]
+    [InlineData("visible")]
+    [InlineData("attached")]
+    [InlineData("networkidle")]
+    public void BrowserWaitLoadRejectsInvalidState(string state)
+    {
+        var request = Program.ParseBrowserRequestForTests(["wait-load", "--state", state], out var error);
+
+        Assert.Null(request);
+        Assert.Equal("Usage: agentmux browser wait-load [--state <domcontentloaded|load|network-idle>] [--timeout-ms <ms>]", error);
+    }
+
+    [Theory]
     [InlineData("console")]
     [InlineData("console-log")]
     public void BrowserConsoleParsesConsoleLogCommand(string command)

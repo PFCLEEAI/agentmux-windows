@@ -323,6 +323,34 @@ public static class Program
             return new CliRequest(AgentMuxMethods.BrowserWaitForSelector, new { selector, state, timeoutMs, frame });
         }
 
+        if (args[0].Equals("wait-load", StringComparison.OrdinalIgnoreCase)
+            || args[0].Equals("wait-load-state", StringComparison.OrdinalIgnoreCase))
+        {
+            const string usage = "Usage: agentmux browser wait-load [--state <domcontentloaded|load|network-idle>] [--timeout-ms <ms>]";
+            var named = ParseNamed(args[1..]);
+            named.TryGetValue("state", out var state);
+            if (!string.IsNullOrWhiteSpace(state) && !IsBrowserLoadState(state))
+            {
+                error = usage;
+                return null;
+            }
+
+            int? timeoutMs = null;
+            if (named.TryGetValue("timeout-ms", out var timeoutValue))
+            {
+                if (!TryParsePositiveInt(timeoutValue, out var parsedTimeout))
+                {
+                    error = usage;
+                    return null;
+                }
+
+                timeoutMs = parsedTimeout;
+            }
+
+            error = "";
+            return new CliRequest(AgentMuxMethods.BrowserWaitForLoad, new { state, timeoutMs });
+        }
+
         if (args[0].Equals("console", StringComparison.OrdinalIgnoreCase)
             || args[0].Equals("console-log", StringComparison.OrdinalIgnoreCase))
         {
@@ -839,6 +867,13 @@ public static class Program
             || value.Equals("hidden", StringComparison.OrdinalIgnoreCase);
     }
 
+    private static bool IsBrowserLoadState(string value)
+    {
+        return value.Equals("domcontentloaded", StringComparison.OrdinalIgnoreCase)
+            || value.Equals("load", StringComparison.OrdinalIgnoreCase)
+            || value.Equals("network-idle", StringComparison.OrdinalIgnoreCase);
+    }
+
     private static Dictionary<string, string> ParseNamed(string[] args)
     {
         var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -923,6 +958,7 @@ public static class Program
           agentmux browser screenshot .\browser.png
           agentmux browser frames
           agentmux browser wait-for-selector "#ready" --timeout-ms 5000
+          agentmux browser wait-load --state network-idle --timeout-ms 5000
           agentmux browser console --limit 20
           agentmux browser console-clear
           agentmux browser network --limit 20
