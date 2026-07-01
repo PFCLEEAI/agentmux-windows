@@ -79,8 +79,24 @@ public sealed class ConPtySession : IPtySession
         }
         catch
         {
-            _inputWriter?.Dispose();
-            _outputReader?.Dispose();
+            if (_inputWriter is null)
+            {
+                inputWrite.Dispose();
+            }
+            else
+            {
+                _inputWriter.Dispose();
+            }
+
+            if (_outputReader is null)
+            {
+                outputReadForApp.Dispose();
+            }
+            else
+            {
+                _outputReader.Dispose();
+            }
+
             inputReadForPseudoConsole.Dispose();
             outputWriteForPseudoConsole.Dispose();
             DisposeNative();
@@ -217,6 +233,8 @@ public sealed class ConPtySession : IPtySession
             throw new Win32Exception(Marshal.GetLastWin32Error(), "Could not size ConPTY process attribute list.");
         }
 
+        var startupInfoSize = Marshal.SizeOf<StartupInfoEx>();
+        var startupInfoPointer = IntPtr.Zero;
         startupInfo.AttributeList = Marshal.AllocHGlobal(attributeListSize);
         try
         {
@@ -237,6 +255,9 @@ public sealed class ConPtySession : IPtySession
                 throw new Win32Exception(Marshal.GetLastWin32Error(), "Could not attach pseudoconsole to process attributes.");
             }
 
+            startupInfoPointer = Marshal.AllocHGlobal(startupInfoSize);
+            Marshal.StructureToPtr(startupInfo, startupInfoPointer, false);
+
             var commandLine = new StringBuilder(BuildCommandLine(options.CommandLine));
             if (!ConPtyNative.CreateProcessW(
                     null,
@@ -247,7 +268,7 @@ public sealed class ConPtySession : IPtySession
                     ExtendedStartupInfoPresent,
                     IntPtr.Zero,
                     options.WorkingDirectory,
-                    ref startupInfo,
+                    startupInfoPointer,
                     out var processInformation))
             {
                 throw new Win32Exception(Marshal.GetLastWin32Error(), $"Could not start shell: {options.CommandLine}");
@@ -273,6 +294,12 @@ public sealed class ConPtySession : IPtySession
         }
         finally
         {
+            if (startupInfoPointer != IntPtr.Zero)
+            {
+                Marshal.DestroyStructure<StartupInfoEx>(startupInfoPointer);
+                Marshal.FreeHGlobal(startupInfoPointer);
+            }
+
             if (startupInfo.AttributeList != IntPtr.Zero)
             {
                 ConPtyNative.DeleteProcThreadAttributeList(startupInfo.AttributeList);
@@ -389,7 +416,7 @@ internal static partial class ConPtyNative
         int creationFlags,
         IntPtr environment,
         string? currentDirectory,
-        ref StartupInfoEx startupInfo,
+        IntPtr startupInfo,
         out ProcessInformation processInformation);
 }
 
