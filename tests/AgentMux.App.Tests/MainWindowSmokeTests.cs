@@ -644,29 +644,14 @@ public sealed class MainWindowSmokeTests
             {
                 await using var downloadServer = LoopbackHttpServer.StartAttachment($"/{downloadFileName}", downloadToken, downloadFileName);
                 AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserDownloadsClear));
-                AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserEval, new
+                var openDownloadResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.OpenUrl, new
                 {
-                    script = $$"""
-                        (() => {
-                            const existing = document.querySelector("#agentmux-download-link");
-                            if (existing) {
-                                existing.remove();
-                            }
-
-                            const link = document.createElement("a");
-                            link.id = "agentmux-download-link";
-                            link.href = {{System.Text.Json.JsonSerializer.Serialize(downloadServer.Url.ToString())}};
-                            link.download = {{System.Text.Json.JsonSerializer.Serialize(downloadFileName)}};
-                            link.textContent = "download";
-                            document.body.appendChild(link);
-                            return true;
-                        })()
-                        """
-                }));
-                await WaitForRpcOkAsync(window, AgentMuxMethods.BrowserClick, new
-                {
-                    selector = "#agentmux-download-link"
+                    url = downloadServer.Url.ToString()
                 }).ConfigureAwait(true);
+                Assert.True(openDownloadResponse.Ok, openDownloadResponse.Error);
+                var openDownloadResult = System.Text.Json.JsonSerializer.SerializeToElement(openDownloadResponse.Result, AgentMuxJson.Options);
+                Assert.True(openDownloadResult.GetProperty("opened").GetBoolean(), openDownloadResult.ToString());
+                Assert.Equal(downloadServer.Url.ToString(), openDownloadResult.GetProperty("url").GetString());
 
                 var downloadLog = await WaitForDownloadAsync(window, downloadToken, "Completed").ConfigureAwait(true);
                 Assert.True(TryFindDownload(downloadLog, downloadToken, "Completed", out var downloadEvent), downloadLog.ToString());
