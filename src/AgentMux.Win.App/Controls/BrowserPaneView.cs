@@ -562,6 +562,59 @@ internal sealed class BrowserPaneView : Grid, IDisposable
         }
     }
 
+    public async Task<string> ExportHarMetadataAsync(string path)
+    {
+        await EnsureReadyAsync().ConfigureAwait(true);
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return JsonSerializer.Serialize(new { ok = false, reason = "path is required" }, AgentMuxJson.Options);
+        }
+
+        string? fullPath = null;
+        try
+        {
+            fullPath = Path.GetFullPath(path);
+            BrowserNetworkEvent[] events;
+            lock (_networkEvents)
+            {
+                events = _networkEvents.ToArray();
+            }
+
+            var entries = BuildHarEntries(events);
+            var har = BuildHarMetadata(entries);
+            var options = new JsonSerializerOptions(AgentMuxJson.Options)
+            {
+                WriteIndented = true
+            };
+
+            var directory = Path.GetDirectoryName(fullPath);
+            if (!string.IsNullOrWhiteSpace(directory))
+            {
+                Directory.CreateDirectory(directory);
+            }
+
+            await File.WriteAllTextAsync(fullPath, JsonSerializer.Serialize(har, options)).ConfigureAwait(true);
+
+            return JsonSerializer.Serialize(new
+            {
+                ok = true,
+                path = fullPath,
+                entryCount = entries.Length,
+                eventCount = events.Length,
+                metadataOnly = true
+            }, AgentMuxJson.Options);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            return JsonSerializer.Serialize(new
+            {
+                ok = false,
+                path = fullPath ?? path,
+                reason = ex.Message
+            }, AgentMuxJson.Options);
+        }
+    }
+
     public async Task<string> GetDownloadLogAsync(int? limit = null)
     {
         await EnsureReadyAsync().ConfigureAwait(true);
@@ -925,6 +978,143 @@ internal sealed class BrowserPaneView : Grid, IDisposable
         }
 
         return new NetworkRequestState(seenResponse, seenLoadingFinished);
+    }
+
+    private static object[] BuildHarEntries(BrowserNetworkEvent[] events) =>
+        events
+            .Where(candidate => !string.IsNullOrWhiteSpace(candidate.RequestId))
+            .GroupBy(candidate => candidate.RequestId!)
+            .OrderBy(group => group.Min(candidate => candidate.Sequence))
+            .Select(group => BuildHarEntry(group.ToArray()))
+            .ToArray();
+
+    private static object BuildHarMetadata(object[] entries)
+    {
+        return new
+        {
+            log = new
+            {
+                version = "1.2",
+                creator = new
+                {
+                    name = "AgentMux Windows",
+                    version = "pre-alpha"
+                },
+                comment = "Metadata-only HAR preview. Headers, cookies, post data, response bodies, and downloaded files are intentionally omitted.",
+                entries
+            }
+        };
+    }
+
+    private static object BuildHarEntry(BrowserNetworkEvent[] events)
+    {
+        var startedAt = events.Min(candidate => candidate.CapturedAtUtc);
+        var finishedAt = events.Max(candidate => candidate.CapturedAtUtc);
+        var elapsedMs = Math.Max(0, (finishedAt - startedAt).TotalMilliseconds);
+        var url = FirstString(events, candidate => candidate.Url) ?? "";
+        var method = FirstString(events, candidate => candidate.Method) ?? "GET";
+        var status = FirstInt(events, candidate => candidate.Status);
+        var mimeType = FirstString(events, candidate => candidate.MimeType) ?? "";
+        var resourceType = FirstString(events, candidate => candidate.ResourceType);
+        var sessionId = FirstString(events, candidate => candidate.SessionId);
+        var encodedDataLength = LastDouble(events, candidate => candidate.EncodedDataLength);
+        var errorText = FirstString(events, candidate => candidate.ErrorText);
+        var canceled = events.Any(candidate => candidate.Canceled == true);
+        var eventNames = events.Select(candidate => candidate.Event).Distinct(StringComparer.Ordinal).ToArray();
+
+        return new
+        {
+            startedDateTime = startedAt,
+            time = elapsedMs,
+            request = new
+            {
+                method,
+                url,
+                httpVersion = "unknown",
+                cookies = Array.Empty<object>(),
+                headers = Array.Empty<object>(),
+                queryString = Array.Empty<object>(),
+                headersSize = -1,
+                bodySize = -1
+            },
+            response = new
+            {
+                status = status ?? 0,
+                statusText = "",
+                httpVersion = "unknown",
+                cookies = Array.Empty<object>(),
+                headers = Array.Empty<object>(),
+                content = new
+                {
+                    size = encodedDataLength ?? -1,
+                    mimeType
+                },
+                redirectURL = "",
+                headersSize = -1,
+                bodySize = encodedDataLength ?? -1
+            },
+            cache = new { },
+            timings = new
+            {
+                blocked = -1,
+                dns = -1,
+                connect = -1,
+                send = -1,
+                wait = -1,
+                receive = -1,
+                ssl = -1
+            },
+            _agentMux = new
+            {
+                requestId = events[0].RequestId,
+                resourceType,
+                sessionId,
+                events = eventNames,
+                capturedEventCount = events.Length,
+                metadataOnly = true,
+                errorText,
+                canceled
+            }
+        };
+    }
+
+    private static string? FirstString(BrowserNetworkEvent[] events, Func<BrowserNetworkEvent, string?> selector)
+    {
+        foreach (var candidate in events)
+        {
+            var value = selector(candidate);
+            if (!string.IsNullOrWhiteSpace(value))
+            {
+                return value;
+            }
+        }
+
+        return null;
+    }
+
+    private static int? FirstInt(BrowserNetworkEvent[] events, Func<BrowserNetworkEvent, int?> selector)
+    {
+        foreach (var candidate in events)
+        {
+            var value = selector(candidate);
+            if (value is not null)
+            {
+                return value;
+            }
+        }
+
+        return null;
+    }
+
+    private static double? LastDouble(BrowserNetworkEvent[] events, Func<BrowserNetworkEvent, double?> selector)
+    {
+        double? value = null;
+        foreach (var candidate in events)
+        {
+            value = selector(candidate) ?? value;
+        }
+
+        return value;
     }
 
     private async Task WaitForNavigationAsync(bool allowStartDelay = false)

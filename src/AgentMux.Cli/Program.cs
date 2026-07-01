@@ -293,6 +293,21 @@ public static class Program
             return new CliRequest(AgentMuxMethods.BrowserResponseBody, new { requestId = args[1] });
         }
 
+        if (args[0].Equals("har", StringComparison.OrdinalIgnoreCase)
+            || args[0].Equals("har-metadata", StringComparison.OrdinalIgnoreCase))
+        {
+            var named = ParseNamed(args[1..]);
+            var path = NamedOrFirst(named, "path");
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                error = "Usage: agentmux browser har <path>";
+                return null;
+            }
+
+            error = "";
+            return new CliRequest(AgentMuxMethods.BrowserHarMetadata, new { path = Path.GetFullPath(path) });
+        }
+
         if (args[0].Equals("downloads", StringComparison.OrdinalIgnoreCase)
             || args[0].Equals("download-log", StringComparison.OrdinalIgnoreCase))
         {
@@ -578,6 +593,7 @@ public static class Program
           agentmux browser network --limit 20
           agentmux browser network-clear
           agentmux browser response-body <request-id>
+          agentmux browser har-metadata .\network.har.json
           agentmux browser downloads --limit 20
           agentmux browser downloads-clear
           agentmux send "npm test"

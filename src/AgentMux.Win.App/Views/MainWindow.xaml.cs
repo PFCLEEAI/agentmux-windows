@@ -407,6 +407,7 @@ public partial class MainWindow : Window
             AgentMuxMethods.BrowserNetworkLog => AgentMuxResponse.Success(request.Id, await HandleBrowserNetworkLogAsync(request.Params).ConfigureAwait(true)),
             AgentMuxMethods.BrowserNetworkClear => AgentMuxResponse.Success(request.Id, await HandleBrowserNetworkClearAsync().ConfigureAwait(true)),
             AgentMuxMethods.BrowserResponseBody => AgentMuxResponse.Success(request.Id, await HandleBrowserResponseBodyAsync(request.Params).ConfigureAwait(true)),
+            AgentMuxMethods.BrowserHarMetadata => AgentMuxResponse.Success(request.Id, await HandleBrowserHarMetadataAsync(request.Params).ConfigureAwait(true)),
             AgentMuxMethods.BrowserDownloads => AgentMuxResponse.Success(request.Id, await HandleBrowserDownloadsAsync(request.Params).ConfigureAwait(true)),
             AgentMuxMethods.BrowserDownloadsClear => AgentMuxResponse.Success(request.Id, await HandleBrowserDownloadsClearAsync().ConfigureAwait(true)),
             _ => AgentMuxResponse.Failure(request.Id, $"Unsupported method: {request.Method}")
@@ -713,6 +714,17 @@ public partial class MainWindow : Window
         }
 
         return await RunBrowserScriptAsync(view => view.GetResponseBodyAsync(parsed.RequestId)).ConfigureAwait(true);
+    }
+
+    private async Task<object> HandleBrowserHarMetadataAsync(JsonElement? parameters)
+    {
+        var parsed = Deserialize<BrowserHarMetadataParams>(parameters);
+        if (string.IsNullOrWhiteSpace(parsed?.Path))
+        {
+            return new { ok = false, reason = "path is required" };
+        }
+
+        return await RunBrowserScriptAsync(view => view.ExportHarMetadataAsync(parsed.Path)).ConfigureAwait(true);
     }
 
     private async Task<object> HandleBrowserDownloadsAsync(JsonElement? parameters)
@@ -1522,6 +1534,7 @@ public partial class MainWindow : Window
             or AgentMuxMethods.BrowserNetworkLog
             or AgentMuxMethods.BrowserNetworkClear
             or AgentMuxMethods.BrowserResponseBody
+            or AgentMuxMethods.BrowserHarMetadata
             or AgentMuxMethods.BrowserDownloads
             or AgentMuxMethods.BrowserDownloadsClear;
     }
@@ -1936,6 +1949,11 @@ public partial class MainWindow : Window
     private sealed class BrowserResponseBodyParams
     {
         public string? RequestId { get; set; }
+    }
+
+    private sealed class BrowserHarMetadataParams
+    {
+        public string? Path { get; set; }
     }
 
     private sealed class BrowserDownloadLogParams

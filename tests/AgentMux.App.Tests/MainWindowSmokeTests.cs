@@ -587,6 +587,47 @@ public sealed class MainWindowSmokeTests
             Assert.False(responseBody.GetProperty("truncated").GetBoolean());
             Assert.True(responseBody.GetProperty("maxBodyChars").GetInt32() >= networkToken.Length);
 
+            var harPath = System.IO.Path.GetFullPath(System.IO.Path.Combine(SmokeArtifactDirectory(), "browser-network.har.json"));
+            if (System.IO.File.Exists(harPath))
+            {
+                System.IO.File.Delete(harPath);
+            }
+
+            var harExport = AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserHarMetadata, new
+            {
+                path = harPath
+            }));
+            Assert.Equal(harPath, harExport.GetProperty("path").GetString());
+            Assert.True(harExport.GetProperty("entryCount").GetInt32() >= 1);
+            Assert.True(harExport.GetProperty("eventCount").GetInt32() >= 2);
+            Assert.True(harExport.GetProperty("metadataOnly").GetBoolean());
+            Assert.True(System.IO.File.Exists(harPath));
+
+            using (var harDocument = System.Text.Json.JsonDocument.Parse(await System.IO.File.ReadAllTextAsync(harPath).ConfigureAwait(true)))
+            {
+                var log = harDocument.RootElement.GetProperty("log");
+                Assert.Equal("1.2", log.GetProperty("version").GetString());
+                Assert.Equal("AgentMux Windows", log.GetProperty("creator").GetProperty("name").GetString());
+                Assert.Contains("Metadata-only", log.GetProperty("comment").GetString(), StringComparison.Ordinal);
+                Assert.True(TryFindHarEntry(log, networkToken, out var harEntry), log.ToString());
+                Assert.Equal("GET", harEntry.GetProperty("request").GetProperty("method").GetString());
+                Assert.Equal(200, harEntry.GetProperty("response").GetProperty("status").GetInt32());
+                Assert.Equal("text/plain", harEntry.GetProperty("response").GetProperty("content").GetProperty("mimeType").GetString());
+                Assert.Empty(harEntry.GetProperty("request").GetProperty("headers").EnumerateArray());
+                Assert.Empty(harEntry.GetProperty("request").GetProperty("cookies").EnumerateArray());
+                Assert.Empty(harEntry.GetProperty("response").GetProperty("headers").EnumerateArray());
+                Assert.Empty(harEntry.GetProperty("response").GetProperty("cookies").EnumerateArray());
+                Assert.False(harEntry.GetProperty("request").TryGetProperty("postData", out _));
+                Assert.False(harEntry.GetProperty("response").GetProperty("content").TryGetProperty("text", out _));
+                var agentMuxHar = harEntry.GetProperty("_agentMux");
+                Assert.True(agentMuxHar.GetProperty("metadataOnly").GetBoolean());
+                Assert.True(agentMuxHar.GetProperty("capturedEventCount").GetInt32() >= 3);
+                var harEvents = agentMuxHar.GetProperty("events").EnumerateArray().Select(candidate => candidate.GetString()).ToArray();
+                Assert.Contains("requestWillBeSent", harEvents);
+                Assert.Contains("responseReceived", harEvents);
+                Assert.Contains("loadingFinished", harEvents);
+            }
+
             await Task.Delay(250).ConfigureAwait(true);
             var networkClear = AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserNetworkClear));
             Assert.True(networkClear.GetProperty("cleared").GetInt32() >= 1);
@@ -991,6 +1032,30 @@ public sealed class MainWindowSmokeTests
                 && string.Equals(requestIdProperty.GetString(), requestId, StringComparison.Ordinal))
             {
                 networkEvent = candidate.Clone();
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool TryFindHarEntry(System.Text.Json.JsonElement harLog, string urlFragment, out System.Text.Json.JsonElement harEntry)
+    {
+        harEntry = default;
+        if (!harLog.TryGetProperty("entries", out var entries)
+            || entries.ValueKind != System.Text.Json.JsonValueKind.Array)
+        {
+            return false;
+        }
+
+        foreach (var candidate in entries.EnumerateArray())
+        {
+            if (candidate.TryGetProperty("request", out var request)
+                && request.TryGetProperty("url", out var url)
+                && url.ValueKind == System.Text.Json.JsonValueKind.String
+                && (url.GetString()?.Contains(urlFragment, StringComparison.Ordinal) ?? false))
+            {
+                harEntry = candidate.Clone();
                 return true;
             }
         }

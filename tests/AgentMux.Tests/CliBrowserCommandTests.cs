@@ -171,6 +171,31 @@ public sealed class CliBrowserCommandTests
     }
 
     [Theory]
+    [InlineData("har")]
+    [InlineData("har-metadata")]
+    public void BrowserHarMetadataSendsAbsolutePath(string command)
+    {
+        var request = Program.ParseBrowserRequestForTests([command, "network.har.json"], out var error);
+
+        Assert.Equal("", error);
+        Assert.NotNull(request);
+        Assert.Equal(AgentMuxMethods.BrowserHarMetadata, request.Method);
+        var parameters = JsonSerializer.SerializeToElement(request.Parameters, AgentMuxJson.Options);
+        Assert.True(Path.IsPathFullyQualified(parameters.GetProperty("path").GetString()!));
+    }
+
+    [Theory]
+    [InlineData("har")]
+    [InlineData("har-metadata")]
+    public void BrowserHarMetadataRequiresPath(string command)
+    {
+        var request = Program.ParseBrowserRequestForTests([command], out var error);
+
+        Assert.Null(request);
+        Assert.Equal("Usage: agentmux browser har <path>", error);
+    }
+
+    [Theory]
     [InlineData("downloads")]
     [InlineData("download-log")]
     public void BrowserDownloadsParsesDownloadLogCommand(string command)
