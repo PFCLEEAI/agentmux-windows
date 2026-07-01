@@ -14,6 +14,7 @@ public sealed class ConPtySmokeTests
         }
 
         var output = new StringBuilder();
+        var sawAnyOutput = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var sawSmoke = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
         await using var session = new ConPtySession();
@@ -21,6 +22,7 @@ public sealed class ConPtySmokeTests
         {
             var text = Encoding.UTF8.GetString(bytes.Span);
             output.Append(text);
+            sawAnyOutput.TrySetResult();
             if (output.ToString().Contains("AGENTMUX_SMOKE", StringComparison.Ordinal))
             {
                 sawSmoke.TrySetResult();
@@ -35,7 +37,8 @@ public sealed class ConPtySmokeTests
             Rows = 30
         });
 
-        await session.WriteAsync("echo AGENTMUX_SMOKE\r"u8.ToArray());
+        await sawAnyOutput.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await session.WriteAsync("echo AGENTMUX_SMOKE\r\n"u8.ToArray());
 
         var completed = await Task.WhenAny(sawSmoke.Task, Task.Delay(TimeSpan.FromSeconds(10)));
         if (completed != sawSmoke.Task)

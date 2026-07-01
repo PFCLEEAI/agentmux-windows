@@ -90,8 +90,12 @@ public sealed class ConPtySession : IPtySession
             throw new InvalidOperationException("PTY session is not running.");
         }
 
-        await writer.WriteAsync(bytes, cancellationToken).ConfigureAwait(false);
-        await writer.FlushAsync(cancellationToken).ConfigureAwait(false);
+        await Task.Run(() =>
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            writer.Write(bytes.Span);
+            writer.Flush();
+        }, cancellationToken).ConfigureAwait(false);
     }
 
     public Task ResizeAsync(int cols, int rows, CancellationToken cancellationToken = default)
