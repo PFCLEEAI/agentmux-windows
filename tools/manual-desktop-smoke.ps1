@@ -216,15 +216,25 @@ if (-not [string]::IsNullOrWhiteSpace($packageInput)) {
 
     $outerChecksum = "$packageInput.sha256"
     if (Test-Path -LiteralPath $outerChecksum -PathType Leaf) {
-      $expectedLine = (Get-Content -LiteralPath $outerChecksum | Select-Object -First 1)
-      $expectedHash = ($expectedLine -split "\s+", 2)[0].ToLowerInvariant()
+      $checksumText = [System.IO.File]::ReadAllText($outerChecksum, [System.Text.Encoding]::ASCII)
+      if ($checksumText.Contains("`r") -or $checksumText -notmatch "^[0-9A-Fa-f]{64}  .+`n$") {
+        throw "Release ZIP sibling .sha256 must be one LF-only '<sha256>  <filename>' line."
+      }
+
+      $checksumParts = $checksumText.TrimEnd("`n") -split "  ", 2
+      if ($checksumParts.Length -ne 2 -or $checksumParts[1] -ne (Split-Path -Leaf $packageInput)) {
+        throw "Release ZIP sibling .sha256 filename does not match package ZIP."
+      }
+
+      $expectedHash = $checksumParts[0].ToLowerInvariant()
       $actualHash = (Get-FileHash -LiteralPath $packageInput -Algorithm SHA256).Hash.ToLowerInvariant()
       Write-TextFile -Path (Join-Path $evidenceDir "zip-checksum.txt") -Content "expected=$expectedHash`nactual=$actualHash`n"
       if ($actualHash -ne $expectedHash) {
         throw "Release ZIP checksum mismatch."
       }
     } else {
-      Write-TextFile -Path (Join-Path $evidenceDir "zip-checksum.txt") -Content "Sibling .sha256 not found; outer ZIP checksum verification skipped.`n"
+      Write-TextFile -Path (Join-Path $evidenceDir "zip-checksum.txt") -Content "Sibling .sha256 not found; outer ZIP checksum verification failed.`n"
+      throw "Release ZIP sibling .sha256 not found: $outerChecksum"
     }
 
     $extractRoot = Join-Path $evidenceDir "package-extract"

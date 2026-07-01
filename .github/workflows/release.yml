@@ -22,6 +22,12 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 9.0.x
+      - name: Verify release ref
+        shell: pwsh
+        run: |
+          if ("${{ github.event_name }}" -eq "workflow_dispatch" -and "${{ github.ref }}" -ne "refs/heads/main") {
+            throw "Manual Release workflow proofs must run from refs/heads/main."
+          }
       - name: Restore
         run: dotnet restore AgentMux.sln
       - name: Build
@@ -32,6 +38,14 @@ jobs:
         run: dotnet test tests/AgentMux.App.Tests/AgentMux.App.Tests.csproj -c Release --no-build
         env:
           AGENTMUX_SMOKE_ARTIFACT_DIR: ${{ runner.temp }}\agentmux-smoke-artifacts
+      - name: Verify Windows app smoke artifacts
+        shell: pwsh
+        run: |
+          foreach ($file in @("terminal-webview2.png", "terminal-key-capture.png", "browser-webview2.png", "browser-network.har.json", "browser-trace.json")) {
+            if (-not (Test-Path (Join-Path "${{ runner.temp }}\agentmux-smoke-artifacts" $file))) {
+              throw "Windows app smoke artifact is missing: $file"
+            }
+          }
       - name: Upload Windows app smoke artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -107,6 +121,27 @@ jobs:
           if ($LASTEXITCODE -ne 0 -or ($shimHelp -join "`n") -notmatch "agentmux - CLI") {
             throw "Installed agentmux.cmd shim smoke failed."
           }
+
+          $tamperedPackage = "$env:RUNNER_TEMP\agentmux-release-tampered-package"
+          if (Test-Path $tamperedPackage) {
+            Remove-Item -Recurse -Force $tamperedPackage
+          }
+          New-Item -ItemType Directory -Force -Path $tamperedPackage | Out-Null
+          Copy-Item -Path "$env:PACKAGE_DIR\*" -Destination $tamperedPackage -Recurse -Force
+          Add-Content -LiteralPath (Join-Path $tamperedPackage "README.md") -Value "tamper"
+
+          try {
+            & (Join-Path $tamperedPackage "tools\install-user.ps1") `
+              -PackagePath $tamperedPackage `
+              -InstallRoot "$env:RUNNER_TEMP\agentmux-release-tampered-install" `
+              -SkipPathUpdate
+            throw "Tampered package unexpectedly installed."
+          } catch {
+            if ($_.Exception.Message -eq "Tampered package unexpectedly installed.") {
+              throw
+            }
+            Write-Host "Tampered package install was blocked: $($_.Exception.Message)"
+          }
       - name: Create release ZIP and checksum
         shell: pwsh
         run: |
@@ -127,6 +162,16 @@ jobs:
             "$zipPath.sha256",
             "$hash  $(Split-Path -Leaf $zipPath)`n",
             [System.Text.Encoding]::ASCII)
+
+          $checksumText = [System.IO.File]::ReadAllText("$zipPath.sha256", [System.Text.Encoding]::ASCII)
+          $expectedChecksumText = "$hash  $(Split-Path -Leaf $zipPath)`n"
+          if ($checksumText -ne $expectedChecksumText) {
+            throw "Release ZIP .sha256 content is not the expected LF-only hash line."
+          }
+          $parts = $checksumText.TrimEnd("`n") -split "  ", 2
+          if ($parts.Length -ne 2 -or $parts[0] -ne $hash -or $parts[1] -ne (Split-Path -Leaf $zipPath)) {
+            throw "Release ZIP .sha256 hash or filename did not round-trip."
+          }
 
           Get-ChildItem $env:RELEASE_DIR | Sort-Object Name | Select-Object Name,Length
       - name: Smoke release ZIP layout
@@ -159,11 +204,20 @@ jobs:
           if ($manifest.runId -ne "${{ github.run_id }}") {
             throw "PACKAGE.json runId does not match this workflow run."
           }
+          if ("${{ github.event_name }}" -eq "workflow_dispatch" -and ($manifest.ref -ne "refs/heads/main" -or $manifest.refName -ne "main")) {
+            throw "PACKAGE.json ref fields do not prove a manual main-branch release run."
+          }
+          if ($manifest.requiredFiles -notcontains "EVIDENCE.json") {
+            throw "PACKAGE.json requiredFiles does not include EVIDENCE.json."
+          }
           if ($evidence.provenance.commit -ne "${{ github.sha }}") {
             throw "EVIDENCE.json commit does not match this workflow run."
           }
           if ($evidence.provenance.runId -ne "${{ github.run_id }}") {
             throw "EVIDENCE.json runId does not match this workflow run."
+          }
+          if ("${{ github.event_name }}" -eq "workflow_dispatch" -and ($evidence.provenance.ref -ne "refs/heads/main" -or $evidence.provenance.refName -ne "main")) {
+            throw "EVIDENCE.json ref fields do not prove a manual main-branch release run."
           }
           if ($evidence.assetBase -ne $env:AGENTMUX_ASSET_BASE) {
             throw "EVIDENCE.json assetBase does not match release asset base."
@@ -174,8 +228,18 @@ jobs:
           if ($evidence.integrity.checksumFile -ne "SHA256SUMS.txt") {
             throw "EVIDENCE.json integrity.checksumFile should be SHA256SUMS.txt."
           }
+          if ($evidence.integrity.coverage -ne "all package files except root SHA256SUMS.txt") {
+            throw "EVIDENCE.json integrity.coverage is not the expected root-checksum exception."
+          }
+          if ($evidence.manualGate.status -ne "required") {
+            throw "EVIDENCE.json manualGate.status should remain required."
+          }
           if ($evidence.releaseReadiness.status -ne "blocked") {
             throw "EVIDENCE.json releaseReadiness.status should remain blocked until real desktop smoke passes."
+          }
+          $checksumLines = Get-Content (Join-Path $smokeDir "SHA256SUMS.txt")
+          if (-not ($checksumLines | Where-Object { $_ -match "  EVIDENCE\.json$" })) {
+            throw "SHA256SUMS.txt does not cover EVIDENCE.json."
           }
 
           $cliHelp = & (Join-Path $smokeDir "cli\agentmux.exe") --help
@@ -183,7 +247,7 @@ jobs:
             throw "Release ZIP CLI smoke failed."
           }
 
-          foreach ($line in Get-Content (Join-Path $smokeDir "SHA256SUMS.txt")) {
+          foreach ($line in $checksumLines) {
             if ([string]::IsNullOrWhiteSpace($line)) {
               continue
             }

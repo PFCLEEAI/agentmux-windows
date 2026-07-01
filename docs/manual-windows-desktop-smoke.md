@@ -94,7 +94,7 @@ Set-ExecutionPolicy -Scope Process Bypass -Force
 .\tools\manual-desktop-smoke.ps1 -PackagePath C:\Downloads\agentmux-windows-v0.1.0-framework-dependent.zip
 ```
 
-The helper creates a timestamped evidence folder, verifies package checksums when available, captures environment, package metadata, evidence-manifest content, and CLI help output, launches `AgentMux.exe` unless `-SkipLaunch` is set, and writes `manual-checklist.md`.
+The helper creates a timestamped evidence folder, verifies package checksums when available, requires a sibling `.sha256` when `-PackagePath` points to a release ZIP, captures environment, package metadata, evidence-manifest content, and CLI help output, launches `AgentMux.exe` unless `-SkipLaunch` is set, and writes `manual-checklist.md`.
 
 If you already launched the app manually:
 
