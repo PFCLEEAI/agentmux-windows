@@ -24,6 +24,7 @@ Security-sensitive areas:
 
 Browser preview boundaries:
 
+- The browser wait-for-selector helper is local, active-pane scoped, and one-shot. It caps caller-provided timeouts at 30 seconds, does not persist selector state, has no telemetry, and follows the same same-origin frame boundary as selector actions. CLI stdout can still persist selector/frame names and page-state results in terminal scrollback, shell transcripts, redirected files, or logs.
 - The browser console log is local and in-memory. Console messages may contain tokens, personal data, API responses, localStorage-derived values, auth callbacks, or private document text. They are returned unredacted to same-user local callers, capped at 4,096 characters each with a truncation marker, and not stored in the session snapshot by the browser pane. CLI stdout can still persist messages in terminal scrollback, shell transcripts, redirected files, or logs.
 - The browser network log is local and in-memory. It avoids headers, cookies, request/response bodies, and post data, but URLs can still contain sensitive query data.
 - Response-body retrieval is explicit and request-id scoped through the active browser pane. Returned bodies may contain tokens, personal data, session data, API responses, or private document contents. They are returned unredacted to the local caller, capped at 1,000,000 characters with a truncation marker, and not stored in the network log or session snapshot by the browser pane. CLI stdout can still persist in terminal scrollback, shell transcripts, redirected files, or logs.

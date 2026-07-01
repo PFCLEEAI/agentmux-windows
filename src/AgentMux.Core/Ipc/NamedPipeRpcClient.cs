@@ -5,10 +5,12 @@ namespace AgentMux.Core.Ipc;
 
 public sealed class NamedPipeRpcClient
 {
+    private const int DefaultTimeoutMs = 35_000;
+
     private readonly string _pipeName;
     private readonly int _timeoutMs;
 
-    public NamedPipeRpcClient(string? pipeName = null, int timeoutMs = 5000)
+    public NamedPipeRpcClient(string? pipeName = null, int timeoutMs = DefaultTimeoutMs)
     {
         _pipeName = string.IsNullOrWhiteSpace(pipeName) ? AgentMuxPipe.ForCurrentUser() : pipeName;
         _timeoutMs = timeoutMs;

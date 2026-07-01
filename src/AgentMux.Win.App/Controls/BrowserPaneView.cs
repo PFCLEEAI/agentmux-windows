@@ -17,6 +17,8 @@ internal sealed class BrowserPaneView : Grid, IDisposable
     private const int MaxResponseBodyChars = 1_000_000;
     private const int MaxConsoleEventCount = 200;
     private const int MaxConsoleMessageChars = 4_096;
+    private const int DefaultWaitForSelectorTimeoutMs = 5_000;
+    private const int MaxWaitForSelectorTimeoutMs = 30_000;
     private const int MaxDownloadEventCount = 100;
     private const int MaxDownloadFileNameLength = 120;
 
@@ -369,6 +371,100 @@ internal sealed class BrowserPaneView : Grid, IDisposable
         return JsonSerializer.Serialize(new { ok = true, key = mappedKey.Key, code = mappedKey.Code, frame = normalizedFrame });
     }
 
+    public async Task<string> WaitForSelectorAsync(
+        string selector,
+        string? state = null,
+        int? timeoutMs = null,
+        string? frame = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(selector))
+        {
+            return """{"ok":false,"reason":"selector is required"}""";
+        }
+
+        var normalizedState = string.IsNullOrWhiteSpace(state) ? "visible" : state.Trim().ToLowerInvariant();
+        if (normalizedState is not ("visible" or "attached" or "hidden"))
+        {
+            return JsonSerializer.Serialize(new { ok = false, reason = "unsupported state", state });
+        }
+
+        if (timeoutMs is <= 0)
+        {
+            return JsonSerializer.Serialize(new { ok = false, reason = "timeoutMs must be positive", timeoutMs }, AgentMuxJson.Options);
+        }
+
+        var cappedTimeoutMs = timeoutMs is > 0
+            ? Math.Min(timeoutMs.Value, MaxWaitForSelectorTimeoutMs)
+            : DefaultWaitForSelectorTimeoutMs;
+        var startedAt = DateTimeOffset.UtcNow;
+        var deadline = startedAt.AddMilliseconds(cappedTimeoutMs);
+        var normalizedFrame = NormalizeFrame(frame);
+        string lastResult = "";
+
+        await EnsureReadyAsync().ConfigureAwait(true);
+        while (DateTimeOffset.UtcNow <= deadline)
+        {
+            if (cancellationToken.IsCancellationRequested)
+            {
+                return JsonSerializer.Serialize(new { ok = false, reason = "cancelled", selector, state = normalizedState }, AgentMuxJson.Options);
+            }
+
+            lastResult = await EvaluateSelectorStateAsync(selector, normalizedState, normalizedFrame).ConfigureAwait(true);
+            if (SelectorStateMatched(lastResult))
+            {
+                using var document = JsonDocument.Parse(lastResult);
+                var root = document.RootElement;
+                return JsonSerializer.Serialize(new
+                {
+                    ok = true,
+                    selector,
+                    state = normalizedState,
+                    frame = JsonString(root, "frame"),
+                    attached = JsonBool(root, "attached") ?? false,
+                    visible = JsonBool(root, "visible") ?? false,
+                    elapsedMs = Math.Max(0, (int)(DateTimeOffset.UtcNow - startedAt).TotalMilliseconds),
+                    timeoutMs = cappedTimeoutMs,
+                    maxTimeoutMs = MaxWaitForSelectorTimeoutMs
+                }, AgentMuxJson.Options);
+            }
+
+            if (SelectorStateUnavailable(lastResult, out var unavailableReason))
+            {
+                return JsonSerializer.Serialize(new
+                {
+                    ok = false,
+                    reason = unavailableReason,
+                    selector,
+                    state = normalizedState,
+                    frame = normalizedFrame,
+                    timeoutMs = cappedTimeoutMs,
+                    maxTimeoutMs = MaxWaitForSelectorTimeoutMs
+                }, AgentMuxJson.Options);
+            }
+
+            try
+            {
+                await Task.Delay(100, cancellationToken).ConfigureAwait(true);
+            }
+            catch (OperationCanceledException)
+            {
+                return JsonSerializer.Serialize(new { ok = false, reason = "cancelled", selector, state = normalizedState }, AgentMuxJson.Options);
+            }
+        }
+
+        return JsonSerializer.Serialize(new
+        {
+            ok = false,
+            reason = "timeout",
+            selector,
+            state = normalizedState,
+            frame = normalizedFrame,
+            timeoutMs = cappedTimeoutMs,
+            maxTimeoutMs = MaxWaitForSelectorTimeoutMs
+        }, AgentMuxJson.Options);
+    }
+
     private async Task<string> FocusForInputAsync(string selector, string? frame)
     {
         return await EvaluateScriptAsync($$"""
@@ -408,6 +504,58 @@ internal sealed class BrowserPaneView : Grid, IDisposable
               return { ok: true, selector, frame: scope.frame };
             })()
             """).ConfigureAwait(true);
+    }
+
+    private async Task<string> EvaluateSelectorStateAsync(string selector, string state, string? frame)
+    {
+        try
+        {
+            return await _webView.CoreWebView2!.ExecuteScriptAsync($$"""
+                (() => {
+                  const selector = {{JsonSerializer.Serialize(selector)}};
+                  const state = {{JsonSerializer.Serialize(state)}};
+                  {{FrameScopeScript(frame)}}
+                  const scope = resolveAutomationScope();
+                  if (!scope.ok) {
+                    return scope;
+                  }
+
+                  let element = null;
+                  try {
+                    element = scope.document.querySelector(selector);
+                  } catch (error) {
+                    return { ok: false, reason: "invalid selector", selector, state, frame: scope.frame };
+                  }
+
+                  const attached = !!element;
+                  let visible = false;
+                  if (element) {
+                    const style = scope.window.getComputedStyle(element);
+                    const rect = element.getBoundingClientRect();
+                    visible = style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0;
+                  }
+
+                  const matched = state === "attached"
+                    ? attached
+                    : state === "hidden"
+                      ? !visible
+                      : visible;
+
+                  return {
+                    ok: matched,
+                    selector,
+                    state,
+                    frame: scope.frame,
+                    attached,
+                    visible
+                  };
+                })()
+                """).ConfigureAwait(true);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or System.Runtime.InteropServices.COMException)
+        {
+            return """{"ok":false,"reason":"document unavailable"}""";
+        }
     }
 
     public async Task<string> CapturePngAsync(string path)
@@ -1321,6 +1469,50 @@ internal sealed class BrowserPaneView : Grid, IDisposable
         catch (JsonException)
         {
             return new AutomationTarget(false, 0, 0);
+        }
+    }
+
+    private static bool SelectorStateMatched(string json)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            return document.RootElement.ValueKind == JsonValueKind.Object
+                && document.RootElement.TryGetProperty("ok", out var okElement)
+                && okElement.ValueKind == JsonValueKind.True;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    private static bool SelectorStateUnavailable(string json, out string reason)
+    {
+        reason = "";
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object
+                || !root.TryGetProperty("reason", out var reasonElement)
+                || reasonElement.ValueKind != JsonValueKind.String)
+            {
+                return false;
+            }
+
+            var parsedReason = reasonElement.GetString();
+            if (parsedReason is "frame not found" or "frame is not same-origin accessible" or "invalid selector")
+            {
+                reason = parsedReason;
+                return true;
+            }
+
+            return false;
+        }
+        catch (JsonException)
+        {
+            return false;
         }
     }
 

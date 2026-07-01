@@ -253,6 +253,46 @@ public static class Program
             return new CliRequest(AgentMuxMethods.BrowserFrameTree, new { });
         }
 
+        if (args[0].Equals("wait-for-selector", StringComparison.OrdinalIgnoreCase)
+            || args[0].Equals("wait", StringComparison.OrdinalIgnoreCase))
+        {
+            const string usage = "Usage: agentmux browser wait-for-selector <selector> [--state <visible|attached|hidden>] [--timeout-ms <ms>] [--frame <name-or-id>]";
+            var named = ParseNamed(args[1..]);
+            var selector = NamedOrJoined(named, "selector");
+            if (string.IsNullOrWhiteSpace(selector))
+            {
+                error = usage;
+                return null;
+            }
+
+            if (!TryReadOptionalFrame(named, usage, out var frame, out error))
+            {
+                return null;
+            }
+
+            named.TryGetValue("state", out var state);
+            if (!string.IsNullOrWhiteSpace(state) && !IsBrowserWaitState(state))
+            {
+                error = usage;
+                return null;
+            }
+
+            int? timeoutMs = null;
+            if (named.TryGetValue("timeout-ms", out var timeoutValue))
+            {
+                if (!TryParsePositiveInt(timeoutValue, out var parsedTimeout))
+                {
+                    error = usage;
+                    return null;
+                }
+
+                timeoutMs = parsedTimeout;
+            }
+
+            error = "";
+            return new CliRequest(AgentMuxMethods.BrowserWaitForSelector, new { selector, state, timeoutMs, frame });
+        }
+
         if (args[0].Equals("console", StringComparison.OrdinalIgnoreCase)
             || args[0].Equals("console-log", StringComparison.OrdinalIgnoreCase))
         {
@@ -540,6 +580,13 @@ public static class Program
         return int.TryParse(value, out number) && number > 0;
     }
 
+    private static bool IsBrowserWaitState(string value)
+    {
+        return value.Equals("visible", StringComparison.OrdinalIgnoreCase)
+            || value.Equals("attached", StringComparison.OrdinalIgnoreCase)
+            || value.Equals("hidden", StringComparison.OrdinalIgnoreCase);
+    }
+
     private static Dictionary<string, string> ParseNamed(string[] args)
     {
         var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -617,6 +664,7 @@ public static class Program
           agentmux browser press Enter --selector "#prompt" --frame agentmux-child-frame
           agentmux browser screenshot .\browser.png
           agentmux browser frames
+          agentmux browser wait-for-selector "#ready" --timeout-ms 5000
           agentmux browser console --limit 20
           agentmux browser console-clear
           agentmux browser network --limit 20

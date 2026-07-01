@@ -23,6 +23,7 @@ public partial class MainWindow : Window
     private readonly Dictionary<string, TerminalPaneView> _terminalViews = [];
     private readonly Dictionary<string, BrowserPaneView> _browserViews = [];
     private readonly HashSet<string> _ptyStartFailedPaneIds = [];
+    private readonly SemaphoreSlim _browserSelectorWaitGate = new(1, 1);
     private readonly ShortcutSettings _shortcutSettings;
     private readonly SessionSnapshotStore? _sessionStore;
     private readonly bool _restoreSessionOnStartup;
@@ -404,6 +405,7 @@ public partial class MainWindow : Window
             AgentMuxMethods.BrowserPress => AgentMuxResponse.Success(request.Id, await HandleBrowserPressAsync(request.Params).ConfigureAwait(true)),
             AgentMuxMethods.BrowserScreenshot => AgentMuxResponse.Success(request.Id, await HandleBrowserScreenshotAsync(request.Params).ConfigureAwait(true)),
             AgentMuxMethods.BrowserFrameTree => AgentMuxResponse.Success(request.Id, await HandleBrowserFrameTreeAsync().ConfigureAwait(true)),
+            AgentMuxMethods.BrowserWaitForSelector => AgentMuxResponse.Success(request.Id, await HandleBrowserWaitForSelectorAsync(request.Params, cancellationToken).ConfigureAwait(true)),
             AgentMuxMethods.BrowserConsoleLog => AgentMuxResponse.Success(request.Id, await HandleBrowserConsoleLogAsync(request.Params).ConfigureAwait(true)),
             AgentMuxMethods.BrowserConsoleClear => AgentMuxResponse.Success(request.Id, await HandleBrowserConsoleClearAsync().ConfigureAwait(true)),
             AgentMuxMethods.BrowserNetworkLog => AgentMuxResponse.Success(request.Id, await HandleBrowserNetworkLogAsync(request.Params).ConfigureAwait(true)),
@@ -694,6 +696,39 @@ public partial class MainWindow : Window
     private async Task<object> HandleBrowserFrameTreeAsync()
     {
         return await RunBrowserScriptAsync(view => view.GetFrameTreeAsync()).ConfigureAwait(true);
+    }
+
+    private async Task<object> HandleBrowserWaitForSelectorAsync(JsonElement? parameters, CancellationToken cancellationToken)
+    {
+        var parsed = Deserialize<BrowserWaitForSelectorParams>(parameters);
+        if (string.IsNullOrWhiteSpace(parsed?.Selector))
+        {
+            return new { ok = false, reason = "selector is required" };
+        }
+
+        if (parsed.TimeoutMs is <= 0)
+        {
+            return new { ok = false, reason = "timeoutMs must be positive", timeoutMs = parsed.TimeoutMs };
+        }
+
+        if (!await _browserSelectorWaitGate.WaitAsync(0, cancellationToken).ConfigureAwait(true))
+        {
+            return new { ok = false, reason = "selector wait already running" };
+        }
+
+        try
+        {
+            return await RunBrowserScriptAsync(view => view.WaitForSelectorAsync(
+                parsed.Selector,
+                parsed.State,
+                parsed.TimeoutMs,
+                parsed.Frame,
+                cancellationToken)).ConfigureAwait(true);
+        }
+        finally
+        {
+            _browserSelectorWaitGate.Release();
+        }
     }
 
     private async Task<object> HandleBrowserConsoleLogAsync(JsonElement? parameters)
@@ -1544,6 +1579,7 @@ public partial class MainWindow : Window
             or AgentMuxMethods.BrowserPress
             or AgentMuxMethods.BrowserScreenshot
             or AgentMuxMethods.BrowserFrameTree
+            or AgentMuxMethods.BrowserWaitForSelector
             or AgentMuxMethods.BrowserConsoleLog
             or AgentMuxMethods.BrowserConsoleClear
             or AgentMuxMethods.BrowserNetworkLog
@@ -1954,6 +1990,14 @@ public partial class MainWindow : Window
     private sealed class BrowserScreenshotParams
     {
         public string? Path { get; set; }
+    }
+
+    private sealed class BrowserWaitForSelectorParams
+    {
+        public string? Selector { get; set; }
+        public string? State { get; set; }
+        public int? TimeoutMs { get; set; }
+        public string? Frame { get; set; }
     }
 
     private sealed class BrowserConsoleLogParams

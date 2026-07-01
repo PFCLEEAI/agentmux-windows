@@ -550,6 +550,101 @@ public sealed class MainWindowSmokeTests
             Assert.Equal("agentmux-child-frame", childFrame.GetProperty("name").GetString());
             Assert.False(string.IsNullOrWhiteSpace(childFrame.GetProperty("parentId").GetString()));
 
+            var waitSecretToken = $"agentmux-wait-secret-{Guid.NewGuid():N}";
+            AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserEval, new
+            {
+                script = $$"""
+                    (() => {
+                        window.__agentMuxWaitReady = false;
+                        setTimeout(() => {
+                            const marker = document.createElement("div");
+                            marker.id = "rpc-delayed-ready";
+                            marker.textContent = {{System.Text.Json.JsonSerializer.Serialize(waitSecretToken)}};
+                            marker.style.width = "24px";
+                            marker.style.height = "24px";
+                            document.body.appendChild(marker);
+                            window.__agentMuxWaitReady = true;
+                        }, 150);
+                        return true;
+                    })()
+                    """
+            }));
+            var waitForSelector = AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserWaitForSelector, new
+            {
+                selector = "#rpc-delayed-ready",
+                state = "visible",
+                timeoutMs = 3000
+            }));
+            Assert.Equal("#rpc-delayed-ready", waitForSelector.GetProperty("selector").GetString());
+            Assert.Equal("visible", waitForSelector.GetProperty("state").GetString());
+            Assert.True(waitForSelector.GetProperty("attached").GetBoolean());
+            Assert.True(waitForSelector.GetProperty("visible").GetBoolean());
+            Assert.True(waitForSelector.GetProperty("elapsedMs").GetInt32() >= 0);
+            Assert.Equal(3000, waitForSelector.GetProperty("timeoutMs").GetInt32());
+            Assert.True(waitForSelector.GetProperty("maxTimeoutMs").GetInt32() >= 3000);
+
+            AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserEval, new
+            {
+                script = """
+                    (() => {
+                        const frame = document.querySelector("#rpc-frame");
+                        const doc = frame.contentDocument;
+                        setTimeout(() => {
+                            const marker = doc.createElement("div");
+                            marker.id = "frame-delayed-ready";
+                            marker.textContent = "ready";
+                            marker.style.width = "24px";
+                            marker.style.height = "24px";
+                            doc.body.appendChild(marker);
+                        }, 150);
+                        return true;
+                    })()
+                    """
+            }));
+            var frameWaitForSelector = AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserWaitForSelector, new
+            {
+                selector = "#frame-delayed-ready",
+                state = "visible",
+                timeoutMs = 3000,
+                frame = frameName
+            }));
+            Assert.Equal(frameName, frameWaitForSelector.GetProperty("frame").GetString());
+            Assert.True(frameWaitForSelector.GetProperty("attached").GetBoolean());
+            Assert.True(frameWaitForSelector.GetProperty("visible").GetBoolean());
+
+            var missingFrameWait = AssertRpcNotOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserWaitForSelector, new
+            {
+                selector = "#anything",
+                frame = "agentmux-missing-frame",
+                timeoutMs = 3000
+            }));
+            Assert.Equal("frame not found", missingFrameWait.GetProperty("reason").GetString());
+            Assert.Equal("agentmux-missing-frame", missingFrameWait.GetProperty("frame").GetString());
+
+            var sandboxFrameWait = AssertRpcNotOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserWaitForSelector, new
+            {
+                selector = "#blocked",
+                frame = "agentmux-sandbox-frame",
+                timeoutMs = 3000
+            }));
+            Assert.Equal("frame is not same-origin accessible", sandboxFrameWait.GetProperty("reason").GetString());
+            Assert.Equal("agentmux-sandbox-frame", sandboxFrameWait.GetProperty("frame").GetString());
+
+            await window.SaveSessionForSmokeTestAsync().ConfigureAwait(true);
+            Assert.True(System.IO.File.Exists(store.FilePath));
+            var waitSnapshotText = await System.IO.File.ReadAllTextAsync(store.FilePath).ConfigureAwait(true);
+            Assert.DoesNotContain(waitSecretToken, waitSnapshotText, StringComparison.Ordinal);
+
+            var missingWait = AssertRpcNotOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserWaitForSelector, new
+            {
+                selector = "#rpc-never-ready",
+                state = "visible",
+                timeoutMs = 500
+            }));
+            Assert.Equal("timeout", missingWait.GetProperty("reason").GetString());
+            Assert.Equal("#rpc-never-ready", missingWait.GetProperty("selector").GetString());
+            Assert.Equal("visible", missingWait.GetProperty("state").GetString());
+
             var consoleLogToken = $"agentmux-console-log-{Guid.NewGuid():N}";
             var consoleErrorToken = $"agentmux-console-error-{Guid.NewGuid():N}";
             var consoleSecretToken = $"agentmux-console-secret-{Guid.NewGuid():N}";

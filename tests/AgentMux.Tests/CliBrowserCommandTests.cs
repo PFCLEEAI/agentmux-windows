@@ -98,6 +98,87 @@ public sealed class CliBrowserCommandTests
     }
 
     [Theory]
+    [InlineData("wait-for-selector")]
+    [InlineData("wait")]
+    public void BrowserWaitParsesSelectorStateTimeoutAndFrame(string command)
+    {
+        var request = Program.ParseBrowserRequestForTests([
+            command,
+            "#ready",
+            "--state",
+            "attached",
+            "--timeout-ms",
+            "2500",
+            "--frame",
+            "agentmux-child-frame"
+        ], out var error);
+
+        Assert.Equal("", error);
+        Assert.NotNull(request);
+        Assert.Equal(AgentMuxMethods.BrowserWaitForSelector, request.Method);
+        var parameters = JsonSerializer.SerializeToElement(request.Parameters, AgentMuxJson.Options);
+        Assert.Equal("#ready", parameters.GetProperty("selector").GetString());
+        Assert.Equal("attached", parameters.GetProperty("state").GetString());
+        Assert.Equal(2500, parameters.GetProperty("timeoutMs").GetInt32());
+        Assert.Equal("agentmux-child-frame", parameters.GetProperty("frame").GetString());
+    }
+
+    [Fact]
+    public void BrowserWaitParsesSelectorOnly()
+    {
+        var request = Program.ParseBrowserRequestForTests(["wait", "#ready"], out var error);
+
+        Assert.Equal("", error);
+        Assert.NotNull(request);
+        Assert.Equal(AgentMuxMethods.BrowserWaitForSelector, request.Method);
+        var parameters = JsonSerializer.SerializeToElement(request.Parameters, AgentMuxJson.Options);
+        Assert.Equal("#ready", parameters.GetProperty("selector").GetString());
+        Assert.Equal(JsonValueKind.Null, parameters.GetProperty("state").ValueKind);
+        Assert.Equal(JsonValueKind.Null, parameters.GetProperty("timeoutMs").ValueKind);
+        Assert.Equal(JsonValueKind.Null, parameters.GetProperty("frame").ValueKind);
+    }
+
+    [Fact]
+    public void BrowserWaitRequiresSelector()
+    {
+        var request = Program.ParseBrowserRequestForTests(["wait-for-selector", "--timeout-ms", "100"], out var error);
+
+        Assert.Null(request);
+        Assert.Equal("Usage: agentmux browser wait-for-selector <selector> [--state <visible|attached|hidden>] [--timeout-ms <ms>] [--frame <name-or-id>]", error);
+    }
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("-1")]
+    [InlineData("abc")]
+    [InlineData("true")]
+    public void BrowserWaitRejectsInvalidTimeout(string timeoutMs)
+    {
+        var request = Program.ParseBrowserRequestForTests(["wait-for-selector", "#ready", "--timeout-ms", timeoutMs], out var error);
+
+        Assert.Null(request);
+        Assert.Equal("Usage: agentmux browser wait-for-selector <selector> [--state <visible|attached|hidden>] [--timeout-ms <ms>] [--frame <name-or-id>]", error);
+    }
+
+    [Fact]
+    public void BrowserWaitRejectsInvalidState()
+    {
+        var request = Program.ParseBrowserRequestForTests(["wait-for-selector", "#ready", "--state", "detached"], out var error);
+
+        Assert.Null(request);
+        Assert.Equal("Usage: agentmux browser wait-for-selector <selector> [--state <visible|attached|hidden>] [--timeout-ms <ms>] [--frame <name-or-id>]", error);
+    }
+
+    [Fact]
+    public void BrowserWaitFrameOptionRequiresValue()
+    {
+        var request = Program.ParseBrowserRequestForTests(["wait-for-selector", "#ready", "--frame"], out var error);
+
+        Assert.Null(request);
+        Assert.Equal("Usage: agentmux browser wait-for-selector <selector> [--state <visible|attached|hidden>] [--timeout-ms <ms>] [--frame <name-or-id>]", error);
+    }
+
+    [Theory]
     [InlineData("console")]
     [InlineData("console-log")]
     public void BrowserConsoleParsesConsoleLogCommand(string command)
