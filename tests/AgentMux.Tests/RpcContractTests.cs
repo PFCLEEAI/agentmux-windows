@@ -95,6 +95,14 @@ public sealed class RpcContractTests
     }
 
     [Fact]
+    public void WorkspaceMethodsAreStable()
+    {
+        Assert.Equal("workspace.list", AgentMuxMethods.WorkspaceList);
+        Assert.Equal("workspace.create", AgentMuxMethods.WorkspaceCreate);
+        Assert.Equal("workspace.select", AgentMuxMethods.WorkspaceSelect);
+    }
+
+    [Fact]
     public void SurfaceMethodsAreStable()
     {
         Assert.Equal("surface.list", AgentMuxMethods.SurfaceList);

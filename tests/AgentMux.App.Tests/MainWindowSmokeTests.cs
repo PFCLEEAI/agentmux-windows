@@ -230,6 +230,7 @@ public sealed class MainWindowSmokeTests
             }
 
             await RunNotificationSmokeAsync();
+            await RunWorkspaceSwitcherSmokeAsync();
             await RunSurfaceTabsSmokeAsync();
             await RunSessionRestoreSmokeAsync();
             await RunHostedWebView2RuntimeSmokeAsync();
@@ -467,6 +468,155 @@ public sealed class MainWindowSmokeTests
         }
     }
 
+    private static async Task RunWorkspaceSwitcherSmokeAsync()
+    {
+        var window = new MainWindow(ShortcutSettings.Default());
+        try
+        {
+            window.InitializeForSmokeTest();
+
+            Assert.Equal(1, window.WorkspaceCountForSmokeTest);
+            Assert.Equal(0, window.ActiveWorkspaceIndexForSmokeTest);
+            Assert.Equal(0, window.WorkspaceListSelectedIndexForSmokeTest);
+            Assert.Equal("Default", window.ActiveWorkspaceTitleForSmokeTest);
+
+            window.SetActivePaneTextForSmokeTest("AGENTMUX_WORKSPACE_ONE");
+            var firstPaneId = window.ActivePaneIdForSmokeTest;
+
+            var initialListResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceList);
+            Assert.True(initialListResponse.Ok, initialListResponse.Error);
+            var initialList = System.Text.Json.JsonSerializer.SerializeToElement(initialListResponse.Result, AgentMuxJson.Options);
+            Assert.Equal(0, initialList.GetProperty("activeWorkspaceIndex").GetInt32());
+            var initialWorkspace = initialList.GetProperty("workspaces").EnumerateArray().Single();
+            Assert.True(initialWorkspace.GetProperty("isActive").GetBoolean());
+            Assert.Equal("Default", initialWorkspace.GetProperty("title").GetString());
+            Assert.Equal(0, initialWorkspace.GetProperty("index").GetInt32());
+            Assert.Equal(firstPaneId, initialWorkspace.GetProperty("activePaneId").GetString());
+            Assert.Equal(1, initialWorkspace.GetProperty("surfaceCount").GetInt32());
+            Assert.Equal(0, initialWorkspace.GetProperty("activeSurfaceIndex").GetInt32());
+            Assert.Equal("Terminal", initialWorkspace.GetProperty("activeSurfaceTitle").GetString());
+            Assert.Equal(1, initialWorkspace.GetProperty("paneCount").GetInt32());
+            Assert.Equal(0, initialWorkspace.GetProperty("browserPaneCount").GetInt32());
+            Assert.False(initialWorkspace.TryGetProperty("surfaces", out _));
+            Assert.False(initialWorkspace.TryGetProperty("root", out _));
+            Assert.False(initialWorkspace.TryGetProperty("latestNotification", out _));
+            Assert.False(initialWorkspace.TryGetProperty("gitBranch", out _));
+            Assert.False(initialWorkspace.TryGetProperty("isGitDirty", out _));
+
+            var createResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceCreate, new
+            {
+                title = "API",
+                cwd = "C:\\src\\api"
+            });
+            Assert.True(createResponse.Ok, createResponse.Error);
+            var createResult = System.Text.Json.JsonSerializer.SerializeToElement(createResponse.Result, AgentMuxJson.Options);
+            Assert.True(createResult.GetProperty("created").GetBoolean());
+            Assert.Equal(1, createResult.GetProperty("activeWorkspaceIndex").GetInt32());
+            var createdWorkspace = createResult.GetProperty("workspace");
+            var createdWorkspaceId = createdWorkspace.GetProperty("id").GetString();
+            Assert.Equal("API", createdWorkspace.GetProperty("title").GetString());
+            Assert.Equal(1, createdWorkspace.GetProperty("index").GetInt32());
+            Assert.True(createdWorkspace.GetProperty("isActive").GetBoolean());
+            Assert.Equal("C:\\src\\api", createdWorkspace.GetProperty("workingDirectory").GetString());
+            Assert.False(string.IsNullOrWhiteSpace(createdWorkspaceId));
+
+            Assert.Equal(2, window.WorkspaceCountForSmokeTest);
+            Assert.Equal(1, window.ActiveWorkspaceIndexForSmokeTest);
+            Assert.Equal(1, window.WorkspaceListSelectedIndexForSmokeTest);
+            Assert.Equal("API", window.ActiveWorkspaceTitleForSmokeTest);
+            Assert.False(window.RenderedTextContainsForSmokeTest("AGENTMUX_WORKSPACE_ONE"));
+
+            window.SetActivePaneTextForSmokeTest("AGENTMUX_WORKSPACE_TWO");
+            var secondPaneId = window.ActivePaneIdForSmokeTest;
+            Assert.NotEqual(firstPaneId, secondPaneId);
+            Assert.True(window.RenderedTextContainsForSmokeTest("AGENTMUX_WORKSPACE_TWO"));
+
+            var selectFirstResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceSelect, new
+            {
+                index = 0
+            });
+            Assert.True(selectFirstResponse.Ok, selectFirstResponse.Error);
+            var selectFirst = System.Text.Json.JsonSerializer.SerializeToElement(selectFirstResponse.Result, AgentMuxJson.Options);
+            Assert.True(selectFirst.GetProperty("selected").GetBoolean());
+            Assert.Equal(0, window.ActiveWorkspaceIndexForSmokeTest);
+            Assert.Equal(0, window.WorkspaceListSelectedIndexForSmokeTest);
+            Assert.Equal("Default", window.ActiveWorkspaceTitleForSmokeTest);
+            Assert.Equal(firstPaneId, window.ActivePaneIdForSmokeTest);
+            Assert.True(window.RenderedTextContainsForSmokeTest("AGENTMUX_WORKSPACE_ONE"));
+            Assert.False(window.RenderedTextContainsForSmokeTest("AGENTMUX_WORKSPACE_TWO"));
+
+            var invalidSelectResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceSelect, new
+            {
+                index = 99
+            });
+            Assert.True(invalidSelectResponse.Ok, invalidSelectResponse.Error);
+            var invalidSelect = System.Text.Json.JsonSerializer.SerializeToElement(invalidSelectResponse.Result, AgentMuxJson.Options);
+            Assert.False(invalidSelect.GetProperty("selected").GetBoolean());
+            Assert.Equal("index out of range", invalidSelect.GetProperty("reason").GetString());
+            Assert.Equal(0, window.ActiveWorkspaceIndexForSmokeTest);
+            Assert.Equal(0, window.WorkspaceListSelectedIndexForSmokeTest);
+            Assert.True(window.RenderedTextContainsForSmokeTest("AGENTMUX_WORKSPACE_ONE"));
+
+            var missingTargetResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceSelect, new { });
+            Assert.True(missingTargetResponse.Ok, missingTargetResponse.Error);
+            var missingTarget = System.Text.Json.JsonSerializer.SerializeToElement(missingTargetResponse.Result, AgentMuxJson.Options);
+            Assert.False(missingTarget.GetProperty("selected").GetBoolean());
+            Assert.Equal("index or id is required", missingTarget.GetProperty("reason").GetString());
+            Assert.Equal(0, window.ActiveWorkspaceIndexForSmokeTest);
+
+            var missingWorkspaceResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceSelect, new
+            {
+                id = "missing-workspace"
+            });
+            Assert.True(missingWorkspaceResponse.Ok, missingWorkspaceResponse.Error);
+            var missingWorkspace = System.Text.Json.JsonSerializer.SerializeToElement(missingWorkspaceResponse.Result, AgentMuxJson.Options);
+            Assert.False(missingWorkspace.GetProperty("selected").GetBoolean());
+            Assert.Equal("workspace not found", missingWorkspace.GetProperty("reason").GetString());
+            Assert.Equal(0, window.ActiveWorkspaceIndexForSmokeTest);
+
+            var ambiguousSelectResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceSelect, new
+            {
+                index = 0,
+                id = createdWorkspaceId
+            });
+            Assert.True(ambiguousSelectResponse.Ok, ambiguousSelectResponse.Error);
+            var ambiguousSelect = System.Text.Json.JsonSerializer.SerializeToElement(ambiguousSelectResponse.Result, AgentMuxJson.Options);
+            Assert.False(ambiguousSelect.GetProperty("selected").GetBoolean());
+            Assert.Equal("provide index or id, not both", ambiguousSelect.GetProperty("reason").GetString());
+            Assert.Equal(0, window.ActiveWorkspaceIndexForSmokeTest);
+
+            var selectSecondResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceSelect, new
+            {
+                id = createdWorkspaceId
+            });
+            Assert.True(selectSecondResponse.Ok, selectSecondResponse.Error);
+            var selectSecond = System.Text.Json.JsonSerializer.SerializeToElement(selectSecondResponse.Result, AgentMuxJson.Options);
+            Assert.True(selectSecond.GetProperty("selected").GetBoolean());
+            Assert.Equal(1, window.ActiveWorkspaceIndexForSmokeTest);
+            Assert.Equal(1, window.WorkspaceListSelectedIndexForSmokeTest);
+            Assert.Equal("API", window.ActiveWorkspaceTitleForSmokeTest);
+            Assert.Equal(secondPaneId, window.ActivePaneIdForSmokeTest);
+            Assert.True(window.RenderedTextContainsForSmokeTest("AGENTMUX_WORKSPACE_TWO"));
+            Assert.False(window.RenderedTextContainsForSmokeTest("AGENTMUX_WORKSPACE_ONE"));
+            Assert.True(window.CachedTerminalPaneViewCountForSmokeTest >= 2);
+
+            var finalListResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceList);
+            Assert.True(finalListResponse.Ok, finalListResponse.Error);
+            var finalList = System.Text.Json.JsonSerializer.SerializeToElement(finalListResponse.Result, AgentMuxJson.Options);
+            Assert.Equal(1, finalList.GetProperty("activeWorkspaceIndex").GetInt32());
+            Assert.Equal(2, finalList.GetProperty("workspaces").GetArrayLength());
+            var finalWorkspaces = finalList.GetProperty("workspaces").EnumerateArray().ToArray();
+            Assert.Equal(1, finalWorkspaces.Count(workspace => workspace.GetProperty("isActive").GetBoolean()));
+            Assert.Contains(finalWorkspaces, workspace =>
+                workspace.GetProperty("id").GetString() == createdWorkspaceId
+                && workspace.GetProperty("isActive").GetBoolean());
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
     private static async Task RunSessionRestoreSmokeAsync()
     {
         var root = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "agentmux-session-smoke", Guid.NewGuid().ToString("N"));
@@ -489,6 +639,23 @@ public sealed class MainWindowSmokeTests
                     cwd = root
                 });
                 Assert.True(createdWorkspace.Ok, createdWorkspace.Error);
+                var createdWorkspaceResult = System.Text.Json.JsonSerializer.SerializeToElement(createdWorkspace.Result, AgentMuxJson.Options);
+                var createdWorkspaceId = createdWorkspaceResult.GetProperty("workspace").GetProperty("id").GetString();
+                Assert.False(string.IsNullOrWhiteSpace(createdWorkspaceId));
+
+                var selectDefaultWorkspace = await source.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceSelect, new
+                {
+                    index = 0
+                });
+                Assert.True(selectDefaultWorkspace.Ok, selectDefaultWorkspace.Error);
+                Assert.Equal("Default", source.ActiveWorkspaceTitleForSmokeTest);
+
+                var selectCreatedWorkspace = await source.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceSelect, new
+                {
+                    id = createdWorkspaceId
+                });
+                Assert.True(selectCreatedWorkspace.Ok, selectCreatedWorkspace.Error);
+                Assert.Equal("Persisted workspace", source.ActiveWorkspaceTitleForSmokeTest);
 
                 source.SetActivePaneTextForSmokeTest("AGENTMUX_SESSION_RESTORE_TEXT");
                 Assert.True(source.SplitActivePaneForSmokeTest(SplitDirection.Right));

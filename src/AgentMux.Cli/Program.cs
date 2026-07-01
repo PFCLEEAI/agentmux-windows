@@ -55,18 +55,13 @@ public static class Program
 
     private static async Task<AgentMuxResponse> HandleWorkspaceAsync(NamedPipeRpcClient client, string[] args)
     {
-        if (args.Length == 0)
+        var request = ParseWorkspaceRequestForTests(args, out var error);
+        if (request is null)
         {
-            return AgentMuxResponse.Failure("", "Usage: agentmux workspace <list|create|select>");
+            return AgentMuxResponse.Failure("", error);
         }
 
-        return args[0].ToLowerInvariant() switch
-        {
-            "list" or "ls" => await client.SendAsync(AgentMuxMethods.WorkspaceList).ConfigureAwait(false),
-            "create" or "new" => await client.SendAsync(AgentMuxMethods.WorkspaceCreate, ParseNamed(args[1..])).ConfigureAwait(false),
-            "select" => await client.SendAsync(AgentMuxMethods.WorkspaceSelect, ParseNamed(args[1..])).ConfigureAwait(false),
-            _ => AgentMuxResponse.Failure("", $"Unknown workspace command: {args[0]}")
-        };
+        return await client.SendAsync(request.Method, request.Parameters).ConfigureAwait(false);
     }
 
     private static async Task<AgentMuxResponse> HandleNotificationsAsync(NamedPipeRpcClient client, string[] args)
@@ -433,6 +428,73 @@ public static class Program
         }
 
         error = $"Unknown browser command: {args[0]}";
+        return null;
+    }
+
+    internal static CliRequest? ParseWorkspaceRequestForTests(string[] args, out string error)
+    {
+        if (args.Length == 0)
+        {
+            error = "Usage: agentmux workspace <list|create|select>";
+            return null;
+        }
+
+        if (args[0].Equals("list", StringComparison.OrdinalIgnoreCase)
+            || args[0].Equals("ls", StringComparison.OrdinalIgnoreCase))
+        {
+            error = "";
+            return new CliRequest(AgentMuxMethods.WorkspaceList, new { });
+        }
+
+        if (args[0].Equals("create", StringComparison.OrdinalIgnoreCase)
+            || args[0].Equals("new", StringComparison.OrdinalIgnoreCase))
+        {
+            error = "";
+            return new CliRequest(AgentMuxMethods.WorkspaceCreate, ParseNamed(args[1..]));
+        }
+
+        if (args[0].Equals("select", StringComparison.OrdinalIgnoreCase)
+            || args[0].Equals("use", StringComparison.OrdinalIgnoreCase))
+        {
+            var named = ParseNamed(args[1..]);
+            if (!named.ContainsKey("index") && named.TryGetValue("_arg0", out var positional))
+            {
+                named["index"] = positional;
+            }
+
+            var hasIndex = named.TryGetValue("index", out var indexValue);
+            var hasId = named.TryGetValue("id", out var idValue)
+                && !string.IsNullOrWhiteSpace(idValue)
+                && !idValue.Equals("true", StringComparison.OrdinalIgnoreCase);
+            if (hasIndex && hasId)
+            {
+                error = "Usage: agentmux workspace select --index <n>|--id <workspace-id>";
+                return null;
+            }
+
+            if (hasIndex)
+            {
+                if (!TryParseNonNegativeInt(indexValue, out var index))
+                {
+                    error = "Usage: agentmux workspace select --index <n>|--id <workspace-id>";
+                    return null;
+                }
+
+                error = "";
+                return new CliRequest(AgentMuxMethods.WorkspaceSelect, new { index });
+            }
+
+            if (!hasId)
+            {
+                error = "Usage: agentmux workspace select --index <n>|--id <workspace-id>";
+                return null;
+            }
+
+            error = "";
+            return new CliRequest(AgentMuxMethods.WorkspaceSelect, new { id = idValue });
+        }
+
+        error = $"Unknown workspace command: {args[0]}";
         return null;
     }
 

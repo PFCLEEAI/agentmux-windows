@@ -37,6 +37,7 @@ Browser preview boundaries:
 
 Surface/session boundaries:
 
+- Workspace `list/create/select` commands are exposed through the same per-user named pipe as other automation APIs. `workspace.list` returns compact metadata for all workspaces, including workspace ids, titles, indexes, active state, working directories, unread counts, surface counts, active surface title/index, active pane id, pane counts, and browser pane counts. Treat workspace titles, cwd values, and unread metadata as visible to any same-user local process with AgentMux pipe access. These fields may reveal repository paths, client names, task names, prompts, or private project context. Workspace selection changes local UI/session state; it is not an authorization boundary.
 - Surface tabs are local active-workspace state. Switching surfaces changes the rendered split tree but does not clear WebView2 profile data, cookies, local storage, browser logs, downloaded files, or hidden ConPTY/WebView2 resources.
 - Surface `list/create/select` commands are exposed through the same per-user named pipe as other automation APIs. Any same-user local process with pipe access should be treated as able to reveal hidden-surface titles, pane ids, pane counts, browser URLs, and last terminal screen text through session/API state.
 - `%LOCALAPPDATA%\AgentMux\session.json` is local app state, not an encrypted vault. Use disposable terminals and demo browser pages when producing shareable screenshots or manual smoke evidence.

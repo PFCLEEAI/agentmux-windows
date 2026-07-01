@@ -17,6 +17,7 @@
 ## Sprint 2 - Workspace UI
 
 - Workspace sidebar. Implemented in WPF shell.
+- Workspace switching. Preview implemented with `workspace.list`, `workspace.create`, `workspace.select`, compact workspace DTOs, index/id selection, sidebar selected-state updates, render switching, and hosted app-smoke coverage.
 - Surface tabs. Preview implemented with WPF active-workspace tabs, `+ Surface`, `surface.list`, `surface.create`, `surface.select`, and hosted app-smoke coverage.
 - Split pane layout. Implemented as recursive WPF panes with persisted split ratios.
 - WebView2/xterm renderer bridge. Preview implemented with WPF fallback.
@@ -27,7 +28,7 @@
 ## Sprint 3 - CLI/API
 
 - `ping`, `status`, `tree`.
-- Workspace create/list/select.
+- Workspace create/list/select. Preview implemented with compact list DTOs, create-and-select behavior, zero-based index or id selection, CLI aliases, and hosted app-smoke coverage.
 - Surface list/create/select. Preview implemented for active-workspace surfaces through RPC, CLI, and WPF tabs.
 - Split pane. Preview implemented.
 - Focus pane. Preview implemented.

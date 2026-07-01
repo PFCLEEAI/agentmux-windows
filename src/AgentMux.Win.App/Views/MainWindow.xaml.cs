@@ -468,7 +468,7 @@ public partial class MainWindow : Window
             AgentMuxMethods.Ping => AgentMuxResponse.Success(request.Id, new { pong = true }),
             AgentMuxMethods.Status => AgentMuxResponse.Success(request.Id, BuildStatus()),
             AgentMuxMethods.Tree => AgentMuxResponse.Success(request.Id, _workspaces),
-            AgentMuxMethods.WorkspaceList => AgentMuxResponse.Success(request.Id, _workspaces),
+            AgentMuxMethods.WorkspaceList => AgentMuxResponse.Success(request.Id, BuildWorkspaceList()),
             AgentMuxMethods.WorkspaceCreate => AgentMuxResponse.Success(request.Id, HandleWorkspaceCreate(request.Params)),
             AgentMuxMethods.WorkspaceSelect => AgentMuxResponse.Success(request.Id, HandleWorkspaceSelect(request.Params)),
             AgentMuxMethods.SurfaceList => AgentMuxResponse.Success(request.Id, BuildSurfaceList()),
@@ -534,25 +534,55 @@ public partial class MainWindow : Window
         };
     }
 
-    private WorkspaceState HandleWorkspaceCreate(JsonElement? parameters)
+    private object BuildWorkspaceList()
+    {
+        EnsureDefaultWorkspace();
+        _activeWorkspaceIndex = Math.Clamp(_activeWorkspaceIndex, 0, _workspaces.Count - 1);
+        return new
+        {
+            activeWorkspaceIndex = _activeWorkspaceIndex,
+            workspaces = _workspaces
+                .Select((workspace, index) => BuildWorkspaceDto(workspace, index))
+                .ToList()
+        };
+    }
+
+    private object HandleWorkspaceCreate(JsonElement? parameters)
     {
         var parsed = Deserialize<WorkspaceCreateParams>(parameters);
-        return CreateWorkspace(parsed?.Title, parsed?.Cwd);
+        var workspace = CreateWorkspace(parsed?.Title, parsed?.Cwd);
+        var index = _workspaces.IndexOf(workspace);
+        return new
+        {
+            created = true,
+            activeWorkspaceIndex = _activeWorkspaceIndex,
+            workspace = BuildWorkspaceDto(workspace, index)
+        };
     }
 
     private object HandleWorkspaceSelect(JsonElement? parameters)
     {
-        var parsed = Deserialize<WorkspaceSelectParams>(parameters);
-        var index = parsed?.Index ?? 0;
-        if (index < 0 || index >= _workspaces.Count)
+        if (!TryReadWorkspaceTarget(parameters, out var index, out var id, out var error))
         {
-            return new { selected = false, reason = "index out of range" };
+            return new { selected = false, reason = error };
         }
 
-        _activeWorkspaceIndex = index;
-        Dispatcher.Invoke(() => WorkspaceList.SelectedIndex = index);
-        QueueSessionSave();
-        return new { selected = true, index };
+        if (!SelectWorkspace(index, id))
+        {
+            return new
+            {
+                selected = false,
+                reason = index.HasValue ? "index out of range" : "workspace not found"
+            };
+        }
+
+        _ = EnsurePanePtyAsync(ActivePane());
+        var workspace = ActiveWorkspace();
+        return new
+        {
+            selected = true,
+            workspace = BuildWorkspaceDto(workspace, _activeWorkspaceIndex)
+        };
     }
 
     private object BuildSurfaceList()
@@ -1243,6 +1273,23 @@ public partial class MainWindow : Window
         }
 
         workspace.ActiveSurfaceIndex = selectedIndex;
+        ActivePane();
+        QueueSessionSave();
+        return true;
+    }
+
+    private bool SelectWorkspace(int? index, string? id)
+    {
+        EnsureDefaultWorkspace();
+        var selectedIndex = index ?? _workspaces.ToList().FindIndex(workspace => string.Equals(workspace.Id, id, StringComparison.Ordinal));
+        if (selectedIndex < 0 || selectedIndex >= _workspaces.Count)
+        {
+            return false;
+        }
+
+        _activeWorkspaceIndex = selectedIndex;
+        WorkspaceList.SelectedIndex = selectedIndex;
+        NormalizeWorkspace(ActiveWorkspace());
         ActivePane();
         QueueSessionSave();
         return true;
@@ -2155,6 +2202,28 @@ public partial class MainWindow : Window
             + (node.Second is null ? 0 : CountPaneKind(node.Second, kind));
     }
 
+    private object BuildWorkspaceDto(WorkspaceState workspace, int index)
+    {
+        NormalizeWorkspace(workspace);
+        var surface = workspace.Surfaces[workspace.ActiveSurfaceIndex];
+        NormalizeSurface(surface);
+        return new
+        {
+            workspace.Id,
+            workspace.Title,
+            index,
+            isActive = index == _activeWorkspaceIndex,
+            workspace.WorkingDirectory,
+            workspace.UnreadCount,
+            surfaceCount = workspace.Surfaces.Count,
+            workspace.ActiveSurfaceIndex,
+            activeSurfaceTitle = surface.Title,
+            surface.ActivePaneId,
+            paneCount = CountPanes(surface.Root),
+            browserPaneCount = CountPaneKind(surface.Root, PaneKind.Browser)
+        };
+    }
+
     private static object BuildSurfaceDto(WorkspaceState workspace, SurfaceState surface, int index)
     {
         NormalizeSurface(surface);
@@ -2292,6 +2361,10 @@ public partial class MainWindow : Window
     internal int PaneCountForSmokeTest => CountPanes(ActiveSurface().Root);
 
     internal int WorkspaceCountForSmokeTest => _workspaces.Count;
+
+    internal int ActiveWorkspaceIndexForSmokeTest => _activeWorkspaceIndex;
+
+    internal int WorkspaceListSelectedIndexForSmokeTest => WorkspaceList.SelectedIndex;
 
     internal string ActiveWorkspaceTitleForSmokeTest => ActiveWorkspace().Title;
 
@@ -2534,6 +2607,43 @@ public partial class MainWindow : Window
         return true;
     }
 
+    private static bool TryReadWorkspaceTarget(JsonElement? parameters, out int? index, out string? id, out string error)
+    {
+        index = null;
+        id = null;
+        error = "";
+        if (parameters is not { ValueKind: JsonValueKind.Object } element)
+        {
+            error = "index or id is required";
+            return false;
+        }
+
+        var parsedIndex = 0;
+        var hasIndex = element.TryGetProperty("index", out var indexProperty);
+        if (hasIndex && !TryReadNonNegativeInt(indexProperty, out parsedIndex))
+        {
+            error = "index must be a non-negative integer";
+            return false;
+        }
+
+        var hasId = element.TryGetProperty("id", out var idProperty)
+            && TryReadNonEmptyString(idProperty, out id);
+        if (hasIndex && hasId)
+        {
+            error = "provide index or id, not both";
+            return false;
+        }
+
+        if (!hasIndex && !hasId)
+        {
+            error = "index or id is required";
+            return false;
+        }
+
+        index = hasIndex ? parsedIndex : null;
+        return true;
+    }
+
     private static bool TryReadNonNegativeInt(JsonElement property, out int value)
     {
         value = 0;
@@ -2569,11 +2679,6 @@ public partial class MainWindow : Window
     {
         public string? Title { get; set; }
         public string? Cwd { get; set; }
-    }
-
-    private sealed class WorkspaceSelectParams
-    {
-        public int? Index { get; set; }
     }
 
     private sealed class SurfaceCreateParams

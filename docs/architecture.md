@@ -20,6 +20,7 @@ agentmux.exe CLI
 AgentMux.Win.App
     |
     +-- workspace/session model
+    +-- workspace switcher sidebar and RPC/CLI state
     +-- notification state
     +-- WPF notification center
     +-- per-pane ConPTY terminal hosts
@@ -31,6 +32,7 @@ AgentMux.Win.App
 
 - Window contains workspaces.
 - Workspace contains surfaces.
+- Workspace switching is app-level state. `workspace.list`, `workspace.create`, and `workspace.select` expose the same active-workspace model used by the WPF sidebar. The list response returns compact metadata only: ids, titles, indexes, active state, working directory, unread count, active surface summary, active pane id, and pane counts. Selecting by zero-based index or workspace id changes `_activeWorkspaceIndex`, updates the sidebar selected item, re-renders the active surface, queues a session save, and starts the selected workspace's active terminal pane lazily.
 - Surface contains a split tree.
 - Split leaves contain panes.
 - Pane focus movement is computed from the split-tree geometry in `AgentMux.Core`, so CLI/RPC and WPF shortcuts share the same target selection.
@@ -72,4 +74,4 @@ The default pipe is per-user named and intended for the current user session onl
 
 ## Verification Boundary
 
-macOS can verify shared library tests, Windows-targeted builds, and documentation. Hosted Windows CI verifies WPF composition, surface tab create/select/restore behavior, notification center open/jump/clear behavior, terminal pane size propagation, session restore smoke with a temp snapshot, corrupt snapshot fallback, shortcut dispatch, live OSC notification capture through the terminal-output path, WebView2 runtime smoke with PNG artifacts, active browser RPC automation including same-origin frame-targeted actions, frame-tree inspection, loopback-backed network event capture, explicit loopback-backed response-body retrieval, metadata-only HAR-like export, loopback-backed download capture, ConPTY output/input/resize smoke, Windows builds, framework-dependent package creation, and non-launch manual helper preflight. A true manual Windows desktop smoke is still required for physical keyboard behavior, visible desktop usability, and release readiness.
+macOS can verify shared library tests, Windows-targeted builds, and documentation. Hosted Windows CI verifies WPF composition, workspace create/list/select/render/restore behavior, surface tab create/select/restore behavior, notification center open/jump/clear behavior, terminal pane size propagation, session restore smoke with a temp snapshot, corrupt snapshot fallback, shortcut dispatch, live OSC notification capture through the terminal-output path, WebView2 runtime smoke with PNG artifacts, active browser RPC automation including same-origin frame-targeted actions, frame-tree inspection, loopback-backed network event capture, explicit loopback-backed response-body retrieval, metadata-only HAR-like export, loopback-backed download capture, ConPTY output/input/resize smoke, Windows builds, framework-dependent package creation, and non-launch manual helper preflight. A true manual Windows desktop smoke is still required for physical keyboard behavior, visible desktop usability, and release readiness.
