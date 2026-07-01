@@ -1435,7 +1435,6 @@ public sealed class MainWindowSmokeTests
             Assert.False(emptyRoutes.GetProperty("fetchEnabled").GetBoolean());
 
             var routeBlockToken = $"agentmux-route-block-{Guid.NewGuid():N}";
-            var routeBlockUrl = $"http://127.0.0.1:9/{routeBlockToken}";
             var blockRoute = AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserRouteBlock, new
             {
                 urlContains = routeBlockToken
@@ -1443,20 +1442,23 @@ public sealed class MainWindowSmokeTests
             Assert.Equal("block", blockRoute.GetProperty("rule").GetProperty("action").GetString());
             Assert.Equal(routeBlockToken, blockRoute.GetProperty("rule").GetProperty("urlContains").GetString());
 
-            AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserEval, new
+            await using (var routeBlockServer = LoopbackHttpServer.Start($"/{routeBlockToken}", routeBlockToken))
             {
-                script = $$"""
-                    window.__agentMuxRouteBlockText = "";
-                    fetch({{System.Text.Json.JsonSerializer.Serialize(routeBlockUrl)}})
-                        .then(response => response.text())
-                        .then(text => { window.__agentMuxRouteBlockText = text; })
-                        .catch(error => { window.__agentMuxRouteBlockText = "ERROR:" + error.message; });
-                    true;
-                    """
-            }));
-            await WaitForBrowserEvalTrueAsync(
-                window,
-                "window.__agentMuxRouteBlockText.startsWith('ERROR:')").ConfigureAwait(true);
+                AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserEval, new
+                {
+                    script = $$"""
+                        window.__agentMuxRouteBlockText = "";
+                        fetch({{System.Text.Json.JsonSerializer.Serialize(routeBlockServer.Url.ToString())}})
+                            .then(response => response.text())
+                            .then(text => { window.__agentMuxRouteBlockText = text; })
+                            .catch(error => { window.__agentMuxRouteBlockText = "ERROR:" + error.message; });
+                        true;
+                        """
+                }));
+                await WaitForBrowserEvalTrueAsync(
+                    window,
+                    "window.__agentMuxRouteBlockText.startsWith('ERROR:')").ConfigureAwait(true);
+            }
 
             var blockRoutes = AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserRouteList));
             Assert.True(blockRoutes.GetProperty("fetchEnabled").GetBoolean());

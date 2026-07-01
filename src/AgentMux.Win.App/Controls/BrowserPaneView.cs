@@ -1518,13 +1518,20 @@ internal sealed class BrowserPaneView : Grid, IDisposable
     private async Task CallFetchAsync(string? sessionId, string method, object parameters)
     {
         var parametersJson = JsonSerializer.Serialize(parameters, AgentMuxJson.Options);
-        if (string.IsNullOrWhiteSpace(sessionId))
+        if (!string.IsNullOrWhiteSpace(sessionId))
         {
-            await _webView.CoreWebView2!.CallDevToolsProtocolMethodAsync(method, parametersJson).ConfigureAwait(true);
-            return;
+            try
+            {
+                await _webView.CoreWebView2!.CallDevToolsProtocolMethodForSessionAsync(sessionId, method, parametersJson).ConfigureAwait(true);
+                return;
+            }
+            catch (Exception ex) when (ex is COMException or InvalidOperationException or ArgumentException)
+            {
+                // Some WebView2 Fetch events include a session id even though the default target owns the paused request.
+            }
         }
 
-        await _webView.CoreWebView2!.CallDevToolsProtocolMethodForSessionAsync(sessionId, method, parametersJson).ConfigureAwait(true);
+        await _webView.CoreWebView2!.CallDevToolsProtocolMethodAsync(method, parametersJson).ConfigureAwait(true);
     }
 
     private object BuildRouteSnapshot()
