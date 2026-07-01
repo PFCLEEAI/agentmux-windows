@@ -38,6 +38,7 @@ AgentMux.Win.App
 - Terminal panes render through a cached WebView2/xterm bridge with a WPF text fallback. The bridge displays current pane text and keeps `PaneState.LastScreenText` as the automation/read-screen source.
 - Browser panes render through a cached WebView2 bridge with a WPF fallback. `PaneState.Url` is the current browser navigation source, and `surface.open_url` converts or navigates the active pane.
 - Browser automation uses the active browser pane and WebView2 directly: `surface.eval_js`, `surface.click_selector`, `surface.fill_selector`, and `surface.capture_screenshot`. These are local trust-boundary APIs; JavaScript executes in the active browser pane, and screenshots write to local paths.
+- App shortcuts are matched inside the focused WPF shell from `%LOCALAPPDATA%/AgentMux/shortcuts.json`, with hard-coded defaults used when the file or individual entries are missing or invalid. They are app-window bindings, not global hotkeys or IPC commands.
 
 ## IPC
 
@@ -57,4 +58,4 @@ The default pipe is per-user named and intended for the current user session onl
 
 ## Verification Boundary
 
-macOS can verify shared library tests, Windows-targeted builds, and documentation. Hosted Windows CI verifies WPF composition, ConPTY output/input smoke, and Windows builds. A visible Windows desktop smoke is still required for WebView2 runtime behavior, keyboard behavior, clipboard behavior, and release readiness.
+macOS can verify shared library tests, Windows-targeted builds, and documentation. Hosted Windows CI verifies WPF composition, shortcut dispatch, WebView2 runtime smoke with PNG artifacts, ConPTY output/input smoke, and Windows builds. A true manual Windows desktop smoke is still required for physical keyboard behavior, clipboard behavior, and release readiness.

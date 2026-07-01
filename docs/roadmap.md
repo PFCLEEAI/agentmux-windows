@@ -21,7 +21,7 @@
 - Split pane layout. Implemented as recursive WPF panes with persisted split ratios.
 - WebView2/xterm renderer bridge. Preview implemented with WPF fallback.
 - Focus movement. Preview implemented with `surface.focus_pane`, `agentmux focus`, `Ctrl+Tab`, and `Ctrl+Alt+Arrow`.
-- Keyboard shortcuts. Basic pane cycling, directional pane focus, and pane zoom/close shortcuts implemented; customizable keybinding settings remain future work.
+- Keyboard shortcuts. Basic pane cycling, directional pane focus, pane zoom/close shortcuts, and JSON shortcut remapping are implemented; a full settings UI remains future work.
 - Each terminal pane now owns an independent ConPTY session started lazily.
 
 ## Sprint 3 - CLI/API
@@ -61,4 +61,4 @@
 - Eval/click/fill. Preview implemented through lightweight WebView2 JavaScript helpers.
 - Screenshot. Preview implemented as WebView2 PNG capture to a local path.
 
-Browser automation still needs visible WebView2 runtime smoke and richer Playwright-style semantics for sites that need pointer/key events rather than basic DOM helpers.
+Browser automation has hosted WebView2 runtime smoke and CI PNG artifacts. It still needs richer Playwright-style semantics for sites that need pointer/key events rather than basic DOM helpers.

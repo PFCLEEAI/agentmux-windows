@@ -18,7 +18,7 @@ It is inspired by the terminal/workspace workflow category popularized by cmux, 
 
 Pre-alpha scaffold.
 
-This repository currently contains the public-safe foundation: project structure, core models, OSC notification parsing, named-pipe JSON-RPC contracts, CLI skeleton, a WPF shell with workspace sidebar and recursive split panes, per-pane ConPTY session hosting, a WebView2/xterm terminal-renderer bridge with WPF fallback, a WebView2 browser-pane preview, direct terminal/browser input, lightweight browser automation commands, tests, and CI. Richer keyboard navigation and visible WebView2 desktop smoke remain future implementation work.
+This repository currently contains the public-safe foundation: project structure, core models, OSC notification parsing, named-pipe JSON-RPC contracts, CLI skeleton, a WPF shell with workspace sidebar and recursive split panes, per-pane ConPTY session hosting, a WebView2/xterm terminal-renderer bridge with WPF fallback, a WebView2 browser-pane preview, direct terminal/browser input, lightweight browser automation commands, configurable app shortcuts, tests, and CI. Richer browser automation semantics and true manual Windows desktop smoke remain future implementation work.
 
 Required Windows CI proves the solution restores, builds, runs deterministic unit tests, composes the WPF split-pane window in an STA smoke test, and passes a headless ConPTY smoke test for command output plus stdin echo. A real visible Windows desktop smoke test is still required before calling this release-ready.
 
@@ -79,6 +79,30 @@ agentmux read-screen --lines 50
 Browser automation commands operate on the active browser pane. `browser eval` runs arbitrary JavaScript in that pane, and `browser screenshot` writes a PNG to a local path resolved by the CLI before it is sent to the app.
 Pane focus commands operate on the active split tree. `focus next` / `focus previous` cycle through panes, and `focus left` / `focus right` / `focus up` / `focus down` choose an adjacent pane from split geometry. The WPF shell also supports `Ctrl+Alt+Arrow` directional pane focus and `Ctrl+Tab` / `Ctrl+Shift+Tab` pane cycling.
 Pane action commands operate on the active pane. `zoom` toggles a single-pane view without destroying the split layout, and `close-pane` removes the active pane while preserving a remaining sibling pane.
+
+## Shortcut Settings
+
+Default app shortcuts:
+
+- `Ctrl+Tab`: focus next pane
+- `Ctrl+Shift+Tab`: focus previous pane
+- `Ctrl+Alt+Left/Right/Up/Down`: focus adjacent pane
+- `Ctrl+Shift+Z`: toggle active pane zoom
+- `Ctrl+Shift+X`: close active pane
+
+To customize shortcuts, create `%LOCALAPPDATA%\AgentMux\shortcuts.json`:
+
+```json
+{
+  "toggleZoom": "Ctrl+Shift+F11",
+  "closePane": "Ctrl+Shift+W",
+  "focusRight": "Ctrl+Alt+L"
+}
+```
+
+Supported actions are `focusNext`, `focusPrevious`, `focusLeft`, `focusRight`, `focusUp`, `focusDown`, `toggleZoom`, and `closePane`. Invalid or missing entries keep their defaults.
+
+Shortcut matching is app-window only; these are not global hotkeys and the file is read at startup. Bare text-producing keys such as `A` or `Shift+A` are ignored so terminal/browser text input is not stolen.
 
 ## Attribution
 

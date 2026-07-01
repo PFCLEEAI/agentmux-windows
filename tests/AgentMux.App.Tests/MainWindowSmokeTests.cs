@@ -1,8 +1,10 @@
 using System.Threading;
 using System.Windows;
+using System.Windows.Input;
 using System.Windows.Threading;
 using AgentMux.Core.Models;
 using AgentMux.Win.App.Controls;
+using AgentMux.Win.App.Input;
 using AgentMux.Win.App.Views;
 using Xunit;
 
@@ -42,45 +44,45 @@ public sealed class MainWindowSmokeTests
                 Assert.Equal(2, window.RenderedTerminalPaneCountForSmokeTest);
                 var activeAfterSplit = window.ActivePaneIdForSmokeTest;
 
-                Assert.True(window.CycleActivePaneForSmokeTest(reverse: false));
+                Assert.True(window.HandleShortcutForSmokeTest(Key.Tab, ModifierKeys.Control));
                 Assert.NotEqual(activeAfterSplit, window.ActivePaneIdForSmokeTest);
                 var leftPane = window.ActivePaneIdForSmokeTest;
 
-                Assert.True(window.HandlePaneFocusShortcutForSmokeTest(System.Windows.Input.Key.Right));
+                Assert.True(window.HandleShortcutForSmokeTest(Key.Right, ModifierKeys.Control | ModifierKeys.Alt));
                 Assert.Equal(activeAfterSplit, window.ActivePaneIdForSmokeTest);
 
-                Assert.False(window.HandlePaneFocusShortcutForSmokeTest(System.Windows.Input.Key.Right));
+                Assert.True(window.HandleShortcutForSmokeTest(Key.Right, ModifierKeys.Control | ModifierKeys.Alt));
                 Assert.Equal(activeAfterSplit, window.ActivePaneIdForSmokeTest);
 
-                Assert.True(window.HandlePaneFocusShortcutForSmokeTest(System.Windows.Input.Key.Left));
+                Assert.True(window.HandleShortcutForSmokeTest(Key.Left, ModifierKeys.Control | ModifierKeys.Alt));
                 Assert.Equal(leftPane, window.ActivePaneIdForSmokeTest);
-                Assert.False(window.HandlePaneFocusShortcutForSmokeTest(System.Windows.Input.Key.A));
+                Assert.False(window.HandleShortcutForSmokeTest(Key.A, ModifierKeys.Control | ModifierKeys.Alt));
                 Assert.Equal(leftPane, window.ActivePaneIdForSmokeTest);
 
                 Assert.True(window.SplitActivePaneForSmokeTest(SplitDirection.Down));
                 var bottomLeftPane = window.ActivePaneIdForSmokeTest;
-                Assert.True(window.HandlePaneFocusShortcutForSmokeTest(System.Windows.Input.Key.Up));
+                Assert.True(window.HandleShortcutForSmokeTest(Key.Up, ModifierKeys.Control | ModifierKeys.Alt));
                 var topLeftPane = window.ActivePaneIdForSmokeTest;
                 Assert.NotEqual(bottomLeftPane, topLeftPane);
-                Assert.True(window.HandlePaneFocusShortcutForSmokeTest(System.Windows.Input.Key.Down));
+                Assert.True(window.HandleShortcutForSmokeTest(Key.Down, ModifierKeys.Control | ModifierKeys.Alt));
                 Assert.Equal(bottomLeftPane, window.ActivePaneIdForSmokeTest);
 
-                Assert.True(window.HandlePaneActionShortcutForSmokeTest(System.Windows.Input.Key.Z));
+                Assert.True(window.HandleShortcutForSmokeTest(Key.Z, ModifierKeys.Control | ModifierKeys.Shift));
                 Assert.True(window.IsActivePaneZoomedForSmokeTest);
                 Assert.Equal(3, window.PaneCountForSmokeTest);
                 Assert.Equal(1, window.RenderedTerminalPaneCountForSmokeTest);
 
-                Assert.True(window.HandlePaneFocusShortcutForSmokeTest(System.Windows.Input.Key.Right));
+                Assert.True(window.HandleShortcutForSmokeTest(Key.Right, ModifierKeys.Control | ModifierKeys.Alt));
                 Assert.False(window.IsActivePaneZoomedForSmokeTest);
                 Assert.Equal(3, window.PaneCountForSmokeTest);
                 Assert.Equal(3, window.RenderedTerminalPaneCountForSmokeTest);
-                Assert.True(window.HandlePaneFocusShortcutForSmokeTest(System.Windows.Input.Key.Left));
+                Assert.True(window.HandleShortcutForSmokeTest(Key.Left, ModifierKeys.Control | ModifierKeys.Alt));
 
-                Assert.True(window.HandlePaneActionShortcutForSmokeTest(System.Windows.Input.Key.Z));
+                Assert.True(window.HandleShortcutForSmokeTest(Key.Z, ModifierKeys.Control | ModifierKeys.Shift));
                 Assert.True(window.IsActivePaneZoomedForSmokeTest);
-                Assert.True(window.HandlePaneActionShortcutForSmokeTest(System.Windows.Input.Key.Z));
+                Assert.True(window.HandleShortcutForSmokeTest(Key.Z, ModifierKeys.Control | ModifierKeys.Shift));
                 Assert.Equal(3, window.RenderedTerminalPaneCountForSmokeTest);
-                Assert.False(window.HandlePaneActionShortcutForSmokeTest(System.Windows.Input.Key.A));
+                Assert.False(window.HandleShortcutForSmokeTest(Key.A, ModifierKeys.Control | ModifierKeys.Shift));
 
                 window.SetActivePaneTextForSmokeTest("AGENTMUX_UI_SMOKE");
                 Assert.Equal(3, window.RenderedTerminalPaneCountForSmokeTest);
@@ -89,7 +91,7 @@ public sealed class MainWindowSmokeTests
                 window.AppendActivePaneTextForSmokeTest("_STREAM_APPEND");
                 Assert.True(window.RenderedTextContainsForSmokeTest("AGENTMUX_UI_SMOKE_STREAM_APPEND"));
 
-                Assert.True(window.HandlePaneFocusShortcutForSmokeTest(System.Windows.Input.Key.Right));
+                Assert.True(window.HandleShortcutForSmokeTest(Key.Right, ModifierKeys.Control | ModifierKeys.Alt));
 
                 var browserUrl = window.OpenBrowserInActivePaneForSmokeTest("example.com");
                 Assert.Equal("https://example.com/", browserUrl);
@@ -97,45 +99,101 @@ public sealed class MainWindowSmokeTests
                 Assert.Equal(2, window.RenderedTerminalPaneCountForSmokeTest);
                 Assert.True(window.RenderedTextContainsForSmokeTest(browserUrl));
 
-                Assert.True(window.HandlePaneFocusShortcutForSmokeTest(System.Windows.Input.Key.Left));
+                Assert.True(window.HandleShortcutForSmokeTest(Key.Left, ModifierKeys.Control | ModifierKeys.Alt));
                 Assert.Equal(1, window.RenderedBrowserPaneCountForSmokeTest);
                 Assert.Equal(2, window.RenderedTerminalPaneCountForSmokeTest);
-                Assert.True(window.HandlePaneFocusShortcutForSmokeTest(System.Windows.Input.Key.Right));
+                Assert.True(window.HandleShortcutForSmokeTest(Key.Right, ModifierKeys.Control | ModifierKeys.Alt));
 
                 var safeUrl = window.OpenBrowserInActivePaneForSmokeTest("https://");
                 Assert.Equal("about:blank", safeUrl);
                 Assert.True(window.RenderedTextContainsForSmokeTest(safeUrl));
 
-                Assert.True(window.HandlePaneActionShortcutForSmokeTest(System.Windows.Input.Key.Z));
+                Assert.True(window.HandleShortcutForSmokeTest(Key.Z, ModifierKeys.Control | ModifierKeys.Shift));
                 Assert.True(window.IsActivePaneZoomedForSmokeTest);
                 Assert.Equal(1, window.RenderedBrowserPaneCountForSmokeTest);
                 Assert.Equal(0, window.RenderedTerminalPaneCountForSmokeTest);
 
-                Assert.True(window.HandlePaneActionShortcutForSmokeTest(System.Windows.Input.Key.Z));
+                Assert.True(window.HandleShortcutForSmokeTest(Key.Z, ModifierKeys.Control | ModifierKeys.Shift));
                 Assert.False(window.IsActivePaneZoomedForSmokeTest);
                 Assert.Equal(1, window.RenderedBrowserPaneCountForSmokeTest);
                 Assert.Equal(2, window.RenderedTerminalPaneCountForSmokeTest);
 
                 Assert.Equal(1, window.CachedBrowserPaneViewCountForSmokeTest);
-                Assert.True(window.HandlePaneActionShortcutForSmokeTest(System.Windows.Input.Key.X));
+                Assert.True(window.HandleShortcutForSmokeTest(Key.X, ModifierKeys.Control | ModifierKeys.Shift));
                 Assert.Equal(2, window.PaneCountForSmokeTest);
                 Assert.Equal(0, window.RenderedBrowserPaneCountForSmokeTest);
                 Assert.Equal(2, window.RenderedTerminalPaneCountForSmokeTest);
                 Assert.Equal(0, window.CachedBrowserPaneViewCountForSmokeTest);
 
-                Assert.True(window.HandlePaneActionShortcutForSmokeTest(System.Windows.Input.Key.X));
+                Assert.True(window.HandleShortcutForSmokeTest(Key.X, ModifierKeys.Control | ModifierKeys.Shift));
                 Assert.Equal(1, window.PaneCountForSmokeTest);
                 Assert.Equal(1, window.RenderedTerminalPaneCountForSmokeTest);
                 Assert.Equal(1, window.CachedTerminalPaneViewCountForSmokeTest);
 
                 var lastPane = window.ActivePaneIdForSmokeTest;
-                Assert.True(window.HandlePaneActionShortcutForSmokeTest(System.Windows.Input.Key.X));
+                Assert.True(window.HandleShortcutForSmokeTest(Key.X, ModifierKeys.Control | ModifierKeys.Shift));
                 Assert.Equal(1, window.PaneCountForSmokeTest);
                 Assert.Equal(lastPane, window.ActivePaneIdForSmokeTest);
+
+                Assert.True(window.HandleShortcutForSmokeTest(Key.Z, ModifierKeys.Control | ModifierKeys.Shift));
+                Assert.True(window.IsActivePaneZoomedForSmokeTest);
+                Assert.True(window.HandleShortcutForSmokeTest(Key.Z, ModifierKeys.Control | ModifierKeys.Shift));
+                Assert.False(window.IsActivePaneZoomedForSmokeTest);
             }
             finally
             {
                 window.Close();
+            }
+
+            Assert.True(ShortcutSettings.TryParseGesture("Ctrl+Alt+ArrowRight", out var arrowGesture));
+            Assert.Equal(Key.Right, arrowGesture.Key);
+            Assert.Equal(ModifierKeys.Control | ModifierKeys.Alt, arrowGesture.Modifiers);
+
+            var shortcutsPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "agentmux-shortcuts", $"{Guid.NewGuid():N}.json");
+            System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(shortcutsPath)!);
+            await System.IO.File.WriteAllTextAsync(shortcutsPath, """
+                {
+                  "toggleZoom": "Ctrl+Shift+F11",
+                  "focusRight": "Ctrl+Alt+L",
+                  "closePane": "not-a-shortcut"
+                }
+                """);
+
+            var customWindow = new MainWindow(ShortcutSettings.LoadFromFile(shortcutsPath));
+            try
+            {
+                customWindow.InitializeForSmokeTest();
+                Assert.True(customWindow.HandleShortcutForSmokeTest(Key.F11, ModifierKeys.Control | ModifierKeys.Shift));
+                Assert.True(customWindow.IsActivePaneZoomedForSmokeTest);
+                Assert.False(customWindow.HandleShortcutForSmokeTest(Key.Z, ModifierKeys.Control | ModifierKeys.Shift));
+                Assert.True(customWindow.SplitActivePaneForSmokeTest(SplitDirection.Right));
+                var leftCustomPane = customWindow.ActivePaneIdForSmokeTest;
+                Assert.True(customWindow.HandleShortcutForSmokeTest(Key.L, ModifierKeys.Control | ModifierKeys.Alt));
+                Assert.NotEqual(leftCustomPane, customWindow.ActivePaneIdForSmokeTest);
+                Assert.True(customWindow.HandleShortcutForSmokeTest(Key.F11, ModifierKeys.Control | ModifierKeys.Shift));
+                Assert.True(customWindow.HandleShortcutForSmokeTest(Key.X, ModifierKeys.Control | ModifierKeys.Shift));
+                Assert.Equal(2, customWindow.PaneCountForSmokeTest);
+            }
+            finally
+            {
+                customWindow.Close();
+            }
+
+            Assert.False(ShortcutSettings.TryParseGesture("A", out _));
+            Assert.False(ShortcutSettings.TryParseGesture("Shift+A", out _));
+
+            var brokenShortcutsPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "agentmux-shortcuts", $"{Guid.NewGuid():N}.json");
+            await System.IO.File.WriteAllTextAsync(brokenShortcutsPath, "{ not-json");
+            var fallbackWindow = new MainWindow(ShortcutSettings.LoadFromFile(brokenShortcutsPath));
+            try
+            {
+                fallbackWindow.InitializeForSmokeTest();
+                Assert.True(fallbackWindow.HandleShortcutForSmokeTest(Key.Z, ModifierKeys.Control | ModifierKeys.Shift));
+                Assert.True(fallbackWindow.IsActivePaneZoomedForSmokeTest);
+            }
+            finally
+            {
+                fallbackWindow.Close();
             }
 
             await RunHostedWebView2RuntimeSmokeAsync();

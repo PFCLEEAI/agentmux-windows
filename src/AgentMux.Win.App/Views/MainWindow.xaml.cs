@@ -9,6 +9,7 @@ using System.Windows.Media;
 using AgentMux.Core.Ipc;
 using AgentMux.Core.Models;
 using AgentMux.Win.App.Controls;
+using AgentMux.Win.App.Input;
 using AgentMux.Win.Pty;
 
 namespace AgentMux.Win.App.Views;
@@ -21,11 +22,17 @@ public partial class MainWindow : Window
     private readonly Dictionary<string, TerminalPaneView> _terminalViews = [];
     private readonly Dictionary<string, BrowserPaneView> _browserViews = [];
     private readonly HashSet<string> _ptyStartFailedPaneIds = [];
+    private readonly ShortcutSettings _shortcutSettings;
     private NamedPipeRpcServer? _server;
     private int _activeWorkspaceIndex;
 
-    public MainWindow()
+    public MainWindow() : this(ShortcutSettings.Load())
     {
+    }
+
+    internal MainWindow(ShortcutSettings shortcutSettings)
+    {
+        _shortcutSettings = shortcutSettings;
         InitializeComponent();
         _workspaces.Add(new WorkspaceState
         {
@@ -127,39 +134,41 @@ public partial class MainWindow : Window
     private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
     {
         var key = EffectiveKey(e);
-        if (Keyboard.Modifiers.HasFlag(ModifierKeys.Control)
-            && Keyboard.Modifiers.HasFlag(ModifierKeys.Shift)
-            && key == Key.Z)
+        if (_shortcutSettings.TryMatch(key, Keyboard.Modifiers, out var action))
         {
-            e.Handled = true;
-            ToggleActivePaneZoom();
-            return;
+            e.Handled = HandleShortcutAction(action);
         }
+    }
 
-        if (Keyboard.Modifiers.HasFlag(ModifierKeys.Control)
-            && Keyboard.Modifiers.HasFlag(ModifierKeys.Shift)
-            && key == Key.X)
+    private bool HandleShortcutAction(ShortcutAction action)
+    {
+        switch (action)
         {
-            e.Handled = true;
-            CloseActivePane();
-            return;
+            case ShortcutAction.ToggleZoom:
+                ToggleActivePaneZoom();
+                return true;
+            case ShortcutAction.ClosePane:
+                CloseActivePane();
+                return true;
+            case ShortcutAction.FocusLeft:
+                FocusPane(PaneFocusDirection.Left);
+                return true;
+            case ShortcutAction.FocusRight:
+                FocusPane(PaneFocusDirection.Right);
+                return true;
+            case ShortcutAction.FocusUp:
+                FocusPane(PaneFocusDirection.Up);
+                return true;
+            case ShortcutAction.FocusDown:
+                FocusPane(PaneFocusDirection.Down);
+                return true;
+            case ShortcutAction.FocusPrevious:
+                return CycleActivePane(reverse: true);
+            case ShortcutAction.FocusNext:
+                return CycleActivePane(reverse: false);
+            default:
+                return false;
         }
-
-        if (Keyboard.Modifiers.HasFlag(ModifierKeys.Control)
-            && Keyboard.Modifiers.HasFlag(ModifierKeys.Alt)
-            && TryMapArrowKey(key, out var focusDirection))
-        {
-            e.Handled = true;
-            FocusPane(focusDirection);
-            return;
-        }
-
-        if (key != Key.Tab || !Keyboard.Modifiers.HasFlag(ModifierKeys.Control))
-        {
-            return;
-        }
-
-        e.Handled = CycleActivePane(Keyboard.Modifiers.HasFlag(ModifierKeys.Shift));
     }
 
     private async Task<AgentMuxResponse> HandleRpcAsync(AgentMuxRequest request, CancellationToken cancellationToken)
@@ -1325,6 +1334,11 @@ public partial class MainWindow : Window
             default:
                 return false;
         }
+    }
+
+    internal bool HandleShortcutForSmokeTest(Key key, ModifierKeys modifiers)
+    {
+        return _shortcutSettings.TryMatch(key, modifiers, out var action) && HandleShortcutAction(action);
     }
 
     internal void SetActivePaneTextForSmokeTest(string text)
