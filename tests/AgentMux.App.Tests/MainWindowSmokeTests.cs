@@ -568,6 +568,24 @@ public sealed class MainWindowSmokeTests
             Assert.True(TryFindNetworkEvent(networkLog, networkToken, "responseReceived", out var responseEvent), networkLog.ToString());
             Assert.Equal(200, responseEvent.GetProperty("status").GetInt32());
             Assert.Equal("text/plain", responseEvent.GetProperty("mimeType").GetString());
+            var responseRequestId = responseEvent.GetProperty("requestId").GetString();
+            Assert.False(string.IsNullOrWhiteSpace(responseRequestId));
+
+            var loadingFinishedLog = await WaitForNetworkRequestEventAsync(window, responseRequestId!, "loadingFinished").ConfigureAwait(true);
+            Assert.True(TryFindNetworkRequestEvent(loadingFinishedLog, responseRequestId!, "loadingFinished", out var finishedEvent), loadingFinishedLog.ToString());
+            Assert.True(finishedEvent.GetProperty("encodedDataLength").GetDouble() >= networkToken.Length);
+
+            var responseBody = AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserResponseBody, new
+            {
+                requestId = responseRequestId
+            }));
+            Assert.True(responseBody.GetProperty("ok").GetBoolean(), responseBody.ToString());
+            Assert.Equal(responseRequestId, responseBody.GetProperty("requestId").GetString());
+            Assert.Equal(networkToken, responseBody.GetProperty("body").GetString());
+            Assert.False(responseBody.GetProperty("base64Encoded").GetBoolean());
+            Assert.Equal(networkToken.Length, responseBody.GetProperty("bodyLength").GetInt32());
+            Assert.False(responseBody.GetProperty("truncated").GetBoolean());
+            Assert.True(responseBody.GetProperty("maxBodyChars").GetInt32() >= networkToken.Length);
 
             await Task.Delay(250).ConfigureAwait(true);
             var networkClear = AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserNetworkClear));
@@ -923,6 +941,54 @@ public sealed class MainWindowSmokeTests
                 && candidate.TryGetProperty("url", out var urlProperty)
                 && urlProperty.ValueKind == System.Text.Json.JsonValueKind.String
                 && (urlProperty.GetString()?.Contains(urlFragment, StringComparison.Ordinal) ?? false))
+            {
+                networkEvent = candidate.Clone();
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static async Task<System.Text.Json.JsonElement> WaitForNetworkRequestEventAsync(MainWindow window, string requestId, string eventName)
+    {
+        System.Text.Json.JsonElement? lastResult = null;
+        for (var attempt = 0; attempt < 20; attempt++)
+        {
+            var response = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserNetworkLog, new { limit = 50 }).ConfigureAwait(true);
+            if (response.Ok)
+            {
+                var result = System.Text.Json.JsonSerializer.SerializeToElement(response.Result, AgentMuxJson.Options);
+                lastResult = result.Clone();
+                if (result.TryGetProperty("ok", out var ok)
+                    && ok.GetBoolean()
+                    && TryFindNetworkRequestEvent(result, requestId, eventName, out _))
+                {
+                    return result.Clone();
+                }
+            }
+
+            await Task.Delay(250).ConfigureAwait(true);
+        }
+
+        throw new InvalidOperationException($"Browser network log did not contain {eventName} for request id {requestId}. Last result: {lastResult?.ToString() ?? "<none>"}");
+    }
+
+    private static bool TryFindNetworkRequestEvent(System.Text.Json.JsonElement networkLog, string requestId, string eventName, out System.Text.Json.JsonElement networkEvent)
+    {
+        networkEvent = default;
+        if (!networkLog.TryGetProperty("events", out var events)
+            || events.ValueKind != System.Text.Json.JsonValueKind.Array)
+        {
+            return false;
+        }
+
+        foreach (var candidate in events.EnumerateArray())
+        {
+            if (candidate.TryGetProperty("event", out var eventProperty)
+                && string.Equals(eventProperty.GetString(), eventName, StringComparison.Ordinal)
+                && candidate.TryGetProperty("requestId", out var requestIdProperty)
+                && string.Equals(requestIdProperty.GetString(), requestId, StringComparison.Ordinal))
             {
                 networkEvent = candidate.Clone();
                 return true;

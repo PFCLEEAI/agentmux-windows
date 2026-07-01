@@ -280,6 +280,19 @@ public static class Program
             return new CliRequest(AgentMuxMethods.BrowserNetworkClear, new { });
         }
 
+        if (args[0].Equals("response-body", StringComparison.OrdinalIgnoreCase)
+            || args[0].Equals("body", StringComparison.OrdinalIgnoreCase))
+        {
+            if (args.Length != 2 || string.IsNullOrWhiteSpace(args[1]))
+            {
+                error = "Usage: agentmux browser response-body <request-id>";
+                return null;
+            }
+
+            error = "";
+            return new CliRequest(AgentMuxMethods.BrowserResponseBody, new { requestId = args[1] });
+        }
+
         if (args[0].Equals("downloads", StringComparison.OrdinalIgnoreCase)
             || args[0].Equals("download-log", StringComparison.OrdinalIgnoreCase))
         {
@@ -564,6 +577,7 @@ public static class Program
           agentmux browser frames
           agentmux browser network --limit 20
           agentmux browser network-clear
+          agentmux browser response-body <request-id>
           agentmux browser downloads --limit 20
           agentmux browser downloads-clear
           agentmux send "npm test"

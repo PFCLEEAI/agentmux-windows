@@ -77,6 +77,7 @@ public sealed class RpcContractTests
         Assert.Equal("surface.browser_frame_tree", AgentMuxMethods.BrowserFrameTree);
         Assert.Equal("surface.browser_network_log", AgentMuxMethods.BrowserNetworkLog);
         Assert.Equal("surface.browser_clear_network_log", AgentMuxMethods.BrowserNetworkClear);
+        Assert.Equal("surface.browser_response_body", AgentMuxMethods.BrowserResponseBody);
         Assert.Equal("surface.browser_downloads", AgentMuxMethods.BrowserDownloads);
         Assert.Equal("surface.browser_clear_downloads", AgentMuxMethods.BrowserDownloadsClear);
     }

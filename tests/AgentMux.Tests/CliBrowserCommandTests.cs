@@ -137,6 +137,40 @@ public sealed class CliBrowserCommandTests
     }
 
     [Theory]
+    [InlineData("response-body")]
+    [InlineData("body")]
+    public void BrowserResponseBodyParsesRequestId(string command)
+    {
+        var request = Program.ParseBrowserRequestForTests([command, "1234.56"], out var error);
+
+        Assert.Equal("", error);
+        Assert.NotNull(request);
+        Assert.Equal(AgentMuxMethods.BrowserResponseBody, request.Method);
+        var parameters = JsonSerializer.SerializeToElement(request.Parameters, AgentMuxJson.Options);
+        Assert.Equal("1234.56", parameters.GetProperty("requestId").GetString());
+    }
+
+    [Theory]
+    [InlineData("response-body")]
+    [InlineData("body")]
+    public void BrowserResponseBodyRequiresRequestId(string command)
+    {
+        var request = Program.ParseBrowserRequestForTests([command], out var error);
+
+        Assert.Null(request);
+        Assert.Equal("Usage: agentmux browser response-body <request-id>", error);
+    }
+
+    [Fact]
+    public void BrowserResponseBodyRejectsExtraArgs()
+    {
+        var request = Program.ParseBrowserRequestForTests(["response-body", "1234.56", "extra"], out var error);
+
+        Assert.Null(request);
+        Assert.Equal("Usage: agentmux browser response-body <request-id>", error);
+    }
+
+    [Theory]
     [InlineData("downloads")]
     [InlineData("download-log")]
     public void BrowserDownloadsParsesDownloadLogCommand(string command)

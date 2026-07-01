@@ -14,6 +14,7 @@ internal sealed class BrowserPaneView : Grid, IDisposable
 {
     private const string DefaultUrl = "about:blank";
     private const int MaxNetworkEventCount = 200;
+    private const int MaxResponseBodyChars = 1_000_000;
     private const int MaxDownloadEventCount = 100;
     private const int MaxDownloadFileNameLength = 120;
 
@@ -486,6 +487,81 @@ internal sealed class BrowserPaneView : Grid, IDisposable
         return JsonSerializer.Serialize(new { ok = true, cleared }, AgentMuxJson.Options);
     }
 
+    public async Task<string> GetResponseBodyAsync(string requestId)
+    {
+        await EnsureReadyAsync().ConfigureAwait(true);
+        var normalizedRequestId = requestId.Trim();
+        if (string.IsNullOrWhiteSpace(normalizedRequestId))
+        {
+            return JsonSerializer.Serialize(new { ok = false, reason = "requestId is required" }, AgentMuxJson.Options);
+        }
+
+        var requestState = GetNetworkRequestState(normalizedRequestId);
+        if (!requestState.SeenResponse)
+        {
+            return JsonSerializer.Serialize(new
+            {
+                ok = false,
+                requestId = normalizedRequestId,
+                reason = "requestId is not in the active browser network log"
+            }, AgentMuxJson.Options);
+        }
+
+        if (!requestState.SeenLoadingFinished)
+        {
+            return JsonSerializer.Serialize(new
+            {
+                ok = false,
+                requestId = normalizedRequestId,
+                reason = "response has not finished loading"
+            }, AgentMuxJson.Options);
+        }
+
+        try
+        {
+            var parametersJson = JsonSerializer.Serialize(new { requestId = normalizedRequestId }, AgentMuxJson.Options);
+            var responseJson = await _webView.CoreWebView2!
+                .CallDevToolsProtocolMethodAsync("Network.getResponseBody", parametersJson)
+                .ConfigureAwait(true);
+
+            using var document = JsonDocument.Parse(responseJson);
+            var root = document.RootElement;
+            var body = JsonString(root, "body");
+            if (body is null)
+            {
+                return JsonSerializer.Serialize(new
+                {
+                    ok = false,
+                    requestId = normalizedRequestId,
+                    reason = "response body unavailable"
+                }, AgentMuxJson.Options);
+            }
+
+            var base64Encoded = JsonBool(root, "base64Encoded") ?? false;
+            var truncated = body.Length > MaxResponseBodyChars;
+            var returnedBody = truncated ? body[..MaxResponseBodyChars] : body;
+            return JsonSerializer.Serialize(new
+            {
+                ok = true,
+                requestId = normalizedRequestId,
+                body = returnedBody,
+                base64Encoded,
+                bodyLength = body.Length,
+                truncated,
+                maxBodyChars = MaxResponseBodyChars
+            }, AgentMuxJson.Options);
+        }
+        catch (Exception ex) when (ex is JsonException or ArgumentException or System.Runtime.InteropServices.COMException)
+        {
+            return JsonSerializer.Serialize(new
+            {
+                ok = false,
+                requestId = normalizedRequestId,
+                reason = "response body unavailable"
+            }, AgentMuxJson.Options);
+        }
+    }
+
     public async Task<string> GetDownloadLogAsync(int? limit = null)
     {
         await EnsureReadyAsync().ConfigureAwait(true);
@@ -830,6 +906,27 @@ internal sealed class BrowserPaneView : Grid, IDisposable
         }
     }
 
+    private NetworkRequestState GetNetworkRequestState(string requestId)
+    {
+        var seenResponse = false;
+        var seenLoadingFinished = false;
+        lock (_networkEvents)
+        {
+            foreach (var candidate in _networkEvents)
+            {
+                if (!string.Equals(candidate.RequestId, requestId, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                seenResponse |= string.Equals(candidate.Event, "responseReceived", StringComparison.Ordinal);
+                seenLoadingFinished |= string.Equals(candidate.Event, "loadingFinished", StringComparison.Ordinal);
+            }
+        }
+
+        return new NetworkRequestState(seenResponse, seenLoadingFinished);
+    }
+
     private async Task WaitForNavigationAsync(bool allowStartDelay = false)
     {
         if (allowStartDelay && (_navigationCompletion is null || _navigationCompletion.Task.IsCompleted))
@@ -1172,6 +1269,8 @@ internal sealed class BrowserPaneView : Grid, IDisposable
     private readonly record struct AutomationTarget(bool Ok, double X, double Y);
 
     private readonly record struct BrowserKey(string Key, string Code, int VirtualKeyCode);
+
+    private readonly record struct NetworkRequestState(bool SeenResponse, bool SeenLoadingFinished);
 
     private sealed class TrackedDownload(
         CoreWebView2DownloadOperation operation,
