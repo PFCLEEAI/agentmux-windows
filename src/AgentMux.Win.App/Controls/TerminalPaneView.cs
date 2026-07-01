@@ -175,6 +175,26 @@ internal sealed class TerminalPaneView : Grid
         throw new InvalidOperationException($"terminal WebView2 runtime did not render expected text. Last text: {lastText}");
     }
 
+    internal async Task<string> CapturePngForSmokeTestAsync(string path)
+    {
+        await EnsureRuntimeReadyForSmokeTestAsync().ConfigureAwait(true);
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            throw new InvalidOperationException("screenshot path is required");
+        }
+
+        var fullPath = Path.GetFullPath(path);
+        var directory = Path.GetDirectoryName(fullPath);
+        if (!string.IsNullOrWhiteSpace(directory))
+        {
+            Directory.CreateDirectory(directory);
+        }
+
+        await using var stream = File.Create(fullPath);
+        await _webView.CoreWebView2!.CapturePreviewAsync(CoreWebView2CapturePreviewImageFormat.Png, stream).ConfigureAwait(true);
+        return fullPath;
+    }
+
     private async Task<string> ReadRuntimeTextForSmokeTestAsync()
     {
         var json = await ExecuteRuntimeScriptForSmokeTestAsync("""

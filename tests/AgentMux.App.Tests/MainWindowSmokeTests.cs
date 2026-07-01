@@ -12,6 +12,8 @@ namespace AgentMux.App.Tests;
 
 public sealed class MainWindowSmokeTests
 {
+    private static readonly string SmokeArtifactDirectoryPath = ResolveSmokeArtifactDirectory();
+
     [Fact]
     public async Task MainWindowRendersSplitPaneTreeOnStaThread()
     {
@@ -172,6 +174,10 @@ public sealed class MainWindowSmokeTests
 
             var runtimeText = await terminal.WaitForRuntimeTextForSmokeTestAsync(terminalMarker);
             Assert.Contains(terminalMarker, runtimeText);
+
+            var terminalScreenshot = await terminal.CapturePngForSmokeTestAsync(
+                System.IO.Path.Combine(SmokeArtifactDirectory(), "terminal-webview2.png"));
+            AssertPngFile(terminalScreenshot);
         }
         finally
         {
@@ -214,15 +220,9 @@ public sealed class MainWindowSmokeTests
                 Assert.Equal(1, root.GetProperty("clicked").GetInt32());
             }
 
-            var screenshotPath = System.IO.Path.Combine(
-                System.IO.Path.GetTempPath(),
-                "agentmux-app-smoke",
-                $"{Guid.NewGuid():N}.png");
+            var screenshotPath = System.IO.Path.Combine(SmokeArtifactDirectory(), "browser-webview2.png");
             var capturedPath = await browser.CapturePngAsync(screenshotPath);
-            var screenshot = new System.IO.FileInfo(capturedPath);
-            Assert.True(screenshot.Exists);
-            Assert.True(screenshot.Length > 0);
-            AssertPngSignature(capturedPath);
+            AssertPngFile(capturedPath);
         }
         finally
         {
@@ -259,13 +259,46 @@ public sealed class MainWindowSmokeTests
         Assert.True(document.RootElement.GetProperty("ok").GetBoolean());
     }
 
+    private static string SmokeArtifactDirectory()
+    {
+        return SmokeArtifactDirectoryPath;
+    }
+
+    private static string ResolveSmokeArtifactDirectory()
+    {
+        var configuredPath = Environment.GetEnvironmentVariable("AGENTMUX_SMOKE_ARTIFACT_DIR");
+        return string.IsNullOrWhiteSpace(configuredPath)
+            ? System.IO.Path.Combine(System.IO.Path.GetTempPath(), "agentmux-app-smoke", $"{Guid.NewGuid():N}")
+            : configuredPath;
+    }
+
+    private static void AssertPngFile(string path)
+    {
+        var screenshot = new System.IO.FileInfo(path);
+        Assert.True(screenshot.Exists);
+        Assert.True(screenshot.Length > 0);
+        AssertPngSignature(path);
+    }
+
     private static void AssertPngSignature(string path)
     {
         var signature = new byte[8];
         using var stream = System.IO.File.OpenRead(path);
         Assert.Equal(signature.Length, stream.Read(signature));
         Assert.Equal([137, 80, 78, 71, 13, 10, 26, 10], signature);
+
+        var ihdr = new byte[17];
+        Assert.Equal(ihdr.Length, stream.Read(ihdr));
+        Assert.Equal("IHDR", System.Text.Encoding.ASCII.GetString(ihdr, 4, 4));
+        Assert.True(ReadBigEndianInt32(ihdr, 8) > 0);
+        Assert.True(ReadBigEndianInt32(ihdr, 12) > 0);
     }
+
+    private static int ReadBigEndianInt32(byte[] buffer, int offset) =>
+        (buffer[offset] << 24)
+        | (buffer[offset + 1] << 16)
+        | (buffer[offset + 2] << 8)
+        | buffer[offset + 3];
 
     private static class WpfTestHost
     {
