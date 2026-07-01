@@ -206,6 +206,8 @@ public partial class MainWindow : Window
             AgentMuxMethods.BrowserEval => AgentMuxResponse.Success(request.Id, await HandleBrowserEvalAsync(request.Params).ConfigureAwait(true)),
             AgentMuxMethods.BrowserClick => AgentMuxResponse.Success(request.Id, await HandleBrowserClickAsync(request.Params).ConfigureAwait(true)),
             AgentMuxMethods.BrowserFill => AgentMuxResponse.Success(request.Id, await HandleBrowserFillAsync(request.Params).ConfigureAwait(true)),
+            AgentMuxMethods.BrowserType => AgentMuxResponse.Success(request.Id, await HandleBrowserTypeAsync(request.Params).ConfigureAwait(true)),
+            AgentMuxMethods.BrowserPress => AgentMuxResponse.Success(request.Id, await HandleBrowserPressAsync(request.Params).ConfigureAwait(true)),
             AgentMuxMethods.BrowserScreenshot => AgentMuxResponse.Success(request.Id, await HandleBrowserScreenshotAsync(request.Params).ConfigureAwait(true)),
             _ => AgentMuxResponse.Failure(request.Id, $"Unsupported method: {request.Method}")
         };
@@ -409,6 +411,28 @@ public partial class MainWindow : Window
         }
 
         return await RunBrowserScriptAsync(view => view.FillAsync(parsed.Selector, parsed.Text ?? "")).ConfigureAwait(true);
+    }
+
+    private async Task<object> HandleBrowserTypeAsync(JsonElement? parameters)
+    {
+        var parsed = Deserialize<BrowserFillParams>(parameters);
+        if (string.IsNullOrWhiteSpace(parsed?.Selector))
+        {
+            return new { ok = false, reason = "selector is required" };
+        }
+
+        return await RunBrowserScriptAsync(view => view.TypeAsync(parsed.Selector, parsed.Text ?? "")).ConfigureAwait(true);
+    }
+
+    private async Task<object> HandleBrowserPressAsync(JsonElement? parameters)
+    {
+        var parsed = Deserialize<BrowserPressParams>(parameters);
+        if (string.IsNullOrWhiteSpace(parsed?.Key))
+        {
+            return new { ok = false, reason = "key is required" };
+        }
+
+        return await RunBrowserScriptAsync(view => view.PressAsync(parsed.Key, parsed.Selector)).ConfigureAwait(true);
     }
 
     private async Task<object> HandleBrowserScreenshotAsync(JsonElement? parameters)
@@ -1148,6 +1172,8 @@ public partial class MainWindow : Window
         return method is AgentMuxMethods.BrowserEval
             or AgentMuxMethods.BrowserClick
             or AgentMuxMethods.BrowserFill
+            or AgentMuxMethods.BrowserType
+            or AgentMuxMethods.BrowserPress
             or AgentMuxMethods.BrowserScreenshot;
     }
 
@@ -1487,6 +1513,12 @@ public partial class MainWindow : Window
     {
         public string? Selector { get; set; }
         public string? Text { get; set; }
+    }
+
+    private sealed class BrowserPressParams
+    {
+        public string? Key { get; set; }
+        public string? Selector { get; set; }
     }
 
     private sealed class BrowserScreenshotParams

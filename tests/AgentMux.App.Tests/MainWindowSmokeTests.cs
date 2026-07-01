@@ -251,11 +251,40 @@ public sealed class MainWindowSmokeTests
             browserWindow.Show();
 
             var setupResult = await browser.EvaluateScriptAsync("""
-                document.body.innerHTML = '<input id="name"><button id="go">go</button><output id="result"></output>';
+                document.body.innerHTML = '<input id="name"><button id="go">go</button><output id="result"></output><input id="typed"><output id="typed-result"></output>';
                 window.__agentMuxClicked = 0;
+                window.__agentMuxPointerDown = 0;
+                window.__agentMuxMouseDown = 0;
+                window.__agentMuxMouseUp = 0;
+                window.__agentMuxTypedInput = 0;
+                window.__agentMuxPressedEnter = 0;
+                window.__agentMuxKeyUpEnter = 0;
+                document.querySelector("#go").addEventListener("pointerdown", () => {
+                    window.__agentMuxPointerDown += 1;
+                });
+                document.querySelector("#go").addEventListener("mousedown", () => {
+                    window.__agentMuxMouseDown += 1;
+                });
+                document.querySelector("#go").addEventListener("mouseup", () => {
+                    window.__agentMuxMouseUp += 1;
+                });
                 document.querySelector("#go").addEventListener("click", () => {
                     window.__agentMuxClicked += 1;
                     document.querySelector("#result").textContent = document.querySelector("#name").value;
+                });
+                document.querySelector("#typed").addEventListener("input", () => {
+                    window.__agentMuxTypedInput += 1;
+                });
+                document.querySelector("#typed").addEventListener("keydown", event => {
+                    if (event.key === "Enter") {
+                        window.__agentMuxPressedEnter += 1;
+                        document.querySelector("#typed-result").textContent = document.querySelector("#typed").value;
+                    }
+                });
+                document.querySelector("#typed").addEventListener("keyup", event => {
+                    if (event.key === "Enter") {
+                        window.__agentMuxKeyUpEnter += 1;
+                    }
                 });
                 true;
                 """);
@@ -263,12 +292,22 @@ public sealed class MainWindowSmokeTests
 
             AssertBrowserOk(await browser.FillAsync("#name", "agentmux-browser-smoke"));
             AssertBrowserOk(await browser.ClickAsync("#go"));
+            AssertBrowserOk(await browser.TypeAsync("#typed", "agentmux-key-smoke"));
+            AssertBrowserOk(await browser.PressAsync("Enter", "#typed"));
 
             var stateJson = await browser.EvaluateScriptAsync("""
                 (() => ({
                     value: document.querySelector("#name").value,
                     result: document.querySelector("#result").textContent,
-                    clicked: window.__agentMuxClicked
+                    clicked: window.__agentMuxClicked,
+                    pointerDown: window.__agentMuxPointerDown,
+                    mouseDown: window.__agentMuxMouseDown,
+                    mouseUp: window.__agentMuxMouseUp,
+                    typedValue: document.querySelector("#typed").value,
+                    typedInput: window.__agentMuxTypedInput,
+                    pressedEnter: window.__agentMuxPressedEnter,
+                    keyUpEnter: window.__agentMuxKeyUpEnter,
+                    typedResult: document.querySelector("#typed-result").textContent
                 }))()
                 """);
             using (var state = System.Text.Json.JsonDocument.Parse(stateJson))
@@ -277,6 +316,14 @@ public sealed class MainWindowSmokeTests
                 Assert.Equal("agentmux-browser-smoke", root.GetProperty("value").GetString());
                 Assert.Equal("agentmux-browser-smoke", root.GetProperty("result").GetString());
                 Assert.Equal(1, root.GetProperty("clicked").GetInt32());
+                Assert.True(root.GetProperty("pointerDown").GetInt32() >= 1);
+                Assert.True(root.GetProperty("mouseDown").GetInt32() >= 1);
+                Assert.True(root.GetProperty("mouseUp").GetInt32() >= 1);
+                Assert.Equal("agentmux-key-smoke", root.GetProperty("typedValue").GetString());
+                Assert.True(root.GetProperty("typedInput").GetInt32() >= 1);
+                Assert.Equal(1, root.GetProperty("pressedEnter").GetInt32());
+                Assert.Equal(1, root.GetProperty("keyUpEnter").GetInt32());
+                Assert.Equal("agentmux-key-smoke", root.GetProperty("typedResult").GetString());
             }
 
             var screenshotPath = System.IO.Path.Combine(SmokeArtifactDirectory(), "browser-webview2.png");

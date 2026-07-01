@@ -71,12 +71,14 @@ agentmux browser open https://example.com
 agentmux browser eval "document.title"
 agentmux browser click "#submit"
 agentmux browser fill "#prompt" "write tests"
+agentmux browser type "#prompt" "write tests"
+agentmux browser press Enter --selector "#prompt"
 agentmux browser screenshot .\browser.png
 agentmux send "npm test"
 agentmux read-screen --lines 50
 ```
 
-Browser automation commands operate on the active browser pane. `browser eval` runs arbitrary JavaScript in that pane, and `browser screenshot` writes a PNG to a local path resolved by the CLI before it is sent to the app.
+Browser automation commands operate on the active browser pane. `browser eval` runs arbitrary JavaScript in that pane, `browser click` dispatches WebView2 pointer/mouse input at the selector center, `browser type` inserts text into a focused selector, `browser press` sends a key down/up sequence, and `browser screenshot` writes a PNG to a local path resolved by the CLI before it is sent to the app. This is richer preview automation, not full Playwright parity or physical trusted input.
 Pane focus commands operate on the active split tree. `focus next` / `focus previous` cycle through panes, and `focus left` / `focus right` / `focus up` / `focus down` choose an adjacent pane from split geometry. The WPF shell also supports `Ctrl+Alt+Arrow` directional pane focus and `Ctrl+Tab` / `Ctrl+Shift+Tab` pane cycling.
 Pane action commands operate on the active pane. `zoom` toggles a single-pane view without destroying the split layout, and `close-pane` removes the active pane while preserving a remaining sibling pane.
 

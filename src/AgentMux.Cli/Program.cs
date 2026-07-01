@@ -175,6 +175,37 @@ public static class Program
             return new CliRequest(AgentMuxMethods.BrowserFill, new { selector, text = text ?? "" });
         }
 
+        if (args[0].Equals("type", StringComparison.OrdinalIgnoreCase))
+        {
+            var named = ParseNamed(args[1..]);
+            var selectorWasNamed = named.ContainsKey("selector");
+            var selector = NamedOrFirst(named, "selector");
+            var text = NamedOrRemaining(named, "text", selectorWasNamed ? 0 : 1);
+            if (string.IsNullOrWhiteSpace(selector) || text is null)
+            {
+                error = "Usage: agentmux browser type <selector> <text>";
+                return null;
+            }
+
+            error = "";
+            return new CliRequest(AgentMuxMethods.BrowserType, new { selector, text });
+        }
+
+        if (args[0].Equals("press", StringComparison.OrdinalIgnoreCase))
+        {
+            var named = ParseNamed(args[1..]);
+            var key = NamedOrFirst(named, "key");
+            named.TryGetValue("selector", out var selector);
+            if (string.IsNullOrWhiteSpace(key))
+            {
+                error = "Usage: agentmux browser press <key> [--selector <selector>]";
+                return null;
+            }
+
+            error = "";
+            return new CliRequest(AgentMuxMethods.BrowserPress, new { key, selector });
+        }
+
         if (args[0].Equals("screenshot", StringComparison.OrdinalIgnoreCase))
         {
             var named = ParseNamed(args[1..]);
@@ -392,6 +423,8 @@ public static class Program
           agentmux browser eval "document.title"
           agentmux browser click "#submit"
           agentmux browser fill "#prompt" "write tests"
+          agentmux browser type "#prompt" "write tests"
+          agentmux browser press Enter --selector "#prompt"
           agentmux browser screenshot .\browser.png
           agentmux send "npm test"
           agentmux send-key Enter

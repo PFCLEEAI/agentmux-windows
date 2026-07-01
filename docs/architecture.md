@@ -37,7 +37,7 @@ AgentMux.Win.App
 - Terminal panes own independent ConPTY sessions, started lazily when a pane becomes active or receives input.
 - Terminal panes render through a cached WebView2/xterm bridge with a WPF text fallback. The bridge displays current pane text and keeps `PaneState.LastScreenText` as the automation/read-screen source.
 - Browser panes render through a cached WebView2 bridge with a WPF fallback. `PaneState.Url` is the current browser navigation source, and `surface.open_url` converts or navigates the active pane.
-- Browser automation uses the active browser pane and WebView2 directly: `surface.eval_js`, `surface.click_selector`, `surface.fill_selector`, and `surface.capture_screenshot`. These are local trust-boundary APIs; JavaScript executes in the active browser pane, and screenshots write to local paths.
+- Browser automation uses the active browser pane and WebView2 directly: `surface.eval_js`, `surface.click_selector`, `surface.fill_selector`, `surface.browser_type_text`, `surface.browser_press_key`, and `surface.capture_screenshot`. These are local trust-boundary APIs; JavaScript executes in the active browser pane, click/type/press use WebView2 input automation where practical, and screenshots write to local paths.
 - App shortcuts are matched inside the focused WPF shell from `%LOCALAPPDATA%/AgentMux/shortcuts.json`, with hard-coded defaults used when the file or individual entries are missing or invalid. They are app-window bindings, not global hotkeys or IPC commands.
 
 ## IPC

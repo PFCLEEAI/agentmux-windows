@@ -58,7 +58,7 @@
 
 - WebView2 browser pane. Preview implemented with WPF fallback.
 - Open/navigate. Preview implemented through `surface.open_url`, `agentmux open-url`, and the browser pane address bar.
-- Eval/click/fill. Preview implemented through lightweight WebView2 JavaScript helpers.
+- Eval/click/fill/type/press. Preview implemented through lightweight WebView2 helpers; click/type/press use WebView2 input automation where practical.
 - Screenshot. Preview implemented as WebView2 PNG capture to a local path.
 
-Browser automation has hosted WebView2 runtime smoke and CI PNG artifacts. It still needs richer Playwright-style semantics for sites that need pointer/key events rather than basic DOM helpers.
+Browser automation has hosted WebView2 runtime smoke and CI PNG artifacts. Click/type/press now cover richer pointer/key preview semantics, but full Playwright-style automation such as frames, downloads, tracing, network interception, and trusted physical input remains future work.

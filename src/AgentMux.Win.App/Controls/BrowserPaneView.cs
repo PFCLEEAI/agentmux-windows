@@ -168,7 +168,7 @@ internal sealed class BrowserPaneView : Grid
             return """{"ok":false,"reason":"selector is required"}""";
         }
 
-        return await EvaluateScriptAsync($$"""
+        var targetJson = await EvaluateScriptAsync($$"""
             (() => {
               const selector = {{JsonSerializer.Serialize(selector)}};
               const element = document.querySelector(selector);
@@ -176,10 +176,34 @@ internal sealed class BrowserPaneView : Grid
                 return { ok: false, reason: "selector not found", selector };
               }
 
-              element.click();
-              return { ok: true, selector };
+              element.scrollIntoView({ block: "center", inline: "center" });
+              const rect = element.getBoundingClientRect();
+              if (!rect || rect.width <= 0 || rect.height <= 0) {
+                return { ok: false, reason: "selector is not visible", selector };
+              }
+
+              const x = Math.min(Math.max(rect.left + rect.width / 2, 0), window.innerWidth - 1);
+              const y = Math.min(Math.max(rect.top + rect.height / 2, 0), window.innerHeight - 1);
+              const hit = document.elementFromPoint(x, y);
+              if (!hit || (hit !== element && !element.contains(hit) && !hit.contains(element))) {
+                return { ok: false, reason: "selector center is covered", selector };
+              }
+
+              return { ok: true, selector, x, y };
             })()
             """).ConfigureAwait(true);
+
+        var target = ParseAutomationResult(targetJson);
+        if (!target.Ok)
+        {
+            return targetJson;
+        }
+
+        await DispatchMouseEventAsync("mouseMoved", target.X, target.Y).ConfigureAwait(true);
+        await DispatchMouseEventAsync("mousePressed", target.X, target.Y).ConfigureAwait(true);
+        await DispatchMouseEventAsync("mouseReleased", target.X, target.Y).ConfigureAwait(true);
+        await WaitForNavigationAsync(allowStartDelay: true).ConfigureAwait(true);
+        return JsonSerializer.Serialize(new { ok = true, selector, x = target.X, y = target.Y });
     }
 
     public async Task<string> FillAsync(string selector, string text)
@@ -206,6 +230,108 @@ internal sealed class BrowserPaneView : Grid
 
               element.dispatchEvent(new Event("input", { bubbles: true }));
               element.dispatchEvent(new Event("change", { bubbles: true }));
+              return { ok: true, selector };
+            })()
+            """).ConfigureAwait(true);
+    }
+
+    public async Task<string> TypeAsync(string selector, string text)
+    {
+        if (string.IsNullOrWhiteSpace(selector))
+        {
+            return """{"ok":false,"reason":"selector is required"}""";
+        }
+
+        var clickResult = await ClickAsync(selector).ConfigureAwait(true);
+        var click = ParseAutomationResult(clickResult);
+        if (!click.Ok)
+        {
+            return clickResult;
+        }
+
+        var focusResult = await FocusForInputAsync(selector).ConfigureAwait(true);
+        var focus = ParseAutomationResult(focusResult);
+        if (!focus.Ok)
+        {
+            return focusResult;
+        }
+
+        await CallDevToolsInputAsync("Input.insertText", new Dictionary<string, object?>
+        {
+            ["text"] = text
+        }).ConfigureAwait(true);
+        await WaitForNavigationAsync(allowStartDelay: true).ConfigureAwait(true);
+        return JsonSerializer.Serialize(new { ok = true, selector, textLength = text.Length });
+    }
+
+    public async Task<string> PressAsync(string key, string? selector)
+    {
+        if (string.IsNullOrWhiteSpace(key))
+        {
+            return """{"ok":false,"reason":"key is required"}""";
+        }
+
+        var normalizedKey = key.Trim();
+        if (normalizedKey.Contains('+') || normalizedKey.Contains(' ') || normalizedKey.Contains('\t'))
+        {
+            return JsonSerializer.Serialize(new { ok = false, reason = "unsupported key", key });
+        }
+
+        if (!string.IsNullOrWhiteSpace(selector))
+        {
+            var clickResult = await ClickAsync(selector).ConfigureAwait(true);
+            var click = ParseAutomationResult(clickResult);
+            if (!click.Ok)
+            {
+                return clickResult;
+            }
+        }
+        else
+        {
+            await EnsureReadyAsync().ConfigureAwait(true);
+        }
+
+        if (!TryMapKey(normalizedKey, out var mappedKey))
+        {
+            return JsonSerializer.Serialize(new { ok = false, reason = "unsupported key", key });
+        }
+
+        await DispatchKeyEventAsync("keyDown", mappedKey).ConfigureAwait(true);
+        await DispatchKeyEventAsync("keyUp", mappedKey).ConfigureAwait(true);
+        await WaitForNavigationAsync(allowStartDelay: true).ConfigureAwait(true);
+        return JsonSerializer.Serialize(new { ok = true, key = mappedKey.Key, code = mappedKey.Code });
+    }
+
+    private async Task<string> FocusForInputAsync(string selector)
+    {
+        return await EvaluateScriptAsync($$"""
+            (() => {
+              const selector = {{JsonSerializer.Serialize(selector)}};
+              const element = document.querySelector(selector);
+              if (!element) {
+                return { ok: false, reason: "selector not found", selector };
+              }
+
+              const isEditable = node =>
+                !!node && (node.matches?.("input:not([type='button']):not([type='submit']):not([type='reset']):not([type='checkbox']):not([type='radio']), textarea") || node.isContentEditable);
+              const target = isEditable(element)
+                ? element
+                : element.querySelector?.("input:not([type='button']):not([type='submit']):not([type='reset']):not([type='checkbox']):not([type='radio']), textarea, [contenteditable=''], [contenteditable='true'], [contenteditable='plaintext-only']");
+
+              if (!target || typeof target.focus !== "function") {
+                return { ok: false, reason: "selector is not text-editable", selector };
+              }
+
+              target.focus({ preventScroll: true });
+              const active = document.activeElement;
+              if (active !== target && !target.contains(active)) {
+                return { ok: false, reason: "selector did not receive focus", selector };
+              }
+
+              if (!isEditable(active)) {
+                return { ok: false, reason: "focused element is not text-editable", selector };
+              }
+
               return { ok: true, selector };
             })()
             """).ConfigureAwait(true);
@@ -341,9 +467,125 @@ internal sealed class BrowserPaneView : Grid
 
     private static string FallbackText(string url) => $"Browser pane: {url}";
 
+    private async Task DispatchMouseEventAsync(string type, double x, double y)
+    {
+        var payload = new Dictionary<string, object?>
+        {
+            ["type"] = type,
+            ["x"] = x,
+            ["y"] = y,
+            ["pointerType"] = "mouse"
+        };
+
+        if (type == "mousePressed")
+        {
+            payload["button"] = "left";
+            payload["buttons"] = 1;
+            payload["clickCount"] = 1;
+        }
+        else if (type == "mouseReleased")
+        {
+            payload["button"] = "left";
+            payload["buttons"] = 0;
+            payload["clickCount"] = 1;
+        }
+
+        await CallDevToolsInputAsync("Input.dispatchMouseEvent", payload).ConfigureAwait(true);
+    }
+
+    private async Task DispatchKeyEventAsync(string type, BrowserKey key)
+    {
+        await CallDevToolsInputAsync("Input.dispatchKeyEvent", new Dictionary<string, object?>
+        {
+            ["type"] = type,
+            ["key"] = key.Key,
+            ["code"] = key.Code,
+            ["windowsVirtualKeyCode"] = key.VirtualKeyCode,
+            ["nativeVirtualKeyCode"] = key.VirtualKeyCode
+        }).ConfigureAwait(true);
+    }
+
+    private async Task CallDevToolsInputAsync(string method, Dictionary<string, object?> payload)
+    {
+        await EnsureReadyAsync().ConfigureAwait(true);
+        var json = JsonSerializer.Serialize(payload);
+        await _webView.CoreWebView2!.CallDevToolsProtocolMethodAsync(method, json).ConfigureAwait(true);
+    }
+
+    private static AutomationTarget ParseAutomationResult(string json)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            var root = document.RootElement;
+            var ok = root.ValueKind == JsonValueKind.Object
+                && root.TryGetProperty("ok", out var okElement)
+                && okElement.ValueKind == JsonValueKind.True;
+            var x = root.TryGetProperty("x", out var xElement) && xElement.TryGetDouble(out var parsedX) ? parsedX : 0;
+            var y = root.TryGetProperty("y", out var yElement) && yElement.TryGetDouble(out var parsedY) ? parsedY : 0;
+            return new AutomationTarget(ok, x, y);
+        }
+        catch (JsonException)
+        {
+            return new AutomationTarget(false, 0, 0);
+        }
+    }
+
+    private static bool TryMapKey(string value, out BrowserKey key)
+    {
+        key = value.Trim().ToLowerInvariant() switch
+        {
+            "enter" or "return" => new BrowserKey("Enter", "Enter", 13),
+            "tab" => new BrowserKey("Tab", "Tab", 9),
+            "escape" or "esc" => new BrowserKey("Escape", "Escape", 27),
+            "backspace" => new BrowserKey("Backspace", "Backspace", 8),
+            "delete" or "del" => new BrowserKey("Delete", "Delete", 46),
+            "home" => new BrowserKey("Home", "Home", 36),
+            "end" => new BrowserKey("End", "End", 35),
+            "pageup" or "pgup" => new BrowserKey("PageUp", "PageUp", 33),
+            "pagedown" or "pgdown" => new BrowserKey("PageDown", "PageDown", 34),
+            "arrowleft" or "left" => new BrowserKey("ArrowLeft", "ArrowLeft", 37),
+            "arrowright" or "right" => new BrowserKey("ArrowRight", "ArrowRight", 39),
+            "arrowup" or "up" => new BrowserKey("ArrowUp", "ArrowUp", 38),
+            "arrowdown" or "down" => new BrowserKey("ArrowDown", "ArrowDown", 40),
+            "space" => new BrowserKey(" ", "Space", 32),
+            _ => default
+        };
+
+        if (key.VirtualKeyCode != 0)
+        {
+            return true;
+        }
+
+        if (value.Length != 1)
+        {
+            return false;
+        }
+
+        var character = value[0];
+        if (char.IsLetter(character))
+        {
+            var upper = char.ToUpperInvariant(character);
+            key = new BrowserKey(character.ToString(), $"Key{upper}", upper);
+            return true;
+        }
+
+        if (char.IsDigit(character))
+        {
+            key = new BrowserKey(character.ToString(), $"Digit{character}", character);
+            return true;
+        }
+
+        return false;
+    }
+
     private static string WebViewUserDataFolder() =>
         Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "AgentMux",
             "WebView2");
+
+    private readonly record struct AutomationTarget(bool Ok, double X, double Y);
+
+    private readonly record struct BrowserKey(string Key, string Code, int VirtualKeyCode);
 }
