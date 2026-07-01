@@ -1315,6 +1315,20 @@ public partial class MainWindow : Window
         RefreshWorkspaceView();
     }
 
+    internal async Task<AgentMuxResponse> HandleRpcForSmokeTestAsync(string method, object? parameters = null)
+    {
+        var request = new AgentMuxRequest
+        {
+            Id = "smoke",
+            Method = method,
+            Params = parameters is null
+                ? null
+                : JsonSerializer.SerializeToElement(parameters, AgentMuxJson.Options)
+        };
+
+        return await HandleRpcOnUiAsync(request, CancellationToken.None).ConfigureAwait(true);
+    }
+
     internal int PaneCountForSmokeTest => CountPanes(ActiveSurface().Root);
 
     internal int RenderedTerminalPaneCountForSmokeTest => CountVisualDescendants<TerminalPaneView>(PaneHost);

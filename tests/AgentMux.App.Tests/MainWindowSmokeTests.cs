@@ -2,6 +2,7 @@ using System.Threading;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Threading;
+using AgentMux.Core.Ipc;
 using AgentMux.Core.Models;
 using AgentMux.Win.App.Controls;
 using AgentMux.Win.App.Input;
@@ -198,7 +199,106 @@ public sealed class MainWindowSmokeTests
             }
 
             await RunHostedWebView2RuntimeSmokeAsync();
+            await RunActiveBrowserRpcSmokeAsync();
         });
+    }
+
+    private static async Task RunActiveBrowserRpcSmokeAsync()
+    {
+        var window = new MainWindow
+        {
+            Width = 900,
+            Height = 560,
+            ShowActivated = false,
+            ShowInTaskbar = false,
+            WindowStartupLocation = WindowStartupLocation.Manual
+        };
+
+        try
+        {
+            window.InitializeForSmokeTest();
+            Assert.Equal("about:blank", window.OpenBrowserInActivePaneForSmokeTest("about:blank"));
+            window.Show();
+            await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+
+            var setup = await WaitForRpcOkAsync(window, AgentMuxMethods.BrowserEval, new
+            {
+                script = """
+                    document.body.innerHTML = '<input id="rpc-name"><button id="rpc-go">go</button><output id="rpc-result"></output><input id="rpc-typed"><output id="rpc-typed-result"></output>';
+                    window.__agentMuxRpcClicked = 0;
+                    window.__agentMuxRpcMouseDown = 0;
+                    window.__agentMuxRpcTypedInput = 0;
+                    window.__agentMuxRpcPressedEnter = 0;
+                    document.querySelector("#rpc-go").addEventListener("mousedown", () => {
+                        window.__agentMuxRpcMouseDown += 1;
+                    });
+                    document.querySelector("#rpc-go").addEventListener("click", () => {
+                        window.__agentMuxRpcClicked += 1;
+                        document.querySelector("#rpc-result").textContent = document.querySelector("#rpc-name").value;
+                    });
+                    document.querySelector("#rpc-typed").addEventListener("input", () => {
+                        window.__agentMuxRpcTypedInput += 1;
+                    });
+                    document.querySelector("#rpc-typed").addEventListener("keydown", event => {
+                        if (event.key === "Enter") {
+                            window.__agentMuxRpcPressedEnter += 1;
+                            document.querySelector("#rpc-typed-result").textContent = document.querySelector("#rpc-typed").value;
+                        }
+                    });
+                    true;
+                    """
+            });
+            Assert.True(setup.GetProperty("result").GetBoolean());
+
+            AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserFill, new
+            {
+                selector = "#rpc-name",
+                text = "agentmux-rpc-browser-smoke"
+            }));
+            AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserClick, new
+            {
+                selector = "#rpc-go"
+            }));
+            AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserType, new
+            {
+                selector = "#rpc-typed",
+                text = "agentmux-rpc-type-smoke"
+            }));
+            AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserPress, new
+            {
+                selector = "#rpc-typed",
+                key = "Enter"
+            }));
+
+            var stateRoot = AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserEval, new
+            {
+                script = """
+                    (() => ({
+                        value: document.querySelector("#rpc-name").value,
+                        result: document.querySelector("#rpc-result").textContent,
+                        clicked: window.__agentMuxRpcClicked,
+                        mouseDown: window.__agentMuxRpcMouseDown,
+                        typedValue: document.querySelector("#rpc-typed").value,
+                        typedInput: window.__agentMuxRpcTypedInput,
+                        pressedEnter: window.__agentMuxRpcPressedEnter,
+                        typedResult: document.querySelector("#rpc-typed-result").textContent
+                    }))()
+                    """
+            }));
+            var state = stateRoot.GetProperty("result");
+            Assert.Equal("agentmux-rpc-browser-smoke", state.GetProperty("value").GetString());
+            Assert.Equal("agentmux-rpc-browser-smoke", state.GetProperty("result").GetString());
+            Assert.Equal(1, state.GetProperty("clicked").GetInt32());
+            Assert.True(state.GetProperty("mouseDown").GetInt32() >= 1);
+            Assert.Equal("agentmux-rpc-type-smoke", state.GetProperty("typedValue").GetString());
+            Assert.True(state.GetProperty("typedInput").GetInt32() >= 1);
+            Assert.Equal(1, state.GetProperty("pressedEnter").GetInt32());
+            Assert.Equal("agentmux-rpc-type-smoke", state.GetProperty("typedResult").GetString());
+        }
+        finally
+        {
+            window.Close();
+        }
     }
 
     private static async Task RunHostedWebView2RuntimeSmokeAsync()
@@ -363,6 +463,39 @@ public sealed class MainWindowSmokeTests
     {
         using var document = System.Text.Json.JsonDocument.Parse(json);
         Assert.True(document.RootElement.GetProperty("ok").GetBoolean());
+    }
+
+    private static System.Text.Json.JsonElement AssertRpcOk(AgentMuxResponse response)
+    {
+        Assert.True(response.Ok, response.Error);
+        var result = System.Text.Json.JsonSerializer.SerializeToElement(response.Result, AgentMuxJson.Options);
+        Assert.True(result.GetProperty("ok").GetBoolean(), result.ToString());
+        return result.Clone();
+    }
+
+    private static async Task<System.Text.Json.JsonElement> WaitForRpcOkAsync(MainWindow window, string method, object parameters)
+    {
+        AgentMuxResponse? lastResponse = null;
+        System.Text.Json.JsonElement? lastResult = null;
+
+        for (var attempt = 0; attempt < 10; attempt++)
+        {
+            lastResponse = await window.HandleRpcForSmokeTestAsync(method, parameters).ConfigureAwait(true);
+            if (lastResponse.Ok)
+            {
+                var result = System.Text.Json.JsonSerializer.SerializeToElement(lastResponse.Result, AgentMuxJson.Options);
+                lastResult = result.Clone();
+                if (result.TryGetProperty("ok", out var okElement) && okElement.GetBoolean())
+                {
+                    return result.Clone();
+                }
+            }
+
+            await Task.Delay(250).ConfigureAwait(true);
+        }
+
+        AssertRpcOk(lastResponse ?? AgentMuxResponse.Failure("smoke", "RPC did not complete"));
+        return lastResult ?? default;
     }
 
     private static string SmokeArtifactDirectory()
