@@ -577,6 +577,73 @@ public sealed class MainWindowSmokeTests
                 limit = 10
             }));
             Assert.Equal(0, emptyNetworkLog.GetProperty("count").GetInt32());
+
+            var downloadToken = $"agentmux-download-{Guid.NewGuid():N}";
+            var downloadFileName = $"{downloadToken}.txt";
+            string? resultFilePath = null;
+            try
+            {
+                await using var downloadServer = LoopbackHttpServer.StartAttachment($"/{downloadFileName}", downloadToken, downloadFileName);
+                AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserDownloadsClear));
+                AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserEval, new
+                {
+                    script = $$"""
+                        (() => {
+                            const existing = document.querySelector("#agentmux-download-link");
+                            if (existing) {
+                                existing.remove();
+                            }
+
+                            const link = document.createElement("a");
+                            link.id = "agentmux-download-link";
+                            link.href = {{System.Text.Json.JsonSerializer.Serialize(downloadServer.Url.ToString())}};
+                            link.textContent = "download";
+                            document.body.appendChild(link);
+                            return true;
+                        })()
+                        """
+                }));
+                AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserClick, new
+                {
+                    selector = "#agentmux-download-link"
+                }));
+
+                var downloadLog = await WaitForDownloadAsync(window, downloadToken, "Completed").ConfigureAwait(true);
+                Assert.True(TryFindDownload(downloadLog, downloadToken, "Completed", out var downloadEvent), downloadLog.ToString());
+                resultFilePath = downloadEvent.GetProperty("resultFilePath").GetString();
+                Assert.False(string.IsNullOrWhiteSpace(resultFilePath));
+                var expectedDownloadRoot = System.IO.Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "AgentMux",
+                    "Downloads");
+                var fullResultPath = System.IO.Path.GetFullPath(resultFilePath!);
+                var fullDownloadRoot = System.IO.Path.GetFullPath(expectedDownloadRoot).TrimEnd(
+                    System.IO.Path.DirectorySeparatorChar,
+                    System.IO.Path.AltDirectorySeparatorChar);
+                Assert.StartsWith(
+                    fullDownloadRoot + System.IO.Path.DirectorySeparatorChar,
+                    fullResultPath,
+                    StringComparison.OrdinalIgnoreCase);
+                Assert.Contains(downloadFileName, System.IO.Path.GetFileName(resultFilePath));
+                Assert.True(System.IO.File.Exists(resultFilePath), resultFilePath);
+                Assert.Equal(downloadToken, await System.IO.File.ReadAllTextAsync(resultFilePath!).ConfigureAwait(true));
+                Assert.True(downloadEvent.GetProperty("bytesReceived").GetInt64() >= downloadToken.Length);
+
+                var downloadClear = AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserDownloadsClear));
+                Assert.True(downloadClear.GetProperty("cleared").GetInt32() >= 1);
+                var emptyDownloadLog = AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserDownloads, new
+                {
+                    limit = 10
+                }));
+                Assert.Equal(0, emptyDownloadLog.GetProperty("count").GetInt32());
+            }
+            finally
+            {
+                if (!string.IsNullOrWhiteSpace(resultFilePath) && System.IO.File.Exists(resultFilePath))
+                {
+                    System.IO.File.Delete(resultFilePath);
+                }
+            }
         }
         finally
         {
@@ -865,6 +932,54 @@ public sealed class MainWindowSmokeTests
         return false;
     }
 
+    private static async Task<System.Text.Json.JsonElement> WaitForDownloadAsync(MainWindow window, string uriFragment, string state)
+    {
+        System.Text.Json.JsonElement? lastResult = null;
+        for (var attempt = 0; attempt < 40; attempt++)
+        {
+            var response = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserDownloads, new { limit = 20 }).ConfigureAwait(true);
+            if (response.Ok)
+            {
+                var result = System.Text.Json.JsonSerializer.SerializeToElement(response.Result, AgentMuxJson.Options);
+                lastResult = result.Clone();
+                if (result.TryGetProperty("ok", out var ok)
+                    && ok.GetBoolean()
+                    && TryFindDownload(result, uriFragment, state, out _))
+                {
+                    return result.Clone();
+                }
+            }
+
+            await Task.Delay(250).ConfigureAwait(true);
+        }
+
+        throw new InvalidOperationException($"Browser download log did not contain {state} for {uriFragment}. Last result: {lastResult?.ToString() ?? "<none>"}");
+    }
+
+    private static bool TryFindDownload(System.Text.Json.JsonElement downloadLog, string uriFragment, string state, out System.Text.Json.JsonElement downloadEvent)
+    {
+        downloadEvent = default;
+        if (!downloadLog.TryGetProperty("downloads", out var downloads)
+            || downloads.ValueKind != System.Text.Json.JsonValueKind.Array)
+        {
+            return false;
+        }
+
+        foreach (var candidate in downloads.EnumerateArray())
+        {
+            if (candidate.TryGetProperty("uri", out var uri)
+                && uri.GetString()?.Contains(uriFragment, StringComparison.Ordinal) == true
+                && candidate.TryGetProperty("state", out var candidateState)
+                && string.Equals(candidateState.GetString(), state, StringComparison.Ordinal))
+            {
+                downloadEvent = candidate.Clone();
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private static async Task<System.Text.Json.JsonElement> WaitForFrameTreeWithChildAsync(MainWindow window, string frameName)
     {
         System.Text.Json.JsonElement? lastResult = null;
@@ -971,10 +1086,14 @@ public sealed class MainWindowSmokeTests
         private readonly CancellationTokenSource _cancellation = new();
         private readonly Task _serverTask;
         private readonly string _body;
+        private readonly string _contentType;
+        private readonly string? _contentDisposition;
 
-        private LoopbackHttpServer(string path, string body)
+        private LoopbackHttpServer(string path, string body, string contentType, string? contentDisposition = null)
         {
             _body = body;
+            _contentType = contentType;
+            _contentDisposition = contentDisposition;
             _listener = new TcpListener(IPAddress.Loopback, 0);
             _listener.Start();
             var port = ((IPEndPoint)_listener.LocalEndpoint).Port;
@@ -984,7 +1103,11 @@ public sealed class MainWindowSmokeTests
 
         public Uri Url { get; }
 
-        public static LoopbackHttpServer Start(string path, string body) => new(path, body);
+        public static LoopbackHttpServer Start(string path, string body) =>
+            new(path, body, "text/plain; charset=utf-8");
+
+        public static LoopbackHttpServer StartAttachment(string path, string body, string fileName) =>
+            new(path, body, "text/plain", $"attachment; filename=\"{fileName}\"");
 
         public async ValueTask DisposeAsync()
         {
@@ -1010,9 +1133,13 @@ public sealed class MainWindowSmokeTests
                 await ReadRequestHeadersAsync(stream).ConfigureAwait(false);
 
                 var bodyBytes = Encoding.UTF8.GetBytes(_body);
+                var contentDisposition = string.IsNullOrWhiteSpace(_contentDisposition)
+                    ? ""
+                    : $"Content-Disposition: {_contentDisposition}\r\n";
                 var headers = Encoding.ASCII.GetBytes(
                     "HTTP/1.1 200 OK\r\n" +
-                    "Content-Type: text/plain; charset=utf-8\r\n" +
+                    $"Content-Type: {_contentType}\r\n" +
+                    contentDisposition +
                     "Access-Control-Allow-Origin: *\r\n" +
                     "Cache-Control: no-store\r\n" +
                     $"Content-Length: {bodyBytes.Length}\r\n" +

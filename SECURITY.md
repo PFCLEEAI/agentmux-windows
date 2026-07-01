@@ -19,6 +19,13 @@ Security-sensitive areas:
 - transcript and scrollback storage,
 - notification and status text,
 - environment variables,
-- browser session data once browser surfaces are implemented.
+- browser session data,
+- browser network/download metadata and downloaded files under the user's local app data directory.
+
+Browser preview boundaries:
+
+- The browser network log is local and in-memory. It avoids headers, cookies, request/response bodies, and post data, but URLs can still contain sensitive query data.
+- The browser download log is local and in-memory. It includes URLs and local result paths, routes downloaded files under `%LOCALAPPDATA%\AgentMux\Downloads`, and `downloads-clear` clears only metadata, not downloaded files.
+- AgentMux does not scan downloads, quarantine files, auto-open downloads, upload downloaded files, or provide a download policy engine in this pre-alpha preview.
 
 Do not paste tokens, passwords, SSH keys, or API keys into issue reports.

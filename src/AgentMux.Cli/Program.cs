@@ -280,6 +280,33 @@ public static class Program
             return new CliRequest(AgentMuxMethods.BrowserNetworkClear, new { });
         }
 
+        if (args[0].Equals("downloads", StringComparison.OrdinalIgnoreCase)
+            || args[0].Equals("download-log", StringComparison.OrdinalIgnoreCase))
+        {
+            var named = ParseNamed(args[1..]);
+            int? limit = null;
+            if (named.TryGetValue("limit", out var limitValue))
+            {
+                if (!TryParsePositiveInt(limitValue, out var parsedLimit))
+                {
+                    error = "Usage: agentmux browser downloads [--limit <count>]";
+                    return null;
+                }
+
+                limit = parsedLimit;
+            }
+
+            error = "";
+            return new CliRequest(AgentMuxMethods.BrowserDownloads, new { limit });
+        }
+
+        if (args[0].Equals("downloads-clear", StringComparison.OrdinalIgnoreCase)
+            || args[0].Equals("clear-downloads", StringComparison.OrdinalIgnoreCase))
+        {
+            error = "";
+            return new CliRequest(AgentMuxMethods.BrowserDownloadsClear, new { });
+        }
+
         if (args.Length == 1)
         {
             error = "";
@@ -537,6 +564,8 @@ public static class Program
           agentmux browser frames
           agentmux browser network --limit 20
           agentmux browser network-clear
+          agentmux browser downloads --limit 20
+          agentmux browser downloads-clear
           agentmux send "npm test"
           agentmux send-key Enter
           agentmux read-screen --lines 50

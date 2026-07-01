@@ -14,8 +14,12 @@ internal sealed class BrowserPaneView : Grid, IDisposable
 {
     private const string DefaultUrl = "about:blank";
     private const int MaxNetworkEventCount = 200;
+    private const int MaxDownloadEventCount = 100;
+    private const int MaxDownloadFileNameLength = 120;
 
     private readonly List<BrowserNetworkEvent> _networkEvents = [];
+    private readonly List<BrowserDownloadEvent> _downloadEvents = [];
+    private readonly List<TrackedDownload> _activeDownloads = [];
     private readonly TextBox _addressBox;
     private readonly Button _goButton;
     private readonly TextBlock _fallback;
@@ -29,7 +33,9 @@ internal sealed class BrowserPaneView : Grid, IDisposable
     private ulong? _pendingNavigationId;
     private string _url = DefaultUrl;
     private long _networkEventSequence;
+    private long _downloadEventSequence;
     private bool _webViewEventsWired;
+    private bool _downloadEventsWired;
     private bool _networkEventsEnabled;
     private bool _webViewReady;
     private bool _webViewFailed;
@@ -111,6 +117,7 @@ internal sealed class BrowserPaneView : Grid, IDisposable
         }
 
         _disposed = true;
+        UnwireDownloadEventLogging();
         UnwireNetworkEventLogging();
         _webView.Dispose();
     }
@@ -479,6 +486,46 @@ internal sealed class BrowserPaneView : Grid, IDisposable
         return JsonSerializer.Serialize(new { ok = true, cleared }, AgentMuxJson.Options);
     }
 
+    public async Task<string> GetDownloadLogAsync(int? limit = null)
+    {
+        await EnsureReadyAsync().ConfigureAwait(true);
+        var cappedLimit = limit is > 0
+            ? Math.Min(limit.Value, MaxDownloadEventCount)
+            : MaxDownloadEventCount;
+
+        BrowserDownloadSnapshot[] downloads;
+        int count;
+        lock (_downloadEvents)
+        {
+            count = _downloadEvents.Count;
+            downloads = _downloadEvents
+                .Skip(Math.Max(0, _downloadEvents.Count - cappedLimit))
+                .Select(download => download.Snapshot())
+                .ToArray();
+        }
+
+        return JsonSerializer.Serialize(new
+        {
+            ok = true,
+            count,
+            maxDownloads = MaxDownloadEventCount,
+            downloads
+        }, AgentMuxJson.Options);
+    }
+
+    public async Task<string> ClearDownloadLogAsync()
+    {
+        await EnsureReadyAsync().ConfigureAwait(true);
+        int cleared;
+        lock (_downloadEvents)
+        {
+            cleared = _downloadEvents.Count;
+            _downloadEvents.Clear();
+        }
+
+        return JsonSerializer.Serialize(new { ok = true, cleared }, AgentMuxJson.Options);
+    }
+
     private void AddressBox_KeyDown(object sender, KeyEventArgs e)
     {
         if (e.Key != Key.Enter)
@@ -517,6 +564,7 @@ internal sealed class BrowserPaneView : Grid, IDisposable
         {
             await _webView.EnsureCoreWebView2Async().ConfigureAwait(true);
             WireWebViewEvents();
+            WireDownloadEvents();
             await EnableNetworkEventLoggingAsync().ConfigureAwait(true);
             _webViewReady = true;
             _webView.Visibility = Visibility.Visible;
@@ -555,6 +603,151 @@ internal sealed class BrowserPaneView : Grid, IDisposable
         };
         _webViewEventsWired = true;
     }
+
+    private void WireDownloadEvents()
+    {
+        if (_downloadEventsWired || _webView.CoreWebView2 is null)
+        {
+            return;
+        }
+
+        _webView.CoreWebView2.DownloadStarting += BrowserDownloadStarting;
+        _downloadEventsWired = true;
+    }
+
+    private void UnwireDownloadEventLogging()
+    {
+        if (_downloadEventsWired && _webView.CoreWebView2 is not null)
+        {
+            _webView.CoreWebView2.DownloadStarting -= BrowserDownloadStarting;
+            _downloadEventsWired = false;
+        }
+
+        TrackedDownload[] activeDownloads;
+        lock (_activeDownloads)
+        {
+            activeDownloads = _activeDownloads.ToArray();
+            _activeDownloads.Clear();
+        }
+
+        foreach (var activeDownload in activeDownloads)
+        {
+            activeDownload.Dispose();
+        }
+    }
+
+    private void BrowserDownloadStarting(object? sender, CoreWebView2DownloadStartingEventArgs args)
+    {
+        _pendingNavigationId = null;
+        _navigationCompletion?.TrySetResult();
+
+        var operation = args.DownloadOperation;
+        var resultPath = BuildDownloadPath(args.ResultFilePath, operation.Uri);
+        Directory.CreateDirectory(Path.GetDirectoryName(resultPath)!);
+        args.ResultFilePath = resultPath;
+        args.Handled = true;
+
+        var entry = CreateDownloadEvent(++_downloadEventSequence, operation, resultPath);
+        AddDownloadEvent(entry);
+
+        EventHandler<object>? bytesReceivedChanged = null;
+        EventHandler<object>? stateChanged = null;
+        TrackedDownload? tracked = null;
+
+        bytesReceivedChanged = (_, _) => UpdateDownloadEvent(entry, operation);
+        stateChanged = (_, _) =>
+        {
+            UpdateDownloadEvent(entry, operation);
+            if (!ShouldStopTrackingDownload(operation))
+            {
+                return;
+            }
+
+            if (bytesReceivedChanged is not null)
+            {
+                operation.BytesReceivedChanged -= bytesReceivedChanged;
+            }
+
+            if (stateChanged is not null)
+            {
+                operation.StateChanged -= stateChanged;
+            }
+
+            if (tracked is not null)
+            {
+                lock (_activeDownloads)
+                {
+                    _activeDownloads.Remove(tracked);
+                }
+            }
+        };
+
+        tracked = new TrackedDownload(operation, bytesReceivedChanged, stateChanged);
+        operation.BytesReceivedChanged += bytesReceivedChanged;
+        operation.StateChanged += stateChanged;
+
+        lock (_activeDownloads)
+        {
+            _activeDownloads.Add(tracked);
+        }
+
+        UpdateDownloadEvent(entry, operation);
+        if (ShouldStopTrackingDownload(operation))
+        {
+            stateChanged(operation, EventArgs.Empty);
+        }
+    }
+
+    private void AddDownloadEvent(BrowserDownloadEvent entry)
+    {
+        lock (_downloadEvents)
+        {
+            _downloadEvents.Add(entry);
+            if (_downloadEvents.Count > MaxDownloadEventCount)
+            {
+                _downloadEvents.RemoveRange(0, _downloadEvents.Count - MaxDownloadEventCount);
+            }
+        }
+    }
+
+    private static BrowserDownloadEvent CreateDownloadEvent(long sequence, CoreWebView2DownloadOperation operation, string resultFilePath)
+    {
+        var entry = new BrowserDownloadEvent
+        {
+            Sequence = sequence,
+            Uri = string.IsNullOrWhiteSpace(operation.Uri) ? null : operation.Uri,
+            ResultFilePath = resultFilePath,
+            MimeType = string.IsNullOrWhiteSpace(operation.MimeType) ? null : operation.MimeType,
+            ContentDisposition = string.IsNullOrWhiteSpace(operation.ContentDisposition) ? null : operation.ContentDisposition,
+            StartedAtUtc = DateTimeOffset.UtcNow
+        };
+        UpdateDownloadEvent(entry, operation);
+        return entry;
+    }
+
+    private static void UpdateDownloadEvent(BrowserDownloadEvent entry, CoreWebView2DownloadOperation operation)
+    {
+        var now = DateTimeOffset.UtcNow;
+        lock (entry)
+        {
+            entry.BytesReceived = operation.BytesReceived;
+            entry.TotalBytesToReceive = operation.TotalBytesToReceive;
+            entry.State = operation.State.ToString();
+            entry.CanResume = operation.CanResume;
+            entry.InterruptReason = operation.State == CoreWebView2DownloadState.Interrupted
+                ? operation.InterruptReason.ToString()
+                : null;
+            entry.UpdatedAtUtc = now;
+            if (entry.CompletedAtUtc is null && ShouldStopTrackingDownload(operation))
+            {
+                entry.CompletedAtUtc = now;
+            }
+        }
+    }
+
+    private static bool ShouldStopTrackingDownload(CoreWebView2DownloadOperation operation) =>
+        operation.State == CoreWebView2DownloadState.Completed
+        || (operation.State == CoreWebView2DownloadState.Interrupted && !operation.CanResume);
 
     private async Task EnableNetworkEventLoggingAsync()
     {
@@ -926,9 +1119,136 @@ internal sealed class BrowserPaneView : Grid, IDisposable
             "AgentMux",
             "WebView2");
 
+    private static string DownloadDirectory() =>
+        Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "AgentMux",
+            "Downloads");
+
+    private static string BuildDownloadPath(string? suggestedResultPath, string? uri)
+    {
+        var fileName = Path.GetFileName(suggestedResultPath);
+        if (string.IsNullOrWhiteSpace(fileName)
+            && Uri.TryCreate(uri, UriKind.Absolute, out var parsedUri))
+        {
+            fileName = Path.GetFileName(parsedUri.LocalPath);
+        }
+
+        fileName = SanitizeFileName(string.IsNullOrWhiteSpace(fileName) ? "download.bin" : fileName);
+        return Path.Combine(
+            DownloadDirectory(),
+            $"{DateTimeOffset.UtcNow:yyyyMMddHHmmssfff}-{Guid.NewGuid():N}-{fileName}");
+    }
+
+    private static string SanitizeFileName(string fileName)
+    {
+        var invalid = Path.GetInvalidFileNameChars();
+        var sanitized = new string(fileName
+            .Select(character => invalid.Contains(character) ? '_' : character)
+            .ToArray())
+            .Trim()
+            .TrimEnd('.');
+        if (string.IsNullOrWhiteSpace(sanitized))
+        {
+            return "download.bin";
+        }
+
+        if (sanitized.Length <= MaxDownloadFileNameLength)
+        {
+            return sanitized;
+        }
+
+        var extension = Path.GetExtension(sanitized);
+        if (extension.Length > 20)
+        {
+            extension = "";
+        }
+
+        var stem = Path.GetFileNameWithoutExtension(sanitized);
+        var maxStemLength = Math.Max(1, MaxDownloadFileNameLength - extension.Length);
+        return string.Concat(stem.AsSpan(0, Math.Min(stem.Length, maxStemLength)), extension);
+    }
+
     private readonly record struct AutomationTarget(bool Ok, double X, double Y);
 
     private readonly record struct BrowserKey(string Key, string Code, int VirtualKeyCode);
+
+    private sealed class TrackedDownload(
+        CoreWebView2DownloadOperation operation,
+        EventHandler<object> bytesReceivedChanged,
+        EventHandler<object> stateChanged) : IDisposable
+    {
+        public void Dispose()
+        {
+            operation.BytesReceivedChanged -= bytesReceivedChanged;
+            operation.StateChanged -= stateChanged;
+        }
+    }
+
+    private sealed class BrowserDownloadEvent
+    {
+        public long Sequence { get; init; }
+
+        public string? Uri { get; init; }
+
+        public string? ResultFilePath { get; init; }
+
+        public string? MimeType { get; init; }
+
+        public string? ContentDisposition { get; init; }
+
+        public long BytesReceived { get; set; }
+
+        public ulong? TotalBytesToReceive { get; set; }
+
+        public string State { get; set; } = "";
+
+        public bool CanResume { get; set; }
+
+        public string? InterruptReason { get; set; }
+
+        public DateTimeOffset StartedAtUtc { get; init; }
+
+        public DateTimeOffset UpdatedAtUtc { get; set; }
+
+        public DateTimeOffset? CompletedAtUtc { get; set; }
+
+        public BrowserDownloadSnapshot Snapshot()
+        {
+            lock (this)
+            {
+                return new BrowserDownloadSnapshot(
+                    Sequence,
+                    Uri,
+                    ResultFilePath,
+                    MimeType,
+                    ContentDisposition,
+                    BytesReceived,
+                    TotalBytesToReceive,
+                    State,
+                    CanResume,
+                    InterruptReason,
+                    StartedAtUtc,
+                    UpdatedAtUtc,
+                    CompletedAtUtc);
+            }
+        }
+    }
+
+    private sealed record BrowserDownloadSnapshot(
+        long Sequence,
+        string? Uri,
+        string? ResultFilePath,
+        string? MimeType,
+        string? ContentDisposition,
+        long BytesReceived,
+        ulong? TotalBytesToReceive,
+        string State,
+        bool CanResume,
+        string? InterruptReason,
+        DateTimeOffset StartedAtUtc,
+        DateTimeOffset UpdatedAtUtc,
+        DateTimeOffset? CompletedAtUtc);
 
     private sealed record BrowserNetworkEvent(
         long Sequence,

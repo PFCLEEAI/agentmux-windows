@@ -69,6 +69,8 @@ public static class AgentMuxMethods
     public const string BrowserFrameTree = "surface.browser_frame_tree";
     public const string BrowserNetworkLog = "surface.browser_network_log";
     public const string BrowserNetworkClear = "surface.browser_clear_network_log";
+    public const string BrowserDownloads = "surface.browser_downloads";
+    public const string BrowserDownloadsClear = "surface.browser_clear_downloads";
 }
 
 public static class AgentMuxJson

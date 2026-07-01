@@ -406,6 +406,8 @@ public partial class MainWindow : Window
             AgentMuxMethods.BrowserFrameTree => AgentMuxResponse.Success(request.Id, await HandleBrowserFrameTreeAsync().ConfigureAwait(true)),
             AgentMuxMethods.BrowserNetworkLog => AgentMuxResponse.Success(request.Id, await HandleBrowserNetworkLogAsync(request.Params).ConfigureAwait(true)),
             AgentMuxMethods.BrowserNetworkClear => AgentMuxResponse.Success(request.Id, await HandleBrowserNetworkClearAsync().ConfigureAwait(true)),
+            AgentMuxMethods.BrowserDownloads => AgentMuxResponse.Success(request.Id, await HandleBrowserDownloadsAsync(request.Params).ConfigureAwait(true)),
+            AgentMuxMethods.BrowserDownloadsClear => AgentMuxResponse.Success(request.Id, await HandleBrowserDownloadsClearAsync().ConfigureAwait(true)),
             _ => AgentMuxResponse.Failure(request.Id, $"Unsupported method: {request.Method}")
         };
 
@@ -699,6 +701,17 @@ public partial class MainWindow : Window
     private async Task<object> HandleBrowserNetworkClearAsync()
     {
         return await RunBrowserScriptAsync(view => view.ClearNetworkLogAsync()).ConfigureAwait(true);
+    }
+
+    private async Task<object> HandleBrowserDownloadsAsync(JsonElement? parameters)
+    {
+        var parsed = Deserialize<BrowserDownloadLogParams>(parameters);
+        return await RunBrowserScriptAsync(view => view.GetDownloadLogAsync(parsed?.Limit)).ConfigureAwait(true);
+    }
+
+    private async Task<object> HandleBrowserDownloadsClearAsync()
+    {
+        return await RunBrowserScriptAsync(view => view.ClearDownloadLogAsync()).ConfigureAwait(true);
     }
 
     private async Task<ConPtySession?> EnsurePanePtyAsync(PaneState? pane)
@@ -1495,7 +1508,9 @@ public partial class MainWindow : Window
             or AgentMuxMethods.BrowserScreenshot
             or AgentMuxMethods.BrowserFrameTree
             or AgentMuxMethods.BrowserNetworkLog
-            or AgentMuxMethods.BrowserNetworkClear;
+            or AgentMuxMethods.BrowserNetworkClear
+            or AgentMuxMethods.BrowserDownloads
+            or AgentMuxMethods.BrowserDownloadsClear;
     }
 
     private void StopPanePty(string paneId)
@@ -1901,6 +1916,11 @@ public partial class MainWindow : Window
     }
 
     private sealed class BrowserNetworkLogParams
+    {
+        public int? Limit { get; set; }
+    }
+
+    private sealed class BrowserDownloadLogParams
     {
         public int? Limit { get; set; }
     }
