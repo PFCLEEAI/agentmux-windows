@@ -508,17 +508,21 @@ public sealed class MainWindowSmokeTests
             {
                 script = """
                     (() => {
+                        window.__agentMuxSandboxReady = false;
                         const frame = document.createElement("iframe");
                         frame.id = "sandbox-frame";
                         frame.name = "agentmux-sandbox-frame";
                         frame.setAttribute("sandbox", "");
+                        frame.addEventListener("load", () => {
+                            window.__agentMuxSandboxReady = true;
+                        }, { once: true });
                         frame.srcdoc = '<input id="blocked">';
                         document.body.appendChild(frame);
                         return true;
                     })()
                     """
             }));
-            await WaitForFrameTreeWithChildAsync(window, "agentmux-sandbox-frame").ConfigureAwait(true);
+            await WaitForBrowserEvalTrueAsync(window, "window.__agentMuxSandboxReady === true").ConfigureAwait(true);
             var sandboxFrame = AssertRpcNotOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserFill, new
             {
                 selector = "#blocked",
