@@ -41,7 +41,8 @@ public sealed class ConPtySession : IPtySession
         }
 
         using var inputReadForPseudoConsole = CreatePipe(out var inputWrite);
-        using var outputWriteForPseudoConsole = CreatePipe(out var outputReadForApp);
+        var outputReadForApp = CreatePipe(out var outputWrite);
+        using var outputWriteForPseudoConsole = outputWrite;
 
         try
         {
@@ -140,6 +141,10 @@ public sealed class ConPtySession : IPtySession
             catch (IOException)
             {
                 // Pipes often close while the pseudoconsole is shutting down.
+            }
+            catch (UnauthorizedAccessException)
+            {
+                // A closing synchronous pipe can surface access errors while the reader unwinds.
             }
             catch (TimeoutException)
             {
