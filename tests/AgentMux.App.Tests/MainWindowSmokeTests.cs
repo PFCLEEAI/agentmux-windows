@@ -773,11 +773,11 @@ public sealed class MainWindowSmokeTests
         try
         {
             window.InitializeForSmokeTest();
+            var testHostPath = ResolvePtyTestHostPath();
+            window.SetActivePaneShellForSmokeTest($"{QuoteCommand(testHostPath)} --raw-bytes", System.IO.Path.GetDirectoryName(testHostPath));
             window.Show();
             await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
 
-            var testHostPath = ResolvePtyTestHostPath();
-            window.SetActivePaneShellForSmokeTest($"{QuoteCommand(testHostPath)} --raw-bytes", System.IO.Path.GetDirectoryName(testHostPath));
             await window.StartActivePanePtyForSmokeTestAsync();
             await WaitForReadScreenContainsAsync(window, "AGENTMUX_RAW_READY");
 
