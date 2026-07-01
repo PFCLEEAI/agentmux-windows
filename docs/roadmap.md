@@ -45,7 +45,7 @@
 - Pane ring and sidebar unread state. Preview implemented as in-memory workspace unread counts and pane unread markers.
 - Notification list/clear and jump latest unread. Preview implemented through `notifications.list`, `notifications.clear`, `notifications.jump_latest`, and `agentmux notifications ...`.
 - Lightweight in-app notification center. Preview implemented with unread count, recent notification list, jump latest unread, clear unread, and read-only open/close behavior.
-- Native Windows toast integration, filters/search, rich rendering, and persistent notification history remain future work.
+- Native Windows toast preview. Implemented as a best-effort local Windows toast request for new notifications, with injected routing proof in hosted app smoke. Hosted CI does not prove a human-visible toast. Click activation, filters/search, rich rendering, secure redaction, and persistent notification history remain future work.
 
 ## Sprint 5 - Persistence
 

@@ -438,6 +438,7 @@ Do not paste tokens, passwords, SSH keys, API keys, customer data, private promp
 - [ ] 05-close-pane.png: close-pane behavior visible.
 - [ ] 06-browser-pane.png and manual-browser.png: browser pane loaded and screenshot command worked.
 - [ ] 07-notification-terminal.png: OSC notification captured, raw escape text not visible.
+- [ ] 07-native-toast.png or note: native Windows toast preview visible, or Windows settings/elevation recorded if no toast appeared.
 - [ ] 08-session-restore.png: layout restored after relaunch.
 
 Browser smoke file URI:

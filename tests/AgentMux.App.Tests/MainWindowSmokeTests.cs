@@ -11,6 +11,7 @@ using AgentMux.Core.Models;
 using AgentMux.Core.Persistence;
 using AgentMux.Win.App.Controls;
 using AgentMux.Win.App.Input;
+using AgentMux.Win.App.Notifications;
 using AgentMux.Win.App.Views;
 using Xunit;
 
@@ -21,6 +22,23 @@ namespace AgentMux.App.Tests;
 public sealed class MainWindowSmokeTests
 {
     private static readonly string SmokeArtifactDirectoryPath = ResolveSmokeArtifactDirectory();
+
+    [Fact]
+    public void NativeToastXmlEscapesAndBoundsNotificationText()
+    {
+        var xml = WindowsNativeToastService.BuildToastXml(new NativeToastRequest(
+            "notification-smoke",
+            "workspace-smoke",
+            "pane-smoke",
+            "Title <&> \" '",
+            "Sub\r\nTitle",
+            new string('x', 700) + "<secret>"));
+
+        Assert.Contains("Title &lt;&amp;&gt; &quot; &apos;", xml, StringComparison.Ordinal);
+        Assert.Contains("<text>Sub  Title</text>", xml, StringComparison.Ordinal);
+        Assert.DoesNotContain("<secret>", xml, StringComparison.Ordinal);
+        Assert.True(xml.Length < 1000);
+    }
 
     [Fact]
     public async Task MainWindowRendersSplitPaneTreeOnStaThread()
@@ -248,6 +266,8 @@ public sealed class MainWindowSmokeTests
         var firstToken = $"agentmux-osc-secret-{Guid.NewGuid():N}";
         var secondToken = $"agentmux-osc-clear-secret-{Guid.NewGuid():N}";
         var thirdToken = $"agentmux-osc-rpc-clear-secret-{Guid.NewGuid():N}";
+        var rpcToken = $"agentmux-rpc-notify-secret-{Guid.NewGuid():N}";
+        var nativeToasts = new RecordingNativeToastService();
 
         try
         {
@@ -255,7 +275,8 @@ public sealed class MainWindowSmokeTests
                 ShortcutSettings.Default(),
                 store,
                 restoreSessionOnStartup: false,
-                persistSession: true);
+                persistSession: true,
+                nativeToastService: nativeToasts);
             try
             {
                 window.InitializeForSmokeTest();
@@ -269,6 +290,13 @@ public sealed class MainWindowSmokeTests
                 Assert.NotEqual(rightPane, notifiedPane);
 
                 window.AppendActivePaneTextForSmokeTest($"visible-before\u001b]99;t=Codex;s=Plan;b={firstToken}\u0007visible-after");
+                Assert.Single(nativeToasts.Requests);
+                var firstToast = nativeToasts.Requests.Single();
+                Assert.Equal("Codex", firstToast.Title);
+                Assert.Equal("Plan", firstToast.Subtitle);
+                Assert.Equal(firstToken, firstToast.Body);
+                Assert.Equal(notifiedPane, firstToast.PaneId);
+                Assert.False(string.IsNullOrWhiteSpace(firstToast.WorkspaceId));
                 Assert.Equal(1, window.ActiveWorkspaceUnreadCountForSmokeTest);
                 Assert.True(window.ActivePaneHasUnreadNotificationForSmokeTest);
                 Assert.Contains("visible-beforevisible-after", window.ActivePaneLastScreenTextForSmokeTest, StringComparison.Ordinal);
@@ -307,6 +335,7 @@ public sealed class MainWindowSmokeTests
                 Assert.Equal(rightPane, window.ActivePaneIdForSmokeTest);
 
                 await window.JumpLatestNotificationForSmokeTestAsync();
+                Assert.Single(nativeToasts.Requests);
                 Assert.Equal(notifiedPane, window.ActivePaneIdForSmokeTest);
                 Assert.Equal(0, window.ActiveWorkspaceUnreadCountForSmokeTest);
                 Assert.False(window.ActivePaneHasUnreadNotificationForSmokeTest);
@@ -314,29 +343,52 @@ public sealed class MainWindowSmokeTests
                 Assert.True(window.NotificationCenterContainsTextForSmokeTest("read"));
 
                 window.AppendActivePaneTextForSmokeTest($"again\u001b]777;notify;Codex;{secondToken}\u001b\\done");
+                Assert.Equal(2, nativeToasts.Requests.Count);
+                Assert.Equal(secondToken, nativeToasts.Requests[1].Body);
                 Assert.Equal(1, window.ActiveWorkspaceUnreadCountForSmokeTest);
                 Assert.Equal("Notifications (1)", window.NotificationButtonContentForSmokeTest);
                 Assert.True(window.NotificationCenterContainsTextForSmokeTest(secondToken));
 
                 window.ClearUnreadNotificationsForSmokeTest();
+                Assert.Equal(2, nativeToasts.Requests.Count);
                 Assert.Equal(0, window.ActiveWorkspaceUnreadCountForSmokeTest);
                 Assert.False(window.ActivePaneHasUnreadNotificationForSmokeTest);
                 Assert.Equal("Notifications (0)", window.NotificationButtonContentForSmokeTest);
                 Assert.True(window.NotificationCenterContainsTextForSmokeTest("read"));
 
                 window.AppendActivePaneTextForSmokeTest($"third\u001b]99;t=Codex;b={thirdToken}\u0007done");
+                Assert.Equal(3, nativeToasts.Requests.Count);
+                Assert.Equal(thirdToken, nativeToasts.Requests[2].Body);
                 Assert.Equal(1, window.ActiveWorkspaceUnreadCountForSmokeTest);
                 var rpcClearResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.NotificationsClear);
                 Assert.True(rpcClearResponse.Ok, rpcClearResponse.Error);
                 var rpcClearRoot = System.Text.Json.JsonSerializer.SerializeToElement(rpcClearResponse.Result, AgentMuxJson.Options);
                 Assert.Equal(1, rpcClearRoot.GetProperty("cleared").GetInt32());
                 Assert.Equal(0, window.ActiveWorkspaceUnreadCountForSmokeTest);
+                Assert.Equal(3, nativeToasts.Requests.Count);
+
+                var rpcNotifyResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.Notify, new
+                {
+                    title = "RPC",
+                    subtitle = "Toast",
+                    body = rpcToken
+                });
+                Assert.True(rpcNotifyResponse.Ok, rpcNotifyResponse.Error);
+                Assert.Equal(4, nativeToasts.Requests.Count);
+                Assert.Equal("RPC", nativeToasts.Requests[3].Title);
+                Assert.Equal("Toast", nativeToasts.Requests[3].Subtitle);
+                Assert.Equal(rpcToken, nativeToasts.Requests[3].Body);
+
+                var finalClearResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.NotificationsClear);
+                Assert.True(finalClearResponse.Ok, finalClearResponse.Error);
+                Assert.Equal(4, nativeToasts.Requests.Count);
 
                 await window.SaveSessionForSmokeTestAsync();
                 var snapshotText = await System.IO.File.ReadAllTextAsync(store.FilePath);
                 Assert.DoesNotContain(firstToken, snapshotText, StringComparison.Ordinal);
                 Assert.DoesNotContain(secondToken, snapshotText, StringComparison.Ordinal);
                 Assert.DoesNotContain(thirdToken, snapshotText, StringComparison.Ordinal);
+                Assert.DoesNotContain(rpcToken, snapshotText, StringComparison.Ordinal);
                 Assert.DoesNotContain("hasUnreadNotification\":true", snapshotText, StringComparison.OrdinalIgnoreCase);
             }
             finally
@@ -350,6 +402,24 @@ public sealed class MainWindowSmokeTests
             {
                 await DeleteDirectoryWithRetryAsync(root);
             }
+        }
+
+        var throwingWindow = new MainWindow(
+            ShortcutSettings.Default(),
+            sessionStore: null,
+            restoreSessionOnStartup: false,
+            persistSession: false,
+            nativeToastService: new ThrowingNativeToastService());
+        try
+        {
+            throwingWindow.InitializeForSmokeTest();
+            throwingWindow.AppendActivePaneTextForSmokeTest("throwing\u001b]99;t=Throw;b=still-local\u0007done");
+            Assert.Equal(1, throwingWindow.ActiveWorkspaceUnreadCountForSmokeTest);
+            Assert.True(throwingWindow.ActivePaneHasUnreadNotificationForSmokeTest);
+        }
+        finally
+        {
+            throwingWindow.Close();
         }
     }
 
@@ -2113,6 +2183,23 @@ public sealed class MainWindowSmokeTests
         | (buffer[offset + 1] << 16)
         | (buffer[offset + 2] << 8)
         | buffer[offset + 3];
+
+    private sealed class RecordingNativeToastService : INativeToastService
+    {
+        public List<NativeToastRequest> Requests { get; } = [];
+
+        public NativeToastResult TryShow(NativeToastRequest request)
+        {
+            Requests.Add(request);
+            return NativeToastResult.Sent();
+        }
+    }
+
+    private sealed class ThrowingNativeToastService : INativeToastService
+    {
+        public NativeToastResult TryShow(NativeToastRequest request) =>
+            throw new InvalidOperationException("smoke-only native toast failure");
+    }
 
     private sealed class LoopbackHttpServer : IAsyncDisposable
     {

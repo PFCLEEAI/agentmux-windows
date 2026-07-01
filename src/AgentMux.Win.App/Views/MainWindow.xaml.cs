@@ -13,6 +13,7 @@ using AgentMux.Core.Persistence;
 using AgentMux.Core.Terminals;
 using AgentMux.Win.App.Controls;
 using AgentMux.Win.App.Input;
+using AgentMux.Win.App.Notifications;
 using AgentMux.Win.Pty;
 
 namespace AgentMux.Win.App.Views;
@@ -32,6 +33,7 @@ public partial class MainWindow : Window
     private readonly SemaphoreSlim _browserLoadWaitGate = new(1, 1);
     private readonly ShortcutSettings _shortcutSettings;
     private readonly SessionSnapshotStore? _sessionStore;
+    private readonly INativeToastService _nativeToastService;
     private readonly bool _restoreSessionOnStartup;
     private readonly bool _persistSession;
     private NamedPipeRpcServer? _server;
@@ -40,12 +42,22 @@ public partial class MainWindow : Window
     private bool _notificationPanelOpen;
 
     public MainWindow()
-        : this(ShortcutSettings.Load(), new SessionSnapshotStore(), restoreSessionOnStartup: true, persistSession: true)
+        : this(
+            ShortcutSettings.Load(),
+            new SessionSnapshotStore(),
+            restoreSessionOnStartup: true,
+            persistSession: true,
+            nativeToastService: new WindowsNativeToastService())
     {
     }
 
     internal MainWindow(ShortcutSettings shortcutSettings)
-        : this(shortcutSettings, sessionStore: null, restoreSessionOnStartup: false, persistSession: false)
+        : this(
+            shortcutSettings,
+            sessionStore: null,
+            restoreSessionOnStartup: false,
+            persistSession: false,
+            nativeToastService: NullNativeToastService.Instance)
     {
     }
 
@@ -53,10 +65,12 @@ public partial class MainWindow : Window
         ShortcutSettings shortcutSettings,
         SessionSnapshotStore? sessionStore,
         bool restoreSessionOnStartup,
-        bool persistSession)
+        bool persistSession,
+        INativeToastService? nativeToastService = null)
     {
         _shortcutSettings = shortcutSettings;
         _sessionStore = sessionStore;
+        _nativeToastService = nativeToastService ?? NullNativeToastService.Instance;
         _restoreSessionOnStartup = restoreSessionOnStartup;
         _persistSession = persistSession;
         InitializeComponent();
@@ -1371,7 +1385,20 @@ public partial class MainWindow : Window
         TrimNotificationLog();
         RecalculateNotificationState();
         QueueSessionSave();
+        TryShowNativeToast(notification);
         return notification;
+    }
+
+    private void TryShowNativeToast(TerminalNotification notification)
+    {
+        try
+        {
+            _ = _nativeToastService.TryShow(NativeToastRequest.FromNotification(notification));
+        }
+        catch
+        {
+            // Native toasts are a best-effort mirror of local in-app state.
+        }
     }
 
     private void TrimNotificationLog()

@@ -12,13 +12,14 @@ Run this on a normal Windows desktop session before calling a build release-read
 - Split-pane focus, zoom, close, and custom shortcut paths behave in the desktop shell.
 - Browser panes visibly navigate and respond to preview automation.
 - OSC agent notifications become local unread notification state without showing raw escape text.
+- Native Windows toast preview can be observed when Windows accepts local toasts for the app.
 - CLI/RPC commands can control the running desktop app.
 
 ## What This Does Not Prove
 
 - Cross-origin frame automation.
 - Full Playwright-compatible browser semantics.
-- Native Windows toast integration.
+- Native Windows toast visibility across every Windows notification setting, Focus Assist/Do Not Disturb state, elevation mode, or enterprise policy.
 - Global hotkeys.
 - Installer, signing, or self-contained runtime packaging.
 - Full process-tree cleanup, Windows Job Object containment, or live terminal process restore.
@@ -230,10 +231,12 @@ Expected:
 - `notifications list` includes `AgentMux Smoke` and `Desktop notification body`.
 - `notifications jump-latest` selects the pane that emitted the notification.
 - `notifications clear` clears unread state.
+- A native Windows toast may appear with the same title/body when local Windows notification settings allow it. This is unredacted local notification content; do not use secrets in this step. If no toast appears, record the Windows notification settings and whether AgentMux was elevated.
 
 Evidence:
 
 - Screenshot: `07-notification-terminal.png`.
+- Optional screenshot: `07-native-toast.png` or a note that no Windows toast was visible.
 - Redacted CLI output in `manual-checklist.md`.
 
 ### 7. CLI/RPC State Checks
