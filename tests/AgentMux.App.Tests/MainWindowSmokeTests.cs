@@ -167,12 +167,13 @@ public sealed class MainWindowSmokeTests
                 Assert.True(customWindow.IsActivePaneZoomedForSmokeTest);
                 Assert.False(customWindow.HandleShortcutForSmokeTest(Key.Z, ModifierKeys.Control | ModifierKeys.Shift));
                 Assert.True(customWindow.SplitActivePaneForSmokeTest(SplitDirection.Right));
+                Assert.True(customWindow.HandleShortcutForSmokeTest(Key.Tab, ModifierKeys.Control));
                 var leftCustomPane = customWindow.ActivePaneIdForSmokeTest;
                 Assert.True(customWindow.HandleShortcutForSmokeTest(Key.L, ModifierKeys.Control | ModifierKeys.Alt));
                 Assert.NotEqual(leftCustomPane, customWindow.ActivePaneIdForSmokeTest);
                 Assert.True(customWindow.HandleShortcutForSmokeTest(Key.F11, ModifierKeys.Control | ModifierKeys.Shift));
                 Assert.True(customWindow.HandleShortcutForSmokeTest(Key.X, ModifierKeys.Control | ModifierKeys.Shift));
-                Assert.Equal(2, customWindow.PaneCountForSmokeTest);
+                Assert.Equal(1, customWindow.PaneCountForSmokeTest);
             }
             finally
             {
