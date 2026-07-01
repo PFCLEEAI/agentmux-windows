@@ -58,14 +58,15 @@ public sealed class ConPtySession : IPtySession
                 Marshal.ThrowExceptionForHR(hr);
             }
 
+            inputReadForPseudoConsole.Dispose();
+            outputWriteForPseudoConsole.Dispose();
+
             _inputWriter = new FileStream(inputWrite, FileAccess.Write, 4096, isAsync: false);
             _outputReader = new FileStream(outputReadForApp, FileAccess.Read, 4096, isAsync: false);
             _readerStop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             _readerTask = Task.Run(() => ReadOutputLoopAsync(_readerStop.Token), CancellationToken.None);
 
             StartProcess(options, _pseudoConsole);
-            inputReadForPseudoConsole.Dispose();
-            outputWriteForPseudoConsole.Dispose();
 
             var process = _process;
             lock (_gate)
