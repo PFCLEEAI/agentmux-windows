@@ -249,8 +249,8 @@ internal sealed class BrowserPaneView : Grid, IDisposable
         await DispatchMouseEventAsync("mouseMoved", target.X, target.Y).ConfigureAwait(true);
         await DispatchMouseEventAsync("mousePressed", target.X, target.Y).ConfigureAwait(true);
         await DispatchMouseEventAsync("mouseReleased", target.X, target.Y).ConfigureAwait(true);
-        await WaitForNavigationAsync(allowStartDelay: true).ConfigureAwait(true);
-        return JsonSerializer.Serialize(new { ok = true, selector, frame = normalizedFrame, x = target.X, y = target.Y });
+        var navigationSettled = await TryWaitForInputNavigationAsync().ConfigureAwait(true);
+        return JsonSerializer.Serialize(new { ok = true, selector, frame = normalizedFrame, x = target.X, y = target.Y, navigationSettled });
     }
 
     public async Task<string> FillAsync(string selector, string text, string? frame = null)
@@ -1137,6 +1137,21 @@ internal sealed class BrowserPaneView : Grid, IDisposable
         catch (TimeoutException ex)
         {
             throw new InvalidOperationException("browser navigation is still loading", ex);
+        }
+    }
+
+    private async Task<bool> TryWaitForInputNavigationAsync()
+    {
+        try
+        {
+            await WaitForNavigationAsync(allowStartDelay: true).ConfigureAwait(true);
+            return true;
+        }
+        catch (InvalidOperationException ex) when (string.Equals(ex.Message, "browser navigation is still loading", StringComparison.Ordinal))
+        {
+            _pendingNavigationId = null;
+            _navigationCompletion?.TrySetResult();
+            return false;
         }
     }
 
