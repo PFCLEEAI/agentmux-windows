@@ -316,7 +316,7 @@ public sealed class MainWindowSmokeTests
         {
             if (System.IO.Directory.Exists(root))
             {
-                System.IO.Directory.Delete(root, recursive: true);
+                await DeleteDirectoryWithRetryAsync(root);
             }
         }
     }
@@ -1090,6 +1090,30 @@ public sealed class MainWindowSmokeTests
         ShowInTaskbar = false,
         WindowStartupLocation = WindowStartupLocation.Manual
     };
+
+    private static async Task DeleteDirectoryWithRetryAsync(string path)
+    {
+        for (var attempt = 0; attempt < 10; attempt++)
+        {
+            try
+            {
+                if (System.IO.Directory.Exists(path))
+                {
+                    System.IO.Directory.Delete(path, recursive: true);
+                }
+
+                return;
+            }
+            catch (System.IO.IOException) when (attempt < 9)
+            {
+                await Task.Delay(100);
+            }
+            catch (System.UnauthorizedAccessException) when (attempt < 9)
+            {
+                await Task.Delay(100);
+            }
+        }
+    }
 
     private static void AssertBrowserOk(string json)
     {
