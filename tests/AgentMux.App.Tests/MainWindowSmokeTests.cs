@@ -406,7 +406,7 @@ public sealed class MainWindowSmokeTests
         {
             if (System.IO.Directory.Exists(root))
             {
-                System.IO.Directory.Delete(root, recursive: true);
+                await DeleteDirectoryWithRetryAsync(root);
             }
         }
     }
@@ -926,7 +926,7 @@ public sealed class MainWindowSmokeTests
             window.Close();
             if (System.IO.Directory.Exists(root))
             {
-                System.IO.Directory.Delete(root, recursive: true);
+                await DeleteDirectoryWithRetryAsync(root);
             }
         }
     }
