@@ -404,6 +404,8 @@ public partial class MainWindow : Window
             AgentMuxMethods.BrowserPress => AgentMuxResponse.Success(request.Id, await HandleBrowserPressAsync(request.Params).ConfigureAwait(true)),
             AgentMuxMethods.BrowserScreenshot => AgentMuxResponse.Success(request.Id, await HandleBrowserScreenshotAsync(request.Params).ConfigureAwait(true)),
             AgentMuxMethods.BrowserFrameTree => AgentMuxResponse.Success(request.Id, await HandleBrowserFrameTreeAsync().ConfigureAwait(true)),
+            AgentMuxMethods.BrowserConsoleLog => AgentMuxResponse.Success(request.Id, await HandleBrowserConsoleLogAsync(request.Params).ConfigureAwait(true)),
+            AgentMuxMethods.BrowserConsoleClear => AgentMuxResponse.Success(request.Id, await HandleBrowserConsoleClearAsync().ConfigureAwait(true)),
             AgentMuxMethods.BrowserNetworkLog => AgentMuxResponse.Success(request.Id, await HandleBrowserNetworkLogAsync(request.Params).ConfigureAwait(true)),
             AgentMuxMethods.BrowserNetworkClear => AgentMuxResponse.Success(request.Id, await HandleBrowserNetworkClearAsync().ConfigureAwait(true)),
             AgentMuxMethods.BrowserResponseBody => AgentMuxResponse.Success(request.Id, await HandleBrowserResponseBodyAsync(request.Params).ConfigureAwait(true)),
@@ -692,6 +694,17 @@ public partial class MainWindow : Window
     private async Task<object> HandleBrowserFrameTreeAsync()
     {
         return await RunBrowserScriptAsync(view => view.GetFrameTreeAsync()).ConfigureAwait(true);
+    }
+
+    private async Task<object> HandleBrowserConsoleLogAsync(JsonElement? parameters)
+    {
+        var parsed = Deserialize<BrowserConsoleLogParams>(parameters);
+        return await RunBrowserScriptAsync(view => view.GetConsoleLogAsync(parsed?.Limit)).ConfigureAwait(true);
+    }
+
+    private async Task<object> HandleBrowserConsoleClearAsync()
+    {
+        return await RunBrowserScriptAsync(view => view.ClearConsoleLogAsync()).ConfigureAwait(true);
     }
 
     private async Task<object> HandleBrowserNetworkLogAsync(JsonElement? parameters)
@@ -1531,6 +1544,8 @@ public partial class MainWindow : Window
             or AgentMuxMethods.BrowserPress
             or AgentMuxMethods.BrowserScreenshot
             or AgentMuxMethods.BrowserFrameTree
+            or AgentMuxMethods.BrowserConsoleLog
+            or AgentMuxMethods.BrowserConsoleClear
             or AgentMuxMethods.BrowserNetworkLog
             or AgentMuxMethods.BrowserNetworkClear
             or AgentMuxMethods.BrowserResponseBody
@@ -1939,6 +1954,11 @@ public partial class MainWindow : Window
     private sealed class BrowserScreenshotParams
     {
         public string? Path { get; set; }
+    }
+
+    private sealed class BrowserConsoleLogParams
+    {
+        public int? Limit { get; set; }
     }
 
     private sealed class BrowserNetworkLogParams

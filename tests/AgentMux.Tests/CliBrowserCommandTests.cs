@@ -98,6 +98,45 @@ public sealed class CliBrowserCommandTests
     }
 
     [Theory]
+    [InlineData("console")]
+    [InlineData("console-log")]
+    public void BrowserConsoleParsesConsoleLogCommand(string command)
+    {
+        var request = Program.ParseBrowserRequestForTests([command, "--limit", "20"], out var error);
+
+        Assert.Equal("", error);
+        Assert.NotNull(request);
+        Assert.Equal(AgentMuxMethods.BrowserConsoleLog, request.Method);
+        var parameters = JsonSerializer.SerializeToElement(request.Parameters, AgentMuxJson.Options);
+        Assert.Equal(20, parameters.GetProperty("limit").GetInt32());
+    }
+
+    [Theory]
+    [InlineData("console-clear")]
+    [InlineData("clear-console")]
+    public void BrowserConsoleParsesClearCommand(string command)
+    {
+        var request = Program.ParseBrowserRequestForTests([command], out var error);
+
+        Assert.Equal("", error);
+        Assert.NotNull(request);
+        Assert.Equal(AgentMuxMethods.BrowserConsoleClear, request.Method);
+    }
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("-1")]
+    [InlineData("abc")]
+    [InlineData("true")]
+    public void BrowserConsoleRejectsInvalidLimit(string limit)
+    {
+        var request = Program.ParseBrowserRequestForTests(["console", "--limit", limit], out var error);
+
+        Assert.Null(request);
+        Assert.Equal("Usage: agentmux browser console [--limit <count>]", error);
+    }
+
+    [Theory]
     [InlineData("network")]
     [InlineData("network-log")]
     public void BrowserNetworkParsesNetworkLogCommand(string command)

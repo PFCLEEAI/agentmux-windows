@@ -327,7 +327,13 @@ public sealed class MainWindowSmokeTests
 
     private static async Task RunActiveBrowserRpcSmokeAsync()
     {
-        var window = new MainWindow(ShortcutSettings.Default())
+        var root = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "agentmux-browser-rpc-smoke", Guid.NewGuid().ToString("N"));
+        var store = new SessionSnapshotStore(root);
+        var window = new MainWindow(
+            ShortcutSettings.Default(),
+            store,
+            restoreSessionOnStartup: false,
+            persistSession: true)
         {
             Width = 900,
             Height = 560,
@@ -544,6 +550,50 @@ public sealed class MainWindowSmokeTests
             Assert.Equal("agentmux-child-frame", childFrame.GetProperty("name").GetString());
             Assert.False(string.IsNullOrWhiteSpace(childFrame.GetProperty("parentId").GetString()));
 
+            var consoleLogToken = $"agentmux-console-log-{Guid.NewGuid():N}";
+            var consoleErrorToken = $"agentmux-console-error-{Guid.NewGuid():N}";
+            var consoleSecretToken = $"agentmux-console-secret-{Guid.NewGuid():N}";
+            AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserConsoleClear));
+            AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserEval, new
+            {
+                script = $$"""
+                    console.log({{System.Text.Json.JsonSerializer.Serialize(consoleLogToken)}});
+                    console.error({{System.Text.Json.JsonSerializer.Serialize(consoleErrorToken)}});
+                    console.log({{System.Text.Json.JsonSerializer.Serialize(consoleSecretToken)}});
+                    true;
+                    """
+            }));
+
+            var consoleLog = await WaitForConsoleEventsAsync(
+                window,
+                (consoleLogToken, "log"),
+                (consoleErrorToken, "error"),
+                (consoleSecretToken, "log")).ConfigureAwait(true);
+            Assert.True(consoleLog.GetProperty("maxMessageChars").GetInt32() >= consoleLogToken.Length);
+            Assert.True(TryFindConsoleEvent(consoleLog, consoleLogToken, "log", out var logEvent), consoleLog.ToString());
+            Assert.Equal("consoleAPICalled", logEvent.GetProperty("event").GetString());
+            Assert.Equal("log", logEvent.GetProperty("type").GetString());
+            Assert.Equal("log", logEvent.GetProperty("level").GetString());
+            Assert.Equal(consoleLogToken, logEvent.GetProperty("message").GetString());
+            Assert.Equal(consoleLogToken.Length, logEvent.GetProperty("messageLength").GetInt32());
+            Assert.False(logEvent.GetProperty("truncated").GetBoolean());
+            Assert.True(TryFindConsoleEvent(consoleLog, consoleErrorToken, "error", out var errorEvent), consoleLog.ToString());
+            Assert.Equal("error", errorEvent.GetProperty("level").GetString());
+            Assert.Equal(consoleErrorToken, errorEvent.GetProperty("message").GetString());
+
+            await window.SaveSessionForSmokeTestAsync().ConfigureAwait(true);
+            Assert.True(System.IO.File.Exists(store.FilePath));
+            var snapshotText = await System.IO.File.ReadAllTextAsync(store.FilePath).ConfigureAwait(true);
+            Assert.DoesNotContain(consoleSecretToken, snapshotText, StringComparison.Ordinal);
+
+            var consoleClear = AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserConsoleClear));
+            Assert.True(consoleClear.GetProperty("cleared").GetInt32() >= 3);
+            var emptyConsoleLog = AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserConsoleLog, new
+            {
+                limit = 10
+            }));
+            Assert.Equal(0, emptyConsoleLog.GetProperty("count").GetInt32());
+
             var networkToken = $"agentmux-network-{Guid.NewGuid():N}";
             await using var networkServer = LoopbackHttpServer.Start($"/{networkToken}", networkToken);
             AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserNetworkClear));
@@ -693,6 +743,10 @@ public sealed class MainWindowSmokeTests
         finally
         {
             window.Close();
+            if (System.IO.Directory.Exists(root))
+            {
+                System.IO.Directory.Delete(root, recursive: true);
+            }
         }
     }
 
@@ -926,6 +980,61 @@ public sealed class MainWindowSmokeTests
         }
 
         throw new InvalidOperationException($"Browser eval did not become true. Last result: {lastResult?.ToString() ?? "<none>"}");
+    }
+
+    private static async Task<System.Text.Json.JsonElement> WaitForConsoleEventsAsync(
+        MainWindow window,
+        params (string MessageFragment, string Level)[] expectedEvents)
+    {
+        System.Text.Json.JsonElement? lastResult = null;
+        for (var attempt = 0; attempt < 20; attempt++)
+        {
+            var response = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserConsoleLog, new { limit = 50 }).ConfigureAwait(true);
+            if (response.Ok)
+            {
+                var result = System.Text.Json.JsonSerializer.SerializeToElement(response.Result, AgentMuxJson.Options);
+                lastResult = result.Clone();
+                if (result.TryGetProperty("ok", out var ok)
+                    && ok.GetBoolean()
+                    && expectedEvents.All(expected => TryFindConsoleEvent(result, expected.MessageFragment, expected.Level, out _)))
+                {
+                    return result.Clone();
+                }
+            }
+
+            await Task.Delay(250).ConfigureAwait(true);
+        }
+
+        throw new InvalidOperationException($"Browser console log did not contain expected events. Last result: {lastResult?.ToString() ?? "<none>"}");
+    }
+
+    private static bool TryFindConsoleEvent(
+        System.Text.Json.JsonElement consoleLog,
+        string messageFragment,
+        string level,
+        out System.Text.Json.JsonElement consoleEvent)
+    {
+        consoleEvent = default;
+        if (!consoleLog.TryGetProperty("events", out var events)
+            || events.ValueKind != System.Text.Json.JsonValueKind.Array)
+        {
+            return false;
+        }
+
+        foreach (var candidate in events.EnumerateArray())
+        {
+            if (candidate.TryGetProperty("message", out var message)
+                && message.ValueKind == System.Text.Json.JsonValueKind.String
+                && message.GetString()?.Contains(messageFragment, StringComparison.Ordinal) == true
+                && candidate.TryGetProperty("level", out var candidateLevel)
+                && string.Equals(candidateLevel.GetString(), level, StringComparison.Ordinal))
+            {
+                consoleEvent = candidate.Clone();
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static async Task<System.Text.Json.JsonElement> WaitForNetworkEventAsync(MainWindow window, string urlFragment, string eventName)

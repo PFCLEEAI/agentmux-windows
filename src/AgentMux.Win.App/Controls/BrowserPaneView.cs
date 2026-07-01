@@ -15,10 +15,13 @@ internal sealed class BrowserPaneView : Grid, IDisposable
     private const string DefaultUrl = "about:blank";
     private const int MaxNetworkEventCount = 200;
     private const int MaxResponseBodyChars = 1_000_000;
+    private const int MaxConsoleEventCount = 200;
+    private const int MaxConsoleMessageChars = 4_096;
     private const int MaxDownloadEventCount = 100;
     private const int MaxDownloadFileNameLength = 120;
 
     private readonly List<BrowserNetworkEvent> _networkEvents = [];
+    private readonly List<BrowserConsoleEvent> _consoleEvents = [];
     private readonly List<BrowserDownloadEvent> _downloadEvents = [];
     private readonly List<TrackedDownload> _activeDownloads = [];
     private readonly TextBox _addressBox;
@@ -29,15 +32,18 @@ internal sealed class BrowserPaneView : Grid, IDisposable
     private CoreWebView2DevToolsProtocolEventReceiver? _networkResponseReceivedReceiver;
     private CoreWebView2DevToolsProtocolEventReceiver? _networkLoadingFailedReceiver;
     private CoreWebView2DevToolsProtocolEventReceiver? _networkLoadingFinishedReceiver;
+    private CoreWebView2DevToolsProtocolEventReceiver? _consoleApiCalledReceiver;
     private Task? _readyTask;
     private TaskCompletionSource? _navigationCompletion;
     private ulong? _pendingNavigationId;
     private string _url = DefaultUrl;
     private long _networkEventSequence;
+    private long _consoleEventSequence;
     private long _downloadEventSequence;
     private bool _webViewEventsWired;
     private bool _downloadEventsWired;
     private bool _networkEventsEnabled;
+    private bool _consoleEventsEnabled;
     private bool _webViewReady;
     private bool _webViewFailed;
     private bool _disposed;
@@ -119,6 +125,7 @@ internal sealed class BrowserPaneView : Grid, IDisposable
 
         _disposed = true;
         UnwireDownloadEventLogging();
+        UnwireConsoleEventLogging();
         UnwireNetworkEventLogging();
         _webView.Dispose();
     }
@@ -487,6 +494,46 @@ internal sealed class BrowserPaneView : Grid, IDisposable
         return JsonSerializer.Serialize(new { ok = true, cleared }, AgentMuxJson.Options);
     }
 
+    public async Task<string> GetConsoleLogAsync(int? limit = null)
+    {
+        await EnsureReadyAsync().ConfigureAwait(true);
+        var cappedLimit = limit is > 0
+            ? Math.Min(limit.Value, MaxConsoleEventCount)
+            : MaxConsoleEventCount;
+
+        BrowserConsoleEvent[] events;
+        int count;
+        lock (_consoleEvents)
+        {
+            count = _consoleEvents.Count;
+            events = _consoleEvents
+                .Skip(Math.Max(0, _consoleEvents.Count - cappedLimit))
+                .ToArray();
+        }
+
+        return JsonSerializer.Serialize(new
+        {
+            ok = true,
+            count,
+            maxEvents = MaxConsoleEventCount,
+            maxMessageChars = MaxConsoleMessageChars,
+            events
+        }, AgentMuxJson.Options);
+    }
+
+    public async Task<string> ClearConsoleLogAsync()
+    {
+        await EnsureReadyAsync().ConfigureAwait(true);
+        int cleared;
+        lock (_consoleEvents)
+        {
+            cleared = _consoleEvents.Count;
+            _consoleEvents.Clear();
+        }
+
+        return JsonSerializer.Serialize(new { ok = true, cleared }, AgentMuxJson.Options);
+    }
+
     public async Task<string> GetResponseBodyAsync(string requestId)
     {
         await EnsureReadyAsync().ConfigureAwait(true);
@@ -695,6 +742,7 @@ internal sealed class BrowserPaneView : Grid, IDisposable
             WireWebViewEvents();
             WireDownloadEvents();
             await EnableNetworkEventLoggingAsync().ConfigureAwait(true);
+            await EnableConsoleEventLoggingAsync().ConfigureAwait(true);
             _webViewReady = true;
             _webView.Visibility = Visibility.Visible;
             _fallback.Visibility = Visibility.Collapsed;
@@ -946,6 +994,52 @@ internal sealed class BrowserPaneView : Grid, IDisposable
 
     private void NetworkLoadingFinished(object? sender, CoreWebView2DevToolsProtocolEventReceivedEventArgs args) =>
         RecordNetworkEvent("loadingFinished", args);
+
+    private async Task EnableConsoleEventLoggingAsync()
+    {
+        if (_consoleEventsEnabled || _webView.CoreWebView2 is null)
+        {
+            return;
+        }
+
+        var core = _webView.CoreWebView2;
+        _consoleApiCalledReceiver = core.GetDevToolsProtocolEventReceiver("Runtime.consoleAPICalled");
+        _consoleApiCalledReceiver.DevToolsProtocolEventReceived += RuntimeConsoleApiCalled;
+
+        try
+        {
+            await core.CallDevToolsProtocolMethodAsync("Runtime.enable", "{}").ConfigureAwait(true);
+            _consoleEventsEnabled = true;
+        }
+        catch
+        {
+            UnwireConsoleEventLogging();
+            throw;
+        }
+    }
+
+    private void UnwireConsoleEventLogging()
+    {
+        if (_consoleApiCalledReceiver is not null)
+        {
+            _consoleApiCalledReceiver.DevToolsProtocolEventReceived -= RuntimeConsoleApiCalled;
+            _consoleApiCalledReceiver = null;
+        }
+
+        _consoleEventsEnabled = false;
+    }
+
+    private void RuntimeConsoleApiCalled(object? sender, CoreWebView2DevToolsProtocolEventReceivedEventArgs args)
+    {
+        lock (_consoleEvents)
+        {
+            _consoleEvents.Add(CreateConsoleEvent(++_consoleEventSequence, args.SessionId, args.ParameterObjectAsJson));
+            if (_consoleEvents.Count > MaxConsoleEventCount)
+            {
+                _consoleEvents.RemoveRange(0, _consoleEvents.Count - MaxConsoleEventCount);
+            }
+        }
+    }
 
     private void RecordNetworkEvent(string eventName, CoreWebView2DevToolsProtocolEventReceivedEventArgs args)
     {
@@ -1288,6 +1382,99 @@ internal sealed class BrowserPaneView : Grid, IDisposable
             DateTimeOffset.UtcNow);
     }
 
+    private static BrowserConsoleEvent CreateConsoleEvent(long sequence, string? sessionId, string parametersJson)
+    {
+        var type = "log";
+        string? source = null;
+        string? uri = null;
+        int? line = null;
+        int? columnNumber = null;
+        int? executionContextId = null;
+        var message = "";
+
+        try
+        {
+            using var document = JsonDocument.Parse(parametersJson);
+            var root = document.RootElement;
+            type = JsonString(root, "type") ?? type;
+            executionContextId = JsonInt(root, "executionContextId");
+
+            if (root.TryGetProperty("args", out var args) && args.ValueKind == JsonValueKind.Array)
+            {
+                message = string.Join(" ", args.EnumerateArray().Select(ConsoleArgumentText).Where(static text => text.Length > 0));
+            }
+
+            if (root.TryGetProperty("stackTrace", out var stackTrace)
+                && stackTrace.ValueKind == JsonValueKind.Object
+                && stackTrace.TryGetProperty("callFrames", out var callFrames)
+                && callFrames.ValueKind == JsonValueKind.Array)
+            {
+                var firstFrame = callFrames.EnumerateArray().FirstOrDefault();
+                if (firstFrame.ValueKind == JsonValueKind.Object)
+                {
+                    uri = JsonString(firstFrame, "url");
+                    source = JsonString(firstFrame, "functionName");
+                    if (string.IsNullOrWhiteSpace(source))
+                    {
+                        source = uri;
+                    }
+
+                    line = JsonInt(firstFrame, "lineNumber");
+                    columnNumber = JsonInt(firstFrame, "columnNumber");
+                }
+            }
+        }
+        catch (JsonException)
+        {
+            type = "parseError";
+            message = "console event parse failed";
+        }
+
+        var originalMessageLength = message.Length;
+        var truncated = originalMessageLength > MaxConsoleMessageChars;
+        if (truncated)
+        {
+            message = message[..MaxConsoleMessageChars];
+        }
+
+        return new BrowserConsoleEvent(
+            sequence,
+            "consoleAPICalled",
+            type,
+            type,
+            message,
+            originalMessageLength,
+            truncated,
+            line,
+            source,
+            uri,
+            columnNumber,
+            executionContextId,
+            string.IsNullOrWhiteSpace(sessionId) ? null : sessionId,
+            DateTimeOffset.UtcNow);
+    }
+
+    private static string ConsoleArgumentText(JsonElement argument)
+    {
+        if (argument.TryGetProperty("value", out var value))
+        {
+            return value.ValueKind switch
+            {
+                JsonValueKind.String => value.GetString() ?? "",
+                JsonValueKind.Number => value.GetRawText(),
+                JsonValueKind.True => "true",
+                JsonValueKind.False => "false",
+                JsonValueKind.Null => "null",
+                _ => JsonString(argument, "description") ?? JsonString(argument, "type") ?? ""
+            };
+        }
+
+        return JsonString(argument, "unserializableValue")
+            ?? JsonString(argument, "description")
+            ?? JsonString(argument, "type")
+            ?? "";
+    }
+
     private static string? JsonString(JsonElement element, string propertyName) =>
         element.TryGetProperty(propertyName, out var property) && property.ValueKind == JsonValueKind.String
             ? property.GetString()
@@ -1566,6 +1753,22 @@ internal sealed class BrowserPaneView : Grid, IDisposable
         string? ErrorText,
         bool? Canceled,
         double? EncodedDataLength,
+        string? SessionId,
+        DateTimeOffset CapturedAtUtc);
+
+    private sealed record BrowserConsoleEvent(
+        long Sequence,
+        string Event,
+        string Type,
+        string Level,
+        string Message,
+        int MessageLength,
+        bool Truncated,
+        int? Line,
+        string? Source,
+        string? Uri,
+        int? ColumnNumber,
+        int? ExecutionContextId,
         string? SessionId,
         DateTimeOffset CapturedAtUtc);
 }

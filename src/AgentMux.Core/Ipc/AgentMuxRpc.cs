@@ -67,6 +67,8 @@ public static class AgentMuxMethods
     public const string BrowserPress = "surface.browser_press_key";
     public const string BrowserScreenshot = "surface.capture_screenshot";
     public const string BrowserFrameTree = "surface.browser_frame_tree";
+    public const string BrowserConsoleLog = "surface.browser_console_log";
+    public const string BrowserConsoleClear = "surface.browser_clear_console_log";
     public const string BrowserNetworkLog = "surface.browser_network_log";
     public const string BrowserNetworkClear = "surface.browser_clear_network_log";
     public const string BrowserResponseBody = "surface.browser_response_body";

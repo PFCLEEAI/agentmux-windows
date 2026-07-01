@@ -20,10 +20,11 @@ Security-sensitive areas:
 - notification and status text,
 - environment variables,
 - browser session data,
-- browser network/download metadata and downloaded files under the user's local app data directory.
+- browser console messages, browser network/download metadata, and downloaded files under the user's local app data directory.
 
 Browser preview boundaries:
 
+- The browser console log is local and in-memory. Console messages may contain tokens, personal data, API responses, localStorage-derived values, auth callbacks, or private document text. They are returned unredacted to same-user local callers, capped at 4,096 characters each with a truncation marker, and not stored in the session snapshot by the browser pane. CLI stdout can still persist messages in terminal scrollback, shell transcripts, redirected files, or logs.
 - The browser network log is local and in-memory. It avoids headers, cookies, request/response bodies, and post data, but URLs can still contain sensitive query data.
 - Response-body retrieval is explicit and request-id scoped through the active browser pane. Returned bodies may contain tokens, personal data, session data, API responses, or private document contents. They are returned unredacted to the local caller, capped at 1,000,000 characters with a truncation marker, and not stored in the network log or session snapshot by the browser pane. CLI stdout can still persist in terminal scrollback, shell transcripts, redirected files, or logs.
 - HAR metadata export is an explicit path-scoped, metadata-only HAR-like preview for the active browser pane's currently retained in-memory network events. It writes to a caller-provided filesystem path and persists until the caller deletes it. It omits headers, cookies, post data, response bodies, downloaded file contents, tracing data, interception state, replay data, and telemetry, but full URLs may still contain tokens, account ids, query params, auth callbacks, or other secrets. The destination path may be a repository, synced folder, backup location, or shared folder.
