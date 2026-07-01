@@ -419,7 +419,7 @@ $checklist = @"
 Evidence folder: $evidenceDir
 Captured: $((Get-Date).ToString("o"))
 
-Do not paste tokens, passwords, SSH keys, API keys, customer data, private prompts, or browser cookies into this checklist.
+Do not paste tokens, passwords, SSH keys, API keys, customer data, private prompts, browser cookies, or browser trace files from private pages into this checklist.
 
 ## Preflight
 

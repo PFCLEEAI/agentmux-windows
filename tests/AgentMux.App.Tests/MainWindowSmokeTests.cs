@@ -730,6 +730,15 @@ public sealed class MainWindowSmokeTests
             Assert.Equal("lines must be a positive integer", invalidRead.GetProperty("reason").GetString());
             Assert.Equal("", invalidRead.GetProperty("text").GetString());
 
+            var traceOnTerminalResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserTrace, new
+            {
+                path = System.IO.Path.GetFullPath(System.IO.Path.Combine(SmokeArtifactDirectory(), "terminal-pane-trace.json"))
+            });
+            Assert.True(traceOnTerminalResponse.Ok, traceOnTerminalResponse.Error);
+            var traceOnTerminal = System.Text.Json.JsonSerializer.SerializeToElement(traceOnTerminalResponse.Result, AgentMuxJson.Options);
+            Assert.False(traceOnTerminal.GetProperty("ok").GetBoolean());
+            Assert.Equal("active pane is not a browser", traceOnTerminal.GetProperty("reason").GetString());
+
             window.OpenBrowserInActivePaneForSmokeTest("about:blank");
             Assert.Equal(PaneKind.Browser, window.ActivePaneKindForSmokeTest);
             var browserPaneId = window.ActivePaneIdForSmokeTest;
@@ -1419,6 +1428,49 @@ public sealed class MainWindowSmokeTests
                 Assert.Contains("responseReceived", harEvents);
                 Assert.Contains("loadingFinished", harEvents);
             }
+
+            var traceToken = $"agentmux-trace-{Guid.NewGuid():N}";
+            AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserEval, new
+            {
+                script = $$"""
+                    performance.mark({{System.Text.Json.JsonSerializer.Serialize(traceToken)}});
+                    document.body.dataset.agentmuxTraceToken = {{System.Text.Json.JsonSerializer.Serialize(traceToken)}};
+                    true;
+                    """
+            }));
+            var tracePath = System.IO.Path.GetFullPath(System.IO.Path.Combine(SmokeArtifactDirectory(), "browser-trace.json"));
+            if (System.IO.File.Exists(tracePath))
+            {
+                System.IO.File.Delete(tracePath);
+            }
+
+            var traceExport = AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserTrace, new
+            {
+                path = tracePath,
+                durationMs = 500,
+                maxBytes = 5_000_000
+            }));
+            Assert.Equal(tracePath, traceExport.GetProperty("path").GetString());
+            Assert.Equal(500, traceExport.GetProperty("durationMs").GetInt32());
+            Assert.True(traceExport.GetProperty("maxDurationMs").GetInt32() >= 500);
+            Assert.True(traceExport.GetProperty("maxBytes").GetInt32() >= 5_000_000);
+            Assert.True(traceExport.GetProperty("bytesWritten").GetInt64() > 0, traceExport.ToString());
+            Assert.True(traceExport.GetProperty("chunkCount").GetInt32() >= 1, traceExport.ToString());
+            Assert.Equal("json", traceExport.GetProperty("traceFormat").GetString());
+            Assert.Equal("none", traceExport.GetProperty("streamCompression").GetString());
+            Assert.True(System.IO.File.Exists(tracePath));
+            using (var traceDocument = System.Text.Json.JsonDocument.Parse(await System.IO.File.ReadAllTextAsync(tracePath).ConfigureAwait(true)))
+            {
+                Assert.True(traceDocument.RootElement.TryGetProperty("traceEvents", out var traceEvents), traceDocument.RootElement.ToString());
+                Assert.Equal(System.Text.Json.JsonValueKind.Array, traceEvents.ValueKind);
+                Assert.True(traceEvents.GetArrayLength() > 0, traceDocument.RootElement.ToString());
+            }
+
+            await window.SaveSessionForSmokeTestAsync().ConfigureAwait(true);
+            Assert.True(System.IO.File.Exists(store.FilePath));
+            var traceSnapshotText = await System.IO.File.ReadAllTextAsync(store.FilePath).ConfigureAwait(true);
+            Assert.DoesNotContain(traceToken, traceSnapshotText, StringComparison.Ordinal);
+            Assert.DoesNotContain(tracePath, traceSnapshotText, StringComparison.Ordinal);
 
             await Task.Delay(250).ConfigureAwait(true);
             var networkClear = AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserNetworkClear));

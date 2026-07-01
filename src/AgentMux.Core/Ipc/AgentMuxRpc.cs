@@ -87,6 +87,7 @@ public static class AgentMuxMethods
     public const string BrowserRouteBlock = "surface.browser_route_block";
     public const string BrowserRouteFulfill = "surface.browser_route_fulfill";
     public const string BrowserRouteClear = "surface.browser_route_clear";
+    public const string BrowserTrace = "surface.browser_trace";
 }
 
 public static class AgentMuxJson

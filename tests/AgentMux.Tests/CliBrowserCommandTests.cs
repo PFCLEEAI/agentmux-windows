@@ -375,6 +375,69 @@ public sealed class CliBrowserCommandTests
     }
 
     [Theory]
+    [InlineData("trace")]
+    [InlineData("tracing")]
+    public void BrowserTraceSendsAbsolutePathAndOptions(string command)
+    {
+        var request = Program.ParseBrowserRequestForTests([
+            command,
+            "browser-trace.json",
+            "--duration-ms",
+            "750",
+            "--max-bytes",
+            "4096"
+        ], out var error);
+
+        Assert.Equal("", error);
+        Assert.NotNull(request);
+        Assert.Equal(AgentMuxMethods.BrowserTrace, request.Method);
+        var parameters = JsonSerializer.SerializeToElement(request.Parameters, AgentMuxJson.Options);
+        Assert.True(Path.IsPathFullyQualified(parameters.GetProperty("path").GetString()!));
+        Assert.Equal(750, parameters.GetProperty("durationMs").GetInt32());
+        Assert.Equal(4096, parameters.GetProperty("maxBytes").GetInt32());
+    }
+
+    [Fact]
+    public void BrowserTraceUsesOptionalDefaults()
+    {
+        var request = Program.ParseBrowserRequestForTests(["trace", "browser-trace.json"], out var error);
+
+        Assert.Equal("", error);
+        Assert.NotNull(request);
+        Assert.Equal(AgentMuxMethods.BrowserTrace, request.Method);
+        var parameters = JsonSerializer.SerializeToElement(request.Parameters, AgentMuxJson.Options);
+        Assert.True(Path.IsPathFullyQualified(parameters.GetProperty("path").GetString()!));
+        Assert.Equal(JsonValueKind.Null, parameters.GetProperty("durationMs").ValueKind);
+        Assert.Equal(JsonValueKind.Null, parameters.GetProperty("maxBytes").ValueKind);
+    }
+
+    [Fact]
+    public void BrowserTraceRequiresPath()
+    {
+        var request = Program.ParseBrowserRequestForTests(["trace"], out var error);
+
+        Assert.Null(request);
+        Assert.Equal("Usage: agentmux browser trace <path> [--duration-ms <ms>] [--max-bytes <bytes>]", error);
+    }
+
+    [Theory]
+    [InlineData("--duration-ms", "0")]
+    [InlineData("--duration-ms", "-1")]
+    [InlineData("--duration-ms", "abc")]
+    [InlineData("--duration-ms", "true")]
+    [InlineData("--max-bytes", "0")]
+    [InlineData("--max-bytes", "-1")]
+    [InlineData("--max-bytes", "abc")]
+    [InlineData("--max-bytes", "true")]
+    public void BrowserTraceRejectsInvalidNumericOptions(string option, string value)
+    {
+        var request = Program.ParseBrowserRequestForTests(["trace", "browser-trace.json", option, value], out var error);
+
+        Assert.Null(request);
+        Assert.Equal("Usage: agentmux browser trace <path> [--duration-ms <ms>] [--max-bytes <bytes>]", error);
+    }
+
+    [Theory]
     [InlineData("downloads")]
     [InlineData("download-log")]
     public void BrowserDownloadsParsesDownloadLogCommand(string command)

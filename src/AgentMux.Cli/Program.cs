@@ -433,6 +433,46 @@ public static class Program
             return new CliRequest(AgentMuxMethods.BrowserHarMetadata, new { path = Path.GetFullPath(path) });
         }
 
+        if (args[0].Equals("trace", StringComparison.OrdinalIgnoreCase)
+            || args[0].Equals("tracing", StringComparison.OrdinalIgnoreCase))
+        {
+            const string usage = "Usage: agentmux browser trace <path> [--duration-ms <ms>] [--max-bytes <bytes>]";
+            var named = ParseNamed(args[1..]);
+            var path = NamedOrFirst(named, "path");
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                error = usage;
+                return null;
+            }
+
+            int? durationMs = null;
+            if (named.TryGetValue("duration-ms", out var durationValue))
+            {
+                if (!TryParsePositiveInt(durationValue, out var parsedDuration))
+                {
+                    error = usage;
+                    return null;
+                }
+
+                durationMs = parsedDuration;
+            }
+
+            int? maxBytes = null;
+            if (named.TryGetValue("max-bytes", out var maxBytesValue))
+            {
+                if (!TryParsePositiveInt(maxBytesValue, out var parsedMaxBytes))
+                {
+                    error = usage;
+                    return null;
+                }
+
+                maxBytes = parsedMaxBytes;
+            }
+
+            error = "";
+            return new CliRequest(AgentMuxMethods.BrowserTrace, new { path = Path.GetFullPath(path), durationMs, maxBytes });
+        }
+
         if (args[0].Equals("downloads", StringComparison.OrdinalIgnoreCase)
             || args[0].Equals("download-log", StringComparison.OrdinalIgnoreCase))
         {
@@ -1056,6 +1096,7 @@ public static class Program
           agentmux browser network-clear
           agentmux browser response-body <request-id>
           agentmux browser har-metadata .\network.har.json
+          agentmux browser trace .\browser-trace.json --duration-ms 500
           agentmux browser downloads --limit 20
           agentmux browser downloads-clear
           agentmux browser route list

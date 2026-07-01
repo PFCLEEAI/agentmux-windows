@@ -324,7 +324,7 @@ agentmux-desktop-smoke-evidence/
     logs/
 ```
 
-Add screenshots and notes into the same folder. Do not upload private terminal history, browser cookies, credentials, tokens, SSH keys, API keys, customer data, or private prompts.
+Add screenshots and notes into the same folder. Do not upload private terminal history, browser cookies, credentials, tokens, SSH keys, API keys, customer data, private prompts, or browser trace files from private pages.
 
 ## Cleanup
 

@@ -111,6 +111,7 @@ public sealed class RpcContractTests
         Assert.Equal("surface.browser_route_block", AgentMuxMethods.BrowserRouteBlock);
         Assert.Equal("surface.browser_route_fulfill", AgentMuxMethods.BrowserRouteFulfill);
         Assert.Equal("surface.browser_route_clear", AgentMuxMethods.BrowserRouteClear);
+        Assert.Equal("surface.browser_trace", AgentMuxMethods.BrowserTrace);
     }
 
     [Fact]

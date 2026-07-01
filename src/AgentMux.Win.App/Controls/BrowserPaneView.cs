@@ -31,6 +31,11 @@ internal sealed class BrowserPaneView : Grid, IDisposable
     private const int MaxRouteUrlContainsChars = 512;
     private const int MaxRouteBodyChars = 65_536;
     private const int MaxRouteContentTypeChars = 128;
+    private const int DefaultTraceDurationMs = 500;
+    private const int MaxTraceDurationMs = 5_000;
+    private const int DefaultTraceMaxBytes = 5_000_000;
+    private const int MaxTraceMaxBytes = 20_000_000;
+    private const int TraceReadChunkBytes = 64 * 1024;
 
     private readonly List<BrowserNetworkEvent> _networkEvents = [];
     private readonly List<BrowserConsoleEvent> _consoleEvents = [];
@@ -63,6 +68,7 @@ internal sealed class BrowserPaneView : Grid, IDisposable
     private bool _networkEventsEnabled;
     private bool _consoleEventsEnabled;
     private bool _fetchRoutingEnabled;
+    private bool _traceCaptureInProgress;
     private bool _webViewReady;
     private bool _webViewFailed;
     private bool _disposed;
@@ -903,6 +909,173 @@ internal sealed class BrowserPaneView : Grid, IDisposable
                 path = fullPath ?? path,
                 reason = ex.Message
             }, AgentMuxJson.Options);
+        }
+    }
+
+    public async Task<string> CaptureTraceAsync(string path, int? durationMs = null, int? maxBytes = null)
+    {
+        await EnsureReadyAsync().ConfigureAwait(true);
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return JsonSerializer.Serialize(new { ok = false, reason = "path is required" }, AgentMuxJson.Options);
+        }
+
+        var normalizedDurationMs = Math.Min(durationMs ?? DefaultTraceDurationMs, MaxTraceDurationMs);
+        var normalizedMaxBytes = Math.Min(maxBytes ?? DefaultTraceMaxBytes, MaxTraceMaxBytes);
+        if (normalizedDurationMs <= 0)
+        {
+            return JsonSerializer.Serialize(new { ok = false, reason = "durationMs must be positive" }, AgentMuxJson.Options);
+        }
+
+        if (normalizedMaxBytes <= 0)
+        {
+            return JsonSerializer.Serialize(new { ok = false, reason = "maxBytes must be positive" }, AgentMuxJson.Options);
+        }
+
+        if (_traceCaptureInProgress)
+        {
+            return JsonSerializer.Serialize(new { ok = false, reason = "trace capture already in progress" }, AgentMuxJson.Options);
+        }
+
+        _traceCaptureInProgress = true;
+        string? fullPath = null;
+        CoreWebView2DevToolsProtocolEventReceiver? traceCompleteReceiver = null;
+        var traceComplete = new TaskCompletionSource<TraceCompletion>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var tracingStarted = false;
+        var traceEndRequested = false;
+
+        void TracingComplete(object? sender, CoreWebView2DevToolsProtocolEventReceivedEventArgs args) =>
+            traceComplete.TrySetResult(ParseTraceCompletion(args.ParameterObjectAsJson));
+
+        try
+        {
+            fullPath = Path.GetFullPath(path);
+            var directory = Path.GetDirectoryName(fullPath);
+            if (!string.IsNullOrWhiteSpace(directory))
+            {
+                Directory.CreateDirectory(directory);
+            }
+
+            var core = _webView.CoreWebView2!;
+            traceCompleteReceiver = core.GetDevToolsProtocolEventReceiver("Tracing.tracingComplete");
+            traceCompleteReceiver.DevToolsProtocolEventReceived += TracingComplete;
+
+            var traceStartParameters = new
+            {
+                transferMode = "ReturnAsStream",
+                streamFormat = "json",
+                traceConfig = new
+                {
+                    recordMode = "recordUntilFull",
+                    traceBufferSizeInKb = 4_096,
+                    includedCategories = new[]
+                    {
+                        "devtools.timeline",
+                        "blink.user_timing",
+                        "loading"
+                    }
+                }
+            };
+            await core.CallDevToolsProtocolMethodAsync(
+                "Tracing.start",
+                JsonSerializer.Serialize(traceStartParameters, AgentMuxJson.Options)).ConfigureAwait(true);
+            tracingStarted = true;
+
+            await Task.Delay(normalizedDurationMs).ConfigureAwait(true);
+            await core.CallDevToolsProtocolMethodAsync("Tracing.end", "{}").ConfigureAwait(true);
+            traceEndRequested = true;
+
+            var completed = await WaitForTraceCompletionAsync(traceComplete.Task, TimeSpan.FromSeconds(10)).ConfigureAwait(true);
+            if (completed is null)
+            {
+                return JsonSerializer.Serialize(new
+                {
+                    ok = false,
+                    path = fullPath,
+                    reason = "trace completion timed out",
+                    durationMs = normalizedDurationMs,
+                    maxDurationMs = MaxTraceDurationMs,
+                    maxBytes = normalizedMaxBytes
+                }, AgentMuxJson.Options);
+            }
+
+            if (string.IsNullOrWhiteSpace(completed.Stream))
+            {
+                return JsonSerializer.Serialize(new
+                {
+                    ok = false,
+                    path = fullPath,
+                    reason = "trace stream unavailable",
+                    dataLossOccurred = completed.DataLossOccurred,
+                    traceFormat = completed.TraceFormat,
+                    streamCompression = completed.StreamCompression
+                }, AgentMuxJson.Options);
+            }
+
+            var readResult = await ReadTraceStreamToFileAsync(
+                core,
+                completed.Stream,
+                fullPath,
+                normalizedMaxBytes).ConfigureAwait(true);
+            if (!readResult.Ok)
+            {
+                return JsonSerializer.Serialize(new
+                {
+                    ok = false,
+                    path = fullPath,
+                    reason = readResult.Reason ?? "trace unavailable",
+                    bytesWritten = readResult.BytesWritten,
+                    chunkCount = readResult.ChunkCount,
+                    maxBytes = normalizedMaxBytes,
+                    dataLossOccurred = completed.DataLossOccurred,
+                    traceFormat = completed.TraceFormat,
+                    streamCompression = completed.StreamCompression
+                }, AgentMuxJson.Options);
+            }
+
+            return JsonSerializer.Serialize(new
+            {
+                ok = true,
+                path = fullPath,
+                durationMs = normalizedDurationMs,
+                maxDurationMs = MaxTraceDurationMs,
+                maxBytes = normalizedMaxBytes,
+                bytesWritten = readResult.BytesWritten,
+                chunkCount = readResult.ChunkCount,
+                dataLossOccurred = completed.DataLossOccurred,
+                traceFormat = completed.TraceFormat,
+                streamCompression = completed.StreamCompression,
+                categories = traceStartParameters.traceConfig.includedCategories
+            }, AgentMuxJson.Options);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException or JsonException or FormatException or COMException or InvalidOperationException)
+        {
+            return JsonSerializer.Serialize(new
+            {
+                ok = false,
+                path = fullPath ?? path,
+                reason = ex.Message
+            }, AgentMuxJson.Options);
+        }
+        finally
+        {
+            if (traceCompleteReceiver is not null)
+            {
+                traceCompleteReceiver.DevToolsProtocolEventReceived -= TracingComplete;
+            }
+
+            if (tracingStarted && !traceEndRequested)
+            {
+                try
+                {
+                    await _webView.CoreWebView2!.CallDevToolsProtocolMethodAsync("Tracing.end", "{}").ConfigureAwait(true);
+                }
+                catch
+                {
+                }
+            }
+
+            _traceCaptureInProgress = false;
         }
     }
 
@@ -1824,6 +1997,122 @@ internal sealed class BrowserPaneView : Grid, IDisposable
         return value;
     }
 
+    private static async Task<TraceCompletion?> WaitForTraceCompletionAsync(Task<TraceCompletion> task, TimeSpan timeout)
+    {
+        var completed = await Task.WhenAny(task, Task.Delay(timeout)).ConfigureAwait(true);
+        if (completed != task)
+        {
+            return null;
+        }
+
+        return await task.ConfigureAwait(true);
+    }
+
+    private static async Task<TraceReadResult> ReadTraceStreamToFileAsync(
+        CoreWebView2 core,
+        string streamHandle,
+        string fullPath,
+        int maxBytes)
+    {
+        var tempPath = $"{fullPath}.tmp-{Guid.NewGuid():N}";
+        var completed = false;
+        long bytesWritten = 0;
+        var chunkCount = 0;
+
+        try
+        {
+            await using (var output = File.Create(tempPath))
+            {
+                while (true)
+                {
+                    var readJson = await core.CallDevToolsProtocolMethodAsync(
+                        "IO.read",
+                        JsonSerializer.Serialize(new
+                        {
+                            handle = streamHandle,
+                            size = TraceReadChunkBytes
+                        }, AgentMuxJson.Options)).ConfigureAwait(true);
+
+                    using var document = JsonDocument.Parse(readJson);
+                    var root = document.RootElement;
+                    var data = JsonString(root, "data") ?? "";
+                    var eof = JsonBool(root, "eof") ?? false;
+                    if (data.Length > 0)
+                    {
+                        var chunk = JsonBool(root, "base64Encoded") == true
+                            ? Convert.FromBase64String(data)
+                            : Encoding.UTF8.GetBytes(data);
+                        if (bytesWritten + chunk.Length > maxBytes)
+                        {
+                            return new TraceReadResult(false, bytesWritten, chunkCount, "trace exceeded maxBytes");
+                        }
+
+                        await output.WriteAsync(chunk).ConfigureAwait(true);
+                        bytesWritten += chunk.Length;
+                        chunkCount++;
+                    }
+
+                    if (eof)
+                    {
+                        break;
+                    }
+                }
+            }
+
+            File.Move(tempPath, fullPath, overwrite: true);
+            completed = true;
+            return new TraceReadResult(true, bytesWritten, chunkCount, null);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException or JsonException or FormatException or COMException or InvalidOperationException)
+        {
+            return new TraceReadResult(false, bytesWritten, chunkCount, ex.Message);
+        }
+        finally
+        {
+            try
+            {
+                await core.CallDevToolsProtocolMethodAsync(
+                    "IO.close",
+                    JsonSerializer.Serialize(new { handle = streamHandle }, AgentMuxJson.Options)).ConfigureAwait(true);
+            }
+            catch
+            {
+            }
+
+            if (!completed)
+            {
+                try
+                {
+                    if (File.Exists(tempPath))
+                    {
+                        File.Delete(tempPath);
+                    }
+                }
+                catch
+                {
+                }
+            }
+        }
+    }
+
+    private static TraceCompletion ParseTraceCompletion(string parametersJson)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(parametersJson);
+            var root = document.RootElement;
+            return new TraceCompletion(
+                JsonBool(root, "dataLossOccurred") ?? false,
+                JsonString(root, "stream"),
+                JsonString(root, "traceFormat") ?? "json",
+                JsonString(root, "streamCompression") ?? "none");
+        }
+        catch (JsonException)
+        {
+            return new TraceCompletion(false, null, "json", "none");
+        }
+    }
+
     private async Task WaitForNavigationAsync(bool allowStartDelay = false)
     {
         if (allowStartDelay && (_navigationCompletion is null || _navigationCompletion.Task.IsCompleted))
@@ -2426,6 +2715,18 @@ internal sealed class BrowserPaneView : Grid, IDisposable
     private readonly record struct NetworkRequestState(bool SeenResponse, bool SeenLoadingFinished);
 
     private readonly record struct NetworkActivitySnapshot(int InFlightRequests, DateTimeOffset LastActivityUtc, int EventCount);
+
+    private sealed record TraceCompletion(
+        bool DataLossOccurred,
+        string? Stream,
+        string TraceFormat,
+        string StreamCompression);
+
+    private sealed record TraceReadResult(
+        bool Ok,
+        long BytesWritten,
+        int ChunkCount,
+        string? Reason);
 
     private sealed class BrowserRouteRule(
         string Id,

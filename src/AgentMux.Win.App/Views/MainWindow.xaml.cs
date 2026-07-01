@@ -524,6 +524,7 @@ public partial class MainWindow : Window
             AgentMuxMethods.BrowserRouteBlock => AgentMuxResponse.Success(request.Id, await HandleBrowserRouteBlockAsync(request.Params).ConfigureAwait(true)),
             AgentMuxMethods.BrowserRouteFulfill => AgentMuxResponse.Success(request.Id, await HandleBrowserRouteFulfillAsync(request.Params).ConfigureAwait(true)),
             AgentMuxMethods.BrowserRouteClear => AgentMuxResponse.Success(request.Id, await HandleBrowserRouteClearAsync().ConfigureAwait(true)),
+            AgentMuxMethods.BrowserTrace => AgentMuxResponse.Success(request.Id, await HandleBrowserTraceAsync(request.Params).ConfigureAwait(true)),
             _ => AgentMuxResponse.Failure(request.Id, $"Unsupported method: {request.Method}")
         };
 
@@ -1169,6 +1170,30 @@ public partial class MainWindow : Window
     private async Task<object> HandleBrowserRouteClearAsync()
     {
         return await RunBrowserScriptAsync(view => view.ClearRoutesAsync()).ConfigureAwait(true);
+    }
+
+    private async Task<object> HandleBrowserTraceAsync(JsonElement? parameters)
+    {
+        var parsed = Deserialize<BrowserTraceParams>(parameters);
+        if (string.IsNullOrWhiteSpace(parsed?.Path))
+        {
+            return new { ok = false, reason = "path is required" };
+        }
+
+        if (parsed.DurationMs is <= 0)
+        {
+            return new { ok = false, reason = "durationMs must be positive" };
+        }
+
+        if (parsed.MaxBytes is <= 0)
+        {
+            return new { ok = false, reason = "maxBytes must be positive" };
+        }
+
+        return await RunBrowserScriptAsync(view => view.CaptureTraceAsync(
+            parsed.Path,
+            parsed.DurationMs,
+            parsed.MaxBytes)).ConfigureAwait(true);
     }
 
     private async Task<ConPtySession?> EnsurePanePtyAsync(PaneState? pane)
@@ -2276,7 +2301,8 @@ public partial class MainWindow : Window
             or AgentMuxMethods.BrowserRouteList
             or AgentMuxMethods.BrowserRouteBlock
             or AgentMuxMethods.BrowserRouteFulfill
-            or AgentMuxMethods.BrowserRouteClear;
+            or AgentMuxMethods.BrowserRouteClear
+            or AgentMuxMethods.BrowserTrace;
     }
 
     private void StopPanePty(string paneId)
@@ -2976,5 +3002,12 @@ public partial class MainWindow : Window
         public int? Status { get; set; }
         public string? ContentType { get; set; }
         public string? Body { get; set; }
+    }
+
+    private sealed class BrowserTraceParams
+    {
+        public string? Path { get; set; }
+        public int? DurationMs { get; set; }
+        public int? MaxBytes { get; set; }
     }
 }
