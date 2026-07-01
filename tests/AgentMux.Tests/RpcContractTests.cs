@@ -93,4 +93,12 @@ public sealed class RpcContractTests
         Assert.Equal("notifications.clear", AgentMuxMethods.NotificationsClear);
         Assert.Equal("notifications.jump_latest", AgentMuxMethods.NotificationsJumpLatest);
     }
+
+    [Fact]
+    public void SurfaceMethodsAreStable()
+    {
+        Assert.Equal("surface.list", AgentMuxMethods.SurfaceList);
+        Assert.Equal("surface.create", AgentMuxMethods.SurfaceCreate);
+        Assert.Equal("surface.select", AgentMuxMethods.SurfaceSelect);
+    }
 }

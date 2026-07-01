@@ -131,6 +131,28 @@ public partial class MainWindow : Window
         RefreshWorkspaceView();
     }
 
+    private async void NewSurface_Click(object sender, RoutedEventArgs e)
+    {
+        CreateSurface(ActiveWorkspace(), null);
+        await EnsurePanePtyAsync(ActivePane()).ConfigureAwait(true);
+        RefreshWorkspaceView();
+    }
+
+    private async void SurfaceTab_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: int index })
+        {
+            return;
+        }
+
+        if (SelectSurface(index, null))
+        {
+            await EnsurePanePtyAsync(ActivePane()).ConfigureAwait(true);
+        }
+
+        RefreshWorkspaceView();
+    }
+
     private void WorkspaceList_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (WorkspaceList.SelectedIndex >= 0)
@@ -422,6 +444,9 @@ public partial class MainWindow : Window
             AgentMuxMethods.WorkspaceList => AgentMuxResponse.Success(request.Id, _workspaces),
             AgentMuxMethods.WorkspaceCreate => AgentMuxResponse.Success(request.Id, HandleWorkspaceCreate(request.Params)),
             AgentMuxMethods.WorkspaceSelect => AgentMuxResponse.Success(request.Id, HandleWorkspaceSelect(request.Params)),
+            AgentMuxMethods.SurfaceList => AgentMuxResponse.Success(request.Id, BuildSurfaceList()),
+            AgentMuxMethods.SurfaceCreate => AgentMuxResponse.Success(request.Id, HandleSurfaceCreate(request.Params)),
+            AgentMuxMethods.SurfaceSelect => AgentMuxResponse.Success(request.Id, HandleSurfaceSelect(request.Params)),
             AgentMuxMethods.Notify => AgentMuxResponse.Success(request.Id, HandleNotify(request.Params)),
             AgentMuxMethods.NotificationsList => AgentMuxResponse.Success(request.Id, HandleNotificationsList(request.Params)),
             AgentMuxMethods.NotificationsClear => AgentMuxResponse.Success(request.Id, HandleNotificationsClear()),
@@ -462,16 +487,25 @@ public partial class MainWindow : Window
         return response;
     }
 
-    private object BuildStatus() => new
+    private object BuildStatus()
     {
-        app = "AgentMux Windows",
-        status = "pre-alpha scaffold",
-        workspaceCount = _workspaces.Count,
-        activeWorkspaceIndex = _activeWorkspaceIndex,
-        notificationCount = _notifications.Count,
-        terminalSessionCount = _ptySessions.Count,
-        browserPaneCount = CountPaneKind(ActiveSurface().Root, PaneKind.Browser)
-    };
+        var workspace = ActiveWorkspace();
+        NormalizeWorkspace(workspace);
+        var surface = ActiveSurface();
+        return new
+        {
+            app = "AgentMux Windows",
+            status = "pre-alpha scaffold",
+            workspaceCount = _workspaces.Count,
+            activeWorkspaceIndex = _activeWorkspaceIndex,
+            surfaceCount = workspace.Surfaces.Count,
+            activeSurfaceIndex = workspace.ActiveSurfaceIndex,
+            activeSurfaceTitle = surface.Title,
+            notificationCount = _notifications.Count,
+            terminalSessionCount = _ptySessions.Count,
+            browserPaneCount = CountPaneKind(surface.Root, PaneKind.Browser)
+        };
+    }
 
     private WorkspaceState HandleWorkspaceCreate(JsonElement? parameters)
     {
@@ -492,6 +526,64 @@ public partial class MainWindow : Window
         Dispatcher.Invoke(() => WorkspaceList.SelectedIndex = index);
         QueueSessionSave();
         return new { selected = true, index };
+    }
+
+    private object BuildSurfaceList()
+    {
+        var workspace = ActiveWorkspace();
+        NormalizeWorkspace(workspace);
+        return new
+        {
+            workspaceId = workspace.Id,
+            activeSurfaceIndex = workspace.ActiveSurfaceIndex,
+            surfaces = workspace.Surfaces
+                .Select((surface, index) => BuildSurfaceDto(workspace, surface, index))
+                .ToList()
+        };
+    }
+
+    private object HandleSurfaceCreate(JsonElement? parameters)
+    {
+        var parsed = Deserialize<SurfaceCreateParams>(parameters);
+        var workspace = ActiveWorkspace();
+        var surface = CreateSurface(workspace, parsed?.Title);
+        _ = EnsurePanePtyAsync(ActivePane());
+        RefreshWorkspaceView();
+        var index = workspace.Surfaces.IndexOf(surface);
+        return new
+        {
+            created = true,
+            workspaceId = workspace.Id,
+            surface = BuildSurfaceDto(workspace, surface, index)
+        };
+    }
+
+    private object HandleSurfaceSelect(JsonElement? parameters)
+    {
+        if (!TryReadSurfaceTarget(parameters, out var index, out var id, out var error))
+        {
+            return new { selected = false, reason = error };
+        }
+
+        if (!SelectSurface(index, id))
+        {
+            return new
+            {
+                selected = false,
+                reason = index.HasValue ? "index out of range" : "surface not found"
+            };
+        }
+
+        _ = EnsurePanePtyAsync(ActivePane());
+        RefreshWorkspaceView();
+        var workspace = ActiveWorkspace();
+        var surface = ActiveSurface();
+        return new
+        {
+            selected = true,
+            workspaceId = workspace.Id,
+            surface = BuildSurfaceDto(workspace, surface, workspace.ActiveSurfaceIndex)
+        };
     }
 
     private TerminalNotification HandleNotify(JsonElement? parameters)
@@ -1099,6 +1191,36 @@ public partial class MainWindow : Window
         return workspace;
     }
 
+    private SurfaceState CreateSurface(WorkspaceState workspace, string? title)
+    {
+        NormalizeWorkspace(workspace);
+        var surface = SurfaceState.CreateDefault();
+        surface.Title = string.IsNullOrWhiteSpace(title)
+            ? $"Surface {workspace.Surfaces.Count + 1}"
+            : title.Trim();
+        NormalizeSurface(surface);
+        workspace.Surfaces.Add(surface);
+        workspace.ActiveSurfaceIndex = workspace.Surfaces.Count - 1;
+        QueueSessionSave();
+        return surface;
+    }
+
+    private bool SelectSurface(int? index, string? id)
+    {
+        var workspace = ActiveWorkspace();
+        NormalizeWorkspace(workspace);
+        var selectedIndex = index ?? workspace.Surfaces.FindIndex(surface => string.Equals(surface.Id, id, StringComparison.Ordinal));
+        if (selectedIndex < 0 || selectedIndex >= workspace.Surfaces.Count)
+        {
+            return false;
+        }
+
+        workspace.ActiveSurfaceIndex = selectedIndex;
+        ActivePane();
+        QueueSessionSave();
+        return true;
+    }
+
     private TerminalNotification AddNotification(string title, string body, string? subtitle = null, PaneState? sourcePane = null)
     {
         var target = sourcePane is null ? null : FindWorkspaceSurfaceAndPane(sourcePane.Id);
@@ -1369,7 +1491,8 @@ public partial class MainWindow : Window
         var surface = ActiveSurface();
         var activePane = ActivePane();
         WorkspaceTitle.Text = workspace.Title;
-        WorkspaceMeta.Text = $"{workspace.WorkingDirectory}  |  panes: {CountPanes(surface.Root)}  |  unread: {workspace.UnreadCount}";
+        WorkspaceMeta.Text = $"{workspace.WorkingDirectory}  |  surfaces: {workspace.Surfaces.Count}  |  panes: {CountPanes(surface.Root)}  |  unread: {workspace.UnreadCount}";
+        RefreshSurfaceTabs(workspace);
         var activeSessionRunning = activePane is not null
             && _ptySessions.TryGetValue(activePane.Id, out var activeSession)
             && activeSession.IsRunning;
@@ -1388,6 +1511,38 @@ public partial class MainWindow : Window
         }
 
         WorkspaceList.Items.Refresh();
+    }
+
+    private void RefreshSurfaceTabs(WorkspaceState workspace)
+    {
+        NormalizeWorkspace(workspace);
+        SurfaceTabs.Children.Clear();
+        for (var index = 0; index < workspace.Surfaces.Count; index++)
+        {
+            var surface = workspace.Surfaces[index];
+            var isActive = index == workspace.ActiveSurfaceIndex;
+            var button = new Button
+            {
+                Tag = index,
+                Height = 28,
+                MinWidth = 78,
+                MaxWidth = 150,
+                Margin = new Thickness(index == 0 ? 0 : 6, 0, 0, 0),
+                Padding = new Thickness(8, 0, 8, 0),
+                Foreground = Brush("AgentMuxText"),
+                Background = isActive ? Brush("AgentMuxAccent") : Brush("AgentMuxPanel"),
+                BorderBrush = isActive ? Brush("AgentMuxAccent") : Brush("AgentMuxBorder"),
+                BorderThickness = new Thickness(isActive ? 2 : 1),
+                Content = new TextBlock
+                {
+                    Text = string.IsNullOrWhiteSpace(surface.Title) ? $"Surface {index + 1}" : surface.Title,
+                    TextTrimming = TextTrimming.CharacterEllipsis,
+                    MaxWidth = 118
+                }
+            };
+            button.Click += SurfaceTab_Click;
+            SurfaceTabs.Children.Add(button);
+        }
     }
 
     private FrameworkElement BuildSplitElement(SplitNodeState node, string? activePaneId)
@@ -1882,6 +2037,22 @@ public partial class MainWindow : Window
             + (node.Second is null ? 0 : CountPaneKind(node.Second, kind));
     }
 
+    private static object BuildSurfaceDto(WorkspaceState workspace, SurfaceState surface, int index)
+    {
+        NormalizeSurface(surface);
+        return new
+        {
+            surface.Id,
+            surface.Title,
+            index,
+            isActive = index == workspace.ActiveSurfaceIndex,
+            surface.ActivePaneId,
+            paneCount = CountPanes(surface.Root),
+            browserPaneCount = CountPaneKind(surface.Root, PaneKind.Browser),
+            surface.ZoomedPaneId
+        };
+    }
+
     private static string NormalizeBrowserUrl(string? url)
     {
         var trimmed = string.IsNullOrWhiteSpace(url) ? "about:blank" : url.Trim();
@@ -2006,6 +2177,14 @@ public partial class MainWindow : Window
 
     internal string ActiveWorkspaceTitleForSmokeTest => ActiveWorkspace().Title;
 
+    internal int SurfaceCountForSmokeTest => ActiveWorkspace().Surfaces.Count;
+
+    internal int ActiveSurfaceIndexForSmokeTest => ActiveWorkspace().ActiveSurfaceIndex;
+
+    internal string ActiveSurfaceTitleForSmokeTest => ActiveSurface().Title;
+
+    internal int RenderedSurfaceTabCountForSmokeTest => CountVisualDescendants<Button>(SurfaceTabs);
+
     internal int RenderedTerminalPaneCountForSmokeTest => CountVisualDescendants<TerminalPaneView>(PaneHost);
 
     internal int RenderedBrowserPaneCountForSmokeTest => CountVisualDescendants<BrowserPaneView>(PaneHost);
@@ -2035,6 +2214,8 @@ public partial class MainWindow : Window
     internal bool HasButtonForSmokeTest(string content) => VisualTreeContainsButton(this, content);
 
     internal bool RenderedTextContainsForSmokeTest(string marker) => VisualTreeTextContains(PaneHost, marker);
+
+    internal bool SurfaceTabsContainTextForSmokeTest(string marker) => VisualTreeTextContains(SurfaceTabs, marker);
 
     internal bool SplitActivePaneForSmokeTest(SplitDirection direction)
     {
@@ -2165,6 +2346,60 @@ public partial class MainWindow : Window
         };
     }
 
+    private static bool TryReadSurfaceTarget(JsonElement? parameters, out int? index, out string? id, out string error)
+    {
+        index = null;
+        id = null;
+        error = "";
+        if (parameters is not { ValueKind: JsonValueKind.Object } element)
+        {
+            error = "index or id is required";
+            return false;
+        }
+
+        var parsedIndex = 0;
+        var hasIndex = element.TryGetProperty("index", out var indexProperty);
+        if (hasIndex && !TryReadNonNegativeInt(indexProperty, out parsedIndex))
+        {
+            error = "index must be a non-negative integer";
+            return false;
+        }
+
+        var hasId = element.TryGetProperty("id", out var idProperty)
+            && TryReadNonEmptyString(idProperty, out id);
+        if (hasIndex && hasId)
+        {
+            error = "provide index or id, not both";
+            return false;
+        }
+
+        if (!hasIndex && !hasId)
+        {
+            error = "index or id is required";
+            return false;
+        }
+
+        index = hasIndex ? parsedIndex : null;
+        return true;
+    }
+
+    private static bool TryReadNonNegativeInt(JsonElement property, out int value)
+    {
+        value = 0;
+        return property.ValueKind switch
+        {
+            JsonValueKind.Number => property.TryGetInt32(out value) && value >= 0,
+            JsonValueKind.String => int.TryParse(property.GetString(), out value) && value >= 0,
+            _ => false
+        };
+    }
+
+    private static bool TryReadNonEmptyString(JsonElement property, out string? value)
+    {
+        value = property.ValueKind == JsonValueKind.String ? property.GetString() : null;
+        return !string.IsNullOrWhiteSpace(value) && !value.Equals("true", StringComparison.OrdinalIgnoreCase);
+    }
+
     private sealed class NotifyParams
     {
         public string? Title { get; set; }
@@ -2188,6 +2423,11 @@ public partial class MainWindow : Window
     private sealed class WorkspaceSelectParams
     {
         public int? Index { get; set; }
+    }
+
+    private sealed class SurfaceCreateParams
+    {
+        public string? Title { get; set; }
     }
 
     private sealed class SplitParams

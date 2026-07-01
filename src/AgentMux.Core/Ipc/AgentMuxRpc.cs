@@ -54,6 +54,9 @@ public static class AgentMuxMethods
     public const string WorkspaceList = "workspace.list";
     public const string WorkspaceCreate = "workspace.create";
     public const string WorkspaceSelect = "workspace.select";
+    public const string SurfaceList = "surface.list";
+    public const string SurfaceCreate = "surface.create";
+    public const string SurfaceSelect = "surface.select";
     public const string Split = "split";
     public const string SendText = "surface.send_text";
     public const string SendKey = "surface.send_key";

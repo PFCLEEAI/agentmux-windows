@@ -29,6 +29,7 @@ public static class Program
                 "notify" => await client.SendAsync(AgentMuxMethods.Notify, ParseNotify(args[1..])).ConfigureAwait(false),
                 "notifications" or "notification" => await HandleNotificationsAsync(client, args[1..]).ConfigureAwait(false),
                 "workspace" => await HandleWorkspaceAsync(client, args[1..]).ConfigureAwait(false),
+                "surface" or "surfaces" or "tab" or "tabs" => await HandleSurfaceAsync(client, args[1..]).ConfigureAwait(false),
                 "split" => await HandleSplitAsync(client, args[1..]).ConfigureAwait(false),
                 "focus" => await HandleFocusAsync(client, args[1..]).ConfigureAwait(false),
                 "zoom" => await HandlePaneAsync(client, ["zoom"]).ConfigureAwait(false),
@@ -71,6 +72,17 @@ public static class Program
     private static async Task<AgentMuxResponse> HandleNotificationsAsync(NamedPipeRpcClient client, string[] args)
     {
         var request = ParseNotificationsRequestForTests(args, out var error);
+        if (request is null)
+        {
+            return AgentMuxResponse.Failure("", error);
+        }
+
+        return await client.SendAsync(request.Method, request.Parameters).ConfigureAwait(false);
+    }
+
+    private static async Task<AgentMuxResponse> HandleSurfaceAsync(NamedPipeRpcClient client, string[] args)
+    {
+        var request = ParseSurfaceRequestForTests(args, out var error);
         if (request is null)
         {
             return AgentMuxResponse.Failure("", error);
@@ -438,6 +450,73 @@ public static class Program
         return new CliRequest(AgentMuxMethods.FocusPane, new { direction = parsedDirection.ToString().ToLowerInvariant() });
     }
 
+    internal static CliRequest? ParseSurfaceRequestForTests(string[] args, out string error)
+    {
+        if (args.Length == 0)
+        {
+            error = "Usage: agentmux surface <list|create|select>";
+            return null;
+        }
+
+        if (args[0].Equals("list", StringComparison.OrdinalIgnoreCase)
+            || args[0].Equals("ls", StringComparison.OrdinalIgnoreCase))
+        {
+            error = "";
+            return new CliRequest(AgentMuxMethods.SurfaceList, new { });
+        }
+
+        if (args[0].Equals("create", StringComparison.OrdinalIgnoreCase)
+            || args[0].Equals("new", StringComparison.OrdinalIgnoreCase))
+        {
+            error = "";
+            return new CliRequest(AgentMuxMethods.SurfaceCreate, ParseNamed(args[1..]));
+        }
+
+        if (args[0].Equals("select", StringComparison.OrdinalIgnoreCase)
+            || args[0].Equals("use", StringComparison.OrdinalIgnoreCase))
+        {
+            var named = ParseNamed(args[1..]);
+            if (!named.ContainsKey("index") && named.TryGetValue("_arg0", out var positional))
+            {
+                named["index"] = positional;
+            }
+
+            var hasIndex = named.TryGetValue("index", out var indexValue);
+            var hasId = named.TryGetValue("id", out var idValue)
+                && !string.IsNullOrWhiteSpace(idValue)
+                && !idValue.Equals("true", StringComparison.OrdinalIgnoreCase);
+            if (hasIndex && hasId)
+            {
+                error = "Usage: agentmux surface select --index <n>|--id <surface-id>";
+                return null;
+            }
+
+            if (hasIndex)
+            {
+                if (!TryParseNonNegativeInt(indexValue, out var index))
+                {
+                    error = "Usage: agentmux surface select --index <n>|--id <surface-id>";
+                    return null;
+                }
+
+                error = "";
+                return new CliRequest(AgentMuxMethods.SurfaceSelect, new { index });
+            }
+
+            if (!hasId)
+            {
+                error = "Usage: agentmux surface select --index <n>|--id <surface-id>";
+                return null;
+            }
+
+            error = "";
+            return new CliRequest(AgentMuxMethods.SurfaceSelect, new { id = idValue });
+        }
+
+        error = $"Unknown surface command: {args[0]}";
+        return null;
+    }
+
     internal static CliRequest? ParsePaneRequestForTests(string[] args, out string error)
     {
         if (args.Length == 0)
@@ -639,6 +718,11 @@ public static class Program
         return int.TryParse(value, out number) && number > 0;
     }
 
+    private static bool TryParseNonNegativeInt(string? value, out int number)
+    {
+        return int.TryParse(value, out number) && number >= 0;
+    }
+
     private static bool IsBrowserWaitState(string value)
     {
         return value.Equals("visible", StringComparison.OrdinalIgnoreCase)
@@ -709,6 +793,9 @@ public static class Program
           agentmux workspace list
           agentmux workspace create --title "API" --cwd "C:\src\api"
           agentmux workspace select --index 0
+          agentmux surface list
+          agentmux surface create --title "Tests"
+          agentmux surface select --index 0
           agentmux split right
           agentmux split down
           agentmux focus next

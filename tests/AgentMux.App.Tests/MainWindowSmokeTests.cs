@@ -230,6 +230,7 @@ public sealed class MainWindowSmokeTests
             }
 
             await RunNotificationSmokeAsync();
+            await RunSurfaceTabsSmokeAsync();
             await RunSessionRestoreSmokeAsync();
             await RunHostedWebView2RuntimeSmokeAsync();
             await RunActiveBrowserRpcSmokeAsync();
@@ -321,6 +322,124 @@ public sealed class MainWindowSmokeTests
         }
     }
 
+    private static async Task RunSurfaceTabsSmokeAsync()
+    {
+        var window = new MainWindow(ShortcutSettings.Default());
+        try
+        {
+            window.InitializeForSmokeTest();
+
+            Assert.True(window.HasButtonForSmokeTest("+ Surface"));
+            Assert.Equal(1, window.SurfaceCountForSmokeTest);
+            Assert.Equal(0, window.ActiveSurfaceIndexForSmokeTest);
+            Assert.Equal("Terminal", window.ActiveSurfaceTitleForSmokeTest);
+            Assert.Equal(1, window.RenderedSurfaceTabCountForSmokeTest);
+            Assert.True(window.SurfaceTabsContainTextForSmokeTest("Terminal"));
+
+            window.SetActivePaneTextForSmokeTest("AGENTMUX_SURFACE_ONE");
+            var firstPaneId = window.ActivePaneIdForSmokeTest;
+
+            var initialListResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.SurfaceList);
+            Assert.True(initialListResponse.Ok, initialListResponse.Error);
+            var initialList = System.Text.Json.JsonSerializer.SerializeToElement(initialListResponse.Result, AgentMuxJson.Options);
+            Assert.Equal(0, initialList.GetProperty("activeSurfaceIndex").GetInt32());
+            var initialSurface = initialList.GetProperty("surfaces").EnumerateArray().Single();
+            Assert.True(initialSurface.GetProperty("isActive").GetBoolean());
+            Assert.Equal(firstPaneId, initialSurface.GetProperty("activePaneId").GetString());
+            Assert.Equal(1, initialSurface.GetProperty("paneCount").GetInt32());
+            Assert.Equal(0, initialSurface.GetProperty("browserPaneCount").GetInt32());
+
+            var createResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.SurfaceCreate, new
+            {
+                title = "Scratch"
+            });
+            Assert.True(createResponse.Ok, createResponse.Error);
+            var createResult = System.Text.Json.JsonSerializer.SerializeToElement(createResponse.Result, AgentMuxJson.Options);
+            Assert.True(createResult.GetProperty("created").GetBoolean());
+            var createdSurface = createResult.GetProperty("surface");
+            var createdSurfaceId = createdSurface.GetProperty("id").GetString();
+            Assert.Equal("Scratch", createdSurface.GetProperty("title").GetString());
+            Assert.Equal(1, createdSurface.GetProperty("index").GetInt32());
+            Assert.True(createdSurface.GetProperty("isActive").GetBoolean());
+            Assert.False(string.IsNullOrWhiteSpace(createdSurfaceId));
+
+            Assert.Equal(2, window.SurfaceCountForSmokeTest);
+            Assert.Equal(1, window.ActiveSurfaceIndexForSmokeTest);
+            Assert.Equal("Scratch", window.ActiveSurfaceTitleForSmokeTest);
+            Assert.Equal(2, window.RenderedSurfaceTabCountForSmokeTest);
+            Assert.True(window.SurfaceTabsContainTextForSmokeTest("Scratch"));
+            Assert.Equal(1, window.PaneCountForSmokeTest);
+            Assert.False(window.RenderedTextContainsForSmokeTest("AGENTMUX_SURFACE_ONE"));
+
+            window.SetActivePaneTextForSmokeTest("AGENTMUX_SURFACE_TWO");
+            var secondPaneId = window.ActivePaneIdForSmokeTest;
+            Assert.NotEqual(firstPaneId, secondPaneId);
+            Assert.True(window.RenderedTextContainsForSmokeTest("AGENTMUX_SURFACE_TWO"));
+
+            var selectFirstResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.SurfaceSelect, new
+            {
+                index = 0
+            });
+            Assert.True(selectFirstResponse.Ok, selectFirstResponse.Error);
+            var selectFirst = System.Text.Json.JsonSerializer.SerializeToElement(selectFirstResponse.Result, AgentMuxJson.Options);
+            Assert.True(selectFirst.GetProperty("selected").GetBoolean());
+            Assert.Equal(0, window.ActiveSurfaceIndexForSmokeTest);
+            Assert.Equal("Terminal", window.ActiveSurfaceTitleForSmokeTest);
+            Assert.Equal(firstPaneId, window.ActivePaneIdForSmokeTest);
+            Assert.True(window.RenderedTextContainsForSmokeTest("AGENTMUX_SURFACE_ONE"));
+            Assert.False(window.RenderedTextContainsForSmokeTest("AGENTMUX_SURFACE_TWO"));
+
+            var invalidSelectResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.SurfaceSelect, new
+            {
+                index = 99
+            });
+            Assert.True(invalidSelectResponse.Ok, invalidSelectResponse.Error);
+            var invalidSelect = System.Text.Json.JsonSerializer.SerializeToElement(invalidSelectResponse.Result, AgentMuxJson.Options);
+            Assert.False(invalidSelect.GetProperty("selected").GetBoolean());
+            Assert.Equal("index out of range", invalidSelect.GetProperty("reason").GetString());
+            Assert.Equal(0, window.ActiveSurfaceIndexForSmokeTest);
+
+            var ambiguousSelectResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.SurfaceSelect, new
+            {
+                index = 0,
+                id = createdSurfaceId
+            });
+            Assert.True(ambiguousSelectResponse.Ok, ambiguousSelectResponse.Error);
+            var ambiguousSelect = System.Text.Json.JsonSerializer.SerializeToElement(ambiguousSelectResponse.Result, AgentMuxJson.Options);
+            Assert.False(ambiguousSelect.GetProperty("selected").GetBoolean());
+            Assert.Equal("provide index or id, not both", ambiguousSelect.GetProperty("reason").GetString());
+            Assert.Equal(0, window.ActiveSurfaceIndexForSmokeTest);
+
+            var selectSecondResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.SurfaceSelect, new
+            {
+                id = createdSurfaceId
+            });
+            Assert.True(selectSecondResponse.Ok, selectSecondResponse.Error);
+            var selectSecond = System.Text.Json.JsonSerializer.SerializeToElement(selectSecondResponse.Result, AgentMuxJson.Options);
+            Assert.True(selectSecond.GetProperty("selected").GetBoolean());
+            Assert.Equal(1, window.ActiveSurfaceIndexForSmokeTest);
+            Assert.Equal("Scratch", window.ActiveSurfaceTitleForSmokeTest);
+            Assert.Equal(secondPaneId, window.ActivePaneIdForSmokeTest);
+            Assert.True(window.RenderedTextContainsForSmokeTest("AGENTMUX_SURFACE_TWO"));
+            Assert.False(window.RenderedTextContainsForSmokeTest("AGENTMUX_SURFACE_ONE"));
+            Assert.True(window.CachedTerminalPaneViewCountForSmokeTest >= 2);
+
+            var finalListResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.SurfaceList);
+            Assert.True(finalListResponse.Ok, finalListResponse.Error);
+            var finalList = System.Text.Json.JsonSerializer.SerializeToElement(finalListResponse.Result, AgentMuxJson.Options);
+            Assert.Equal(1, finalList.GetProperty("activeSurfaceIndex").GetInt32());
+            Assert.Equal(2, finalList.GetProperty("surfaces").GetArrayLength());
+            var finalSurfaces = finalList.GetProperty("surfaces").EnumerateArray().ToArray();
+            Assert.Contains(finalSurfaces, surface =>
+                surface.GetProperty("id").GetString() == createdSurfaceId
+                && surface.GetProperty("isActive").GetBoolean());
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
     private static async Task RunSessionRestoreSmokeAsync()
     {
         var root = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "agentmux-session-smoke", Guid.NewGuid().ToString("N"));
@@ -350,6 +469,15 @@ public sealed class MainWindowSmokeTests
                 Assert.Equal("https://example.com/session-restore", browserUrl);
                 Assert.Equal(PaneKind.Browser, source.ActivePaneKindForSmokeTest);
 
+                var createdSurface = await source.HandleRpcForSmokeTestAsync(AgentMuxMethods.SurfaceCreate, new
+                {
+                    title = "Persisted surface"
+                });
+                Assert.True(createdSurface.Ok, createdSurface.Error);
+                Assert.Equal(2, source.SurfaceCountForSmokeTest);
+                Assert.Equal(1, source.ActiveSurfaceIndexForSmokeTest);
+                source.SetActivePaneTextForSmokeTest("AGENTMUX_SURFACE_SESSION_TEXT");
+
                 await source.SaveSessionForSmokeTestAsync();
             }
             finally
@@ -368,6 +496,23 @@ public sealed class MainWindowSmokeTests
 
                 Assert.Equal(2, restored.WorkspaceCountForSmokeTest);
                 Assert.Equal("Persisted workspace", restored.ActiveWorkspaceTitleForSmokeTest);
+                Assert.Equal(2, restored.SurfaceCountForSmokeTest);
+                Assert.Equal(1, restored.ActiveSurfaceIndexForSmokeTest);
+                Assert.Equal("Persisted surface", restored.ActiveSurfaceTitleForSmokeTest);
+                Assert.Equal(1, restored.PaneCountForSmokeTest);
+                Assert.Equal(PaneKind.Terminal, restored.ActivePaneKindForSmokeTest);
+                Assert.Equal(0, restored.RenderedBrowserPaneCountForSmokeTest);
+                Assert.Equal(1, restored.RenderedTerminalPaneCountForSmokeTest);
+                Assert.True(restored.RenderedTextContainsForSmokeTest("AGENTMUX_SURFACE_SESSION_TEXT"));
+
+                var selectFirstSurface = await restored.HandleRpcForSmokeTestAsync(AgentMuxMethods.SurfaceSelect, new
+                {
+                    index = 0
+                });
+                Assert.True(selectFirstSurface.Ok, selectFirstSurface.Error);
+                var selectFirstResult = System.Text.Json.JsonSerializer.SerializeToElement(selectFirstSurface.Result, AgentMuxJson.Options);
+                Assert.True(selectFirstResult.GetProperty("selected").GetBoolean());
+                Assert.Equal(0, restored.ActiveSurfaceIndexForSmokeTest);
                 Assert.Equal(2, restored.PaneCountForSmokeTest);
                 Assert.Equal(PaneKind.Browser, restored.ActivePaneKindForSmokeTest);
                 Assert.Equal("https://example.com/session-restore", restored.ActivePaneUrlForSmokeTest);

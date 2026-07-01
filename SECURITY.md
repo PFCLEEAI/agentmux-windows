@@ -21,6 +21,7 @@ Security-sensitive areas:
 - environment variables,
 - browser session data,
 - browser console messages, browser network/download metadata, and downloaded files under the user's local app data directory.
+- session snapshot data under `%LOCALAPPDATA%\AgentMux\session.json`, including surface titles, pane titles, browser URLs, split layout, active pane ids, and best-effort terminal screen text.
 - manual desktop-smoke evidence, including screenshots, terminal output, local paths, URLs, notification text, helper metadata, and copied CLI output.
 
 Browser preview boundaries:
@@ -33,6 +34,12 @@ Browser preview boundaries:
 - HAR metadata export is an explicit path-scoped, metadata-only HAR-like preview for the active browser pane's currently retained in-memory network events. It writes to a caller-provided filesystem path and persists until the caller deletes it. It omits headers, cookies, post data, response bodies, downloaded file contents, tracing data, interception state, replay data, and telemetry, but full URLs may still contain tokens, account ids, query params, auth callbacks, or other secrets. The destination path may be a repository, synced folder, backup location, or shared folder.
 - The browser download log is local and in-memory. It includes URLs and local result paths, routes downloaded files under `%LOCALAPPDATA%\AgentMux\Downloads`, and `downloads-clear` clears only metadata, not downloaded files.
 - AgentMux does not scan downloads, quarantine files, auto-open downloads, upload downloaded files, or provide a download policy engine in this pre-alpha preview.
+
+Surface/session boundaries:
+
+- Surface tabs are local active-workspace state. Switching surfaces changes the rendered split tree but does not clear WebView2 profile data, cookies, local storage, browser logs, downloaded files, or hidden ConPTY/WebView2 resources.
+- Surface `list/create/select` commands are exposed through the same per-user named pipe as other automation APIs. Any same-user local process with pipe access should be treated as able to reveal hidden-surface titles, pane ids, pane counts, browser URLs, and last terminal screen text through session/API state.
+- `%LOCALAPPDATA%\AgentMux\session.json` is local app state, not an encrypted vault. Use disposable terminals and demo browser pages when producing shareable screenshots or manual smoke evidence.
 
 Manual desktop-smoke evidence boundaries:
 

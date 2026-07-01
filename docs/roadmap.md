@@ -17,7 +17,7 @@
 ## Sprint 2 - Workspace UI
 
 - Workspace sidebar. Implemented in WPF shell.
-- Surface tabs.
+- Surface tabs. Preview implemented with WPF active-workspace tabs, `+ Surface`, `surface.list`, `surface.create`, `surface.select`, and hosted app-smoke coverage.
 - Split pane layout. Implemented as recursive WPF panes with persisted split ratios.
 - WebView2/xterm renderer bridge. Preview implemented with WPF fallback.
 - Focus movement. Preview implemented with `surface.focus_pane`, `agentmux focus`, `Ctrl+Tab`, and `Ctrl+Alt+Arrow`.
@@ -28,6 +28,7 @@
 
 - `ping`, `status`, `tree`.
 - Workspace create/list/select.
+- Surface list/create/select. Preview implemented for active-workspace surfaces through RPC, CLI, and WPF tabs.
 - Split pane. Preview implemented.
 - Focus pane. Preview implemented.
 - Zoom and close pane. Preview implemented.
@@ -47,7 +48,7 @@
 ## Sprint 5 - Persistence
 
 - JSON session snapshot. Implemented through `SessionSnapshotStore`.
-- App-level layout restore. Implemented for workspaces, active workspace, split layout, active pane, pane titles, browser URLs, and last terminal screen text.
+- App-level layout restore. Implemented for workspaces, active workspace, surfaces, active surface, split layout, active pane, pane titles, browser URLs, and last terminal screen text.
 - Corrupt snapshot fallback. Implemented so bad `session.json` starts with a default workspace.
 - Working directory restore. Implemented in the saved model for workspaces and panes.
 - Scrollback best effort. Preview implemented through `PaneState.LastScreenText`; live terminal processes are not restored.
@@ -55,7 +56,7 @@
 ## Sprint 5.5 - Windows UI Smoke
 
 - WPF split-pane composition smoke. Implemented in Windows CI.
-- WPF session restore smoke. Implemented in Windows CI with a temp snapshot store.
+- WPF session restore smoke. Implemented in Windows CI with a temp snapshot store, including multi-surface active-surface restore.
 - Manual desktop-smoke proof packet. Implemented as a public runbook plus packaged PowerShell helper for collecting Windows desktop evidence.
 - Real visible desktop smoke. Still required before release-ready status.
 
