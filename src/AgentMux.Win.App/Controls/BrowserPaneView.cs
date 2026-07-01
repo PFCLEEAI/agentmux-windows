@@ -1,7 +1,10 @@
+using System.IO;
+using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.Wpf;
 
 namespace AgentMux.Win.App.Controls;
@@ -14,12 +17,17 @@ internal sealed class BrowserPaneView : Grid
     private readonly Button _goButton;
     private readonly TextBlock _fallback;
     private readonly WebView2 _webView;
+    private Task? _readyTask;
+    private TaskCompletionSource? _navigationCompletion;
+    private ulong? _pendingNavigationId;
     private string _url = DefaultUrl;
-    private bool _webViewInitializing;
+    private bool _webViewEventsWired;
     private bool _webViewReady;
     private bool _webViewFailed;
 
     public event EventHandler<string>? NavigateRequested;
+
+    public bool IsAutomationReady => _webViewReady && !_webViewFailed && _webView.CoreWebView2 is not null;
 
     public BrowserPaneView()
     {
@@ -101,29 +109,12 @@ internal sealed class BrowserPaneView : Grid
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
-        if (_webViewReady || _webViewFailed || _webViewInitializing)
-        {
-            return;
-        }
-
-        _webViewInitializing = true;
         try
         {
-            await _webView.EnsureCoreWebView2Async().ConfigureAwait(true);
-            _webViewReady = true;
-            _webView.Visibility = Visibility.Visible;
-            _fallback.Visibility = Visibility.Collapsed;
-            NavigateWebView();
+            await EnsureReadyAsync().ConfigureAwait(true);
         }
         catch
         {
-            _webViewFailed = true;
-            _webView.Visibility = Visibility.Collapsed;
-            _fallback.Visibility = Visibility.Visible;
-        }
-        finally
-        {
-            _webViewInitializing = false;
         }
     }
 
@@ -142,12 +133,98 @@ internal sealed class BrowserPaneView : Grid
 
         try
         {
+            _navigationCompletion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            _pendingNavigationId = null;
             _webView.CoreWebView2.Navigate(uri.AbsoluteUri);
         }
         catch
         {
+            _navigationCompletion?.TrySetResult();
             UseFallback();
         }
+    }
+
+    public async Task<string> EvaluateScriptAsync(string script)
+    {
+        await EnsureReadyAsync().ConfigureAwait(true);
+        if (string.IsNullOrWhiteSpace(script))
+        {
+            return "null";
+        }
+
+        var result = await _webView.CoreWebView2!.ExecuteScriptAsync(script).ConfigureAwait(true);
+        await WaitForNavigationAsync(allowStartDelay: true).ConfigureAwait(true);
+        return result;
+    }
+
+    public async Task<string> ClickAsync(string selector)
+    {
+        if (string.IsNullOrWhiteSpace(selector))
+        {
+            return """{"ok":false,"reason":"selector is required"}""";
+        }
+
+        return await EvaluateScriptAsync($$"""
+            (() => {
+              const selector = {{JsonSerializer.Serialize(selector)}};
+              const element = document.querySelector(selector);
+              if (!element) {
+                return { ok: false, reason: "selector not found", selector };
+              }
+
+              element.click();
+              return { ok: true, selector };
+            })()
+            """).ConfigureAwait(true);
+    }
+
+    public async Task<string> FillAsync(string selector, string text)
+    {
+        if (string.IsNullOrWhiteSpace(selector))
+        {
+            return """{"ok":false,"reason":"selector is required"}""";
+        }
+
+        return await EvaluateScriptAsync($$"""
+            (() => {
+              const selector = {{JsonSerializer.Serialize(selector)}};
+              const value = {{JsonSerializer.Serialize(text)}};
+              const element = document.querySelector(selector);
+              if (!element) {
+                return { ok: false, reason: "selector not found", selector };
+              }
+
+              if ("value" in element) {
+                element.value = value;
+              } else {
+                element.textContent = value;
+              }
+
+              element.dispatchEvent(new Event("input", { bubbles: true }));
+              element.dispatchEvent(new Event("change", { bubbles: true }));
+              return { ok: true, selector };
+            })()
+            """).ConfigureAwait(true);
+    }
+
+    public async Task<string> CapturePngAsync(string path)
+    {
+        await EnsureReadyAsync().ConfigureAwait(true);
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            throw new InvalidOperationException("screenshot path is required");
+        }
+
+        var fullPath = Path.GetFullPath(path);
+        var directory = Path.GetDirectoryName(fullPath);
+        if (!string.IsNullOrWhiteSpace(directory))
+        {
+            Directory.CreateDirectory(directory);
+        }
+
+        await using var stream = File.Create(fullPath);
+        await _webView.CoreWebView2!.CapturePreviewAsync(CoreWebView2CapturePreviewImageFormat.Png, stream).ConfigureAwait(true);
+        return fullPath;
     }
 
     private void AddressBox_KeyDown(object sender, KeyEventArgs e)
@@ -166,10 +243,94 @@ internal sealed class BrowserPaneView : Grid
         NavigateRequested?.Invoke(this, _addressBox.Text);
     }
 
+    private async Task EnsureReadyAsync()
+    {
+        if (!IsAutomationReady)
+        {
+            if (_webViewFailed)
+            {
+                throw new InvalidOperationException("browser runtime is not ready");
+            }
+
+            _readyTask ??= InitializeWebViewAsync();
+            await _readyTask.ConfigureAwait(true);
+        }
+
+        await WaitForNavigationAsync().ConfigureAwait(true);
+    }
+
+    private async Task InitializeWebViewAsync()
+    {
+        try
+        {
+            await _webView.EnsureCoreWebView2Async().ConfigureAwait(true);
+            WireWebViewEvents();
+            _webViewReady = true;
+            _webView.Visibility = Visibility.Visible;
+            _fallback.Visibility = Visibility.Collapsed;
+            NavigateWebView();
+        }
+        catch (Exception ex)
+        {
+            UseFallback();
+            throw new InvalidOperationException("browser runtime is not ready", ex);
+        }
+    }
+
+    private void WireWebViewEvents()
+    {
+        if (_webViewEventsWired || _webView.CoreWebView2 is null)
+        {
+            return;
+        }
+
+        _webView.CoreWebView2.NavigationStarting += (_, args) =>
+        {
+            _pendingNavigationId = args.NavigationId;
+            if (_navigationCompletion is null || _navigationCompletion.Task.IsCompleted)
+            {
+                _navigationCompletion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            }
+        };
+        _webView.CoreWebView2.NavigationCompleted += (_, args) =>
+        {
+            if (_pendingNavigationId == args.NavigationId)
+            {
+                _pendingNavigationId = null;
+                _navigationCompletion?.TrySetResult();
+            }
+        };
+        _webViewEventsWired = true;
+    }
+
+    private async Task WaitForNavigationAsync(bool allowStartDelay = false)
+    {
+        if (allowStartDelay && (_navigationCompletion is null || _navigationCompletion.Task.IsCompleted))
+        {
+            await Task.Delay(100).ConfigureAwait(true);
+        }
+
+        var navigationTask = _navigationCompletion?.Task;
+        if (navigationTask is null || navigationTask.IsCompleted)
+        {
+            return;
+        }
+
+        try
+        {
+            await navigationTask.WaitAsync(TimeSpan.FromSeconds(3)).ConfigureAwait(true);
+        }
+        catch (TimeoutException ex)
+        {
+            throw new InvalidOperationException("browser navigation is still loading", ex);
+        }
+    }
+
     private void UseFallback()
     {
         _webViewReady = false;
         _webViewFailed = true;
+        _navigationCompletion?.TrySetResult();
         _webView.Visibility = Visibility.Collapsed;
         _fallback.Visibility = Visibility.Visible;
     }

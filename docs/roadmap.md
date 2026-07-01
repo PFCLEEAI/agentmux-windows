@@ -56,7 +56,7 @@
 
 - WebView2 browser pane. Preview implemented with WPF fallback.
 - Open/navigate. Preview implemented through `surface.open_url`, `agentmux open-url`, and the browser pane address bar.
-- Snapshot/click/fill/eval.
-- Screenshot.
+- Eval/click/fill. Preview implemented through lightweight WebView2 JavaScript helpers.
+- Screenshot. Preview implemented as WebView2 PNG capture to a local path.
 
-Browser automation parity still needs click/fill/eval/screenshot and visible WebView2 runtime smoke.
+Browser automation still needs visible WebView2 runtime smoke and richer Playwright-style semantics for sites that need pointer/key events rather than basic DOM helpers.

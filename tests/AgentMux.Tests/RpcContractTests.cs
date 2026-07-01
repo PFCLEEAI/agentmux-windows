@@ -45,4 +45,13 @@ public sealed class RpcContractTests
     {
         Assert.Equal("surface.open_url", AgentMuxMethods.OpenUrl);
     }
+
+    [Fact]
+    public void BrowserAutomationMethodsAreStable()
+    {
+        Assert.Equal("surface.eval_js", AgentMuxMethods.BrowserEval);
+        Assert.Equal("surface.click_selector", AgentMuxMethods.BrowserClick);
+        Assert.Equal("surface.fill_selector", AgentMuxMethods.BrowserFill);
+        Assert.Equal("surface.capture_screenshot", AgentMuxMethods.BrowserScreenshot);
+    }
 }

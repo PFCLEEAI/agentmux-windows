@@ -56,6 +56,10 @@ public static class AgentMuxMethods
     public const string SendKey = "surface.send_key";
     public const string ReadScreen = "surface.read_screen";
     public const string OpenUrl = "surface.open_url";
+    public const string BrowserEval = "surface.eval_js";
+    public const string BrowserClick = "surface.click_selector";
+    public const string BrowserFill = "surface.fill_selector";
+    public const string BrowserScreenshot = "surface.capture_screenshot";
 }
 
 public static class AgentMuxJson

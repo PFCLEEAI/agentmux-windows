@@ -35,6 +35,7 @@ AgentMux.Win.App
 - Terminal panes own independent ConPTY sessions, started lazily when a pane becomes active or receives input.
 - Terminal panes render through a cached WebView2/xterm bridge with a WPF text fallback. The bridge displays current pane text and keeps `PaneState.LastScreenText` as the automation/read-screen source.
 - Browser panes render through a cached WebView2 bridge with a WPF fallback. `PaneState.Url` is the current browser navigation source, and `surface.open_url` converts or navigates the active pane.
+- Browser automation uses the active browser pane and WebView2 directly: `surface.eval_js`, `surface.click_selector`, `surface.fill_selector`, and `surface.capture_screenshot`. These are local trust-boundary APIs; JavaScript executes in the active browser pane, and screenshots write to local paths.
 
 ## IPC
 

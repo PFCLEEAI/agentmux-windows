@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.IO;
 using System.Text;
 using System.Text.Json;
 using System.Windows;
@@ -133,18 +134,22 @@ public partial class MainWindow : Window
         e.Handled = CycleActivePane(Keyboard.Modifiers.HasFlag(ModifierKeys.Shift));
     }
 
-    private Task<AgentMuxResponse> HandleRpcAsync(AgentMuxRequest request, CancellationToken cancellationToken)
+    private async Task<AgentMuxResponse> HandleRpcAsync(AgentMuxRequest request, CancellationToken cancellationToken)
     {
-        var response = Dispatcher.CheckAccess()
-            ? HandleRpcOnUi(request)
-            : Dispatcher.Invoke(() => HandleRpcOnUi(request));
+        if (Dispatcher.CheckAccess())
+        {
+            return await HandleRpcOnUiAsync(request, cancellationToken).ConfigureAwait(true);
+        }
 
-        return Task.FromResult(response);
+        var responseTask = await Dispatcher.InvokeAsync(() => HandleRpcOnUiAsync(request, cancellationToken)).Task.ConfigureAwait(false);
+        return await responseTask.ConfigureAwait(false);
     }
 
-    private AgentMuxResponse HandleRpcOnUi(AgentMuxRequest request)
+    private async Task<AgentMuxResponse> HandleRpcOnUiAsync(AgentMuxRequest request, CancellationToken cancellationToken)
     {
-        var response = request.Method switch
+        cancellationToken.ThrowIfCancellationRequested();
+
+        AgentMuxResponse response = request.Method switch
         {
             AgentMuxMethods.Ping => AgentMuxResponse.Success(request.Id, new { pong = true }),
             AgentMuxMethods.Status => AgentMuxResponse.Success(request.Id, BuildStatus()),
@@ -158,10 +163,18 @@ public partial class MainWindow : Window
             AgentMuxMethods.SendKey => AgentMuxResponse.Success(request.Id, HandleSendKey(request.Params)),
             AgentMuxMethods.ReadScreen => AgentMuxResponse.Success(request.Id, new { text = ActivePane()?.LastScreenText ?? "" }),
             AgentMuxMethods.OpenUrl => AgentMuxResponse.Success(request.Id, HandleOpenUrl(request.Params)),
+            AgentMuxMethods.BrowserEval => AgentMuxResponse.Success(request.Id, await HandleBrowserEvalAsync(request.Params).ConfigureAwait(true)),
+            AgentMuxMethods.BrowserClick => AgentMuxResponse.Success(request.Id, await HandleBrowserClickAsync(request.Params).ConfigureAwait(true)),
+            AgentMuxMethods.BrowserFill => AgentMuxResponse.Success(request.Id, await HandleBrowserFillAsync(request.Params).ConfigureAwait(true)),
+            AgentMuxMethods.BrowserScreenshot => AgentMuxResponse.Success(request.Id, await HandleBrowserScreenshotAsync(request.Params).ConfigureAwait(true)),
             _ => AgentMuxResponse.Failure(request.Id, $"Unsupported method: {request.Method}")
         };
 
-        RefreshWorkspaceView();
+        if (!IsBrowserAutomationMethod(request.Method))
+        {
+            RefreshWorkspaceView();
+        }
+
         return response;
     }
 
@@ -268,6 +281,63 @@ public partial class MainWindow : Window
 
         var url = OpenBrowserInPane(pane, parsed?.Url);
         return new { opened = true, paneId = pane.Id, url };
+    }
+
+    private async Task<object> HandleBrowserEvalAsync(JsonElement? parameters)
+    {
+        var parsed = Deserialize<BrowserEvalParams>(parameters);
+        if (string.IsNullOrWhiteSpace(parsed?.Script))
+        {
+            return new { ok = false, reason = "script is required" };
+        }
+
+        return await RunBrowserScriptAsync(view => view.EvaluateScriptAsync(parsed.Script)).ConfigureAwait(true);
+    }
+
+    private async Task<object> HandleBrowserClickAsync(JsonElement? parameters)
+    {
+        var parsed = Deserialize<BrowserSelectorParams>(parameters);
+        if (string.IsNullOrWhiteSpace(parsed?.Selector))
+        {
+            return new { ok = false, reason = "selector is required" };
+        }
+
+        return await RunBrowserScriptAsync(view => view.ClickAsync(parsed.Selector)).ConfigureAwait(true);
+    }
+
+    private async Task<object> HandleBrowserFillAsync(JsonElement? parameters)
+    {
+        var parsed = Deserialize<BrowserFillParams>(parameters);
+        if (string.IsNullOrWhiteSpace(parsed?.Selector))
+        {
+            return new { ok = false, reason = "selector is required" };
+        }
+
+        return await RunBrowserScriptAsync(view => view.FillAsync(parsed.Selector, parsed.Text ?? "")).ConfigureAwait(true);
+    }
+
+    private async Task<object> HandleBrowserScreenshotAsync(JsonElement? parameters)
+    {
+        var parsed = Deserialize<BrowserScreenshotParams>(parameters);
+        if (string.IsNullOrWhiteSpace(parsed?.Path))
+        {
+            return new { ok = false, reason = "path is required" };
+        }
+
+        if (!TryGetActiveBrowserView(out var view, out var reason))
+        {
+            return new { ok = false, reason };
+        }
+
+        try
+        {
+            var path = await view.CapturePngAsync(parsed.Path).ConfigureAwait(true);
+            return new { ok = true, path };
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or IOException or UnauthorizedAccessException or System.Runtime.InteropServices.COMException)
+        {
+            return new { ok = false, reason = ex.Message };
+        }
     }
 
     private async Task<ConPtySession?> EnsurePanePtyAsync(PaneState? pane)
@@ -892,6 +962,72 @@ public partial class MainWindow : Window
         return normalizedUrl;
     }
 
+    private async Task<object> RunBrowserScriptAsync(Func<BrowserPaneView, Task<string>> action)
+    {
+        if (!TryGetActiveBrowserView(out var view, out var reason))
+        {
+            return new { ok = false, reason };
+        }
+
+        try
+        {
+            var resultJson = await action(view).ConfigureAwait(true);
+            var result = ParseScriptJson(resultJson);
+            if (result is JsonElement { ValueKind: JsonValueKind.Object } element
+                && element.TryGetProperty("ok", out _))
+            {
+                return element.Clone();
+            }
+
+            return new { ok = true, result };
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or ArgumentException or System.Runtime.InteropServices.COMException)
+        {
+            return new { ok = false, reason = ex.Message };
+        }
+    }
+
+    private bool TryGetActiveBrowserView(out BrowserPaneView view, out string reason)
+    {
+        view = null!;
+        var pane = ActivePane();
+        if (pane?.Kind != PaneKind.Browser)
+        {
+            reason = "active pane is not a browser";
+            return false;
+        }
+
+        if (!_browserViews.TryGetValue(pane.Id, out view!))
+        {
+            reason = "browser view is not loaded";
+            return false;
+        }
+
+        reason = "";
+        return true;
+    }
+
+    private static object ParseScriptJson(string resultJson)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(resultJson);
+            return document.RootElement.Clone();
+        }
+        catch (JsonException)
+        {
+            return resultJson;
+        }
+    }
+
+    private static bool IsBrowserAutomationMethod(string method)
+    {
+        return method is AgentMuxMethods.BrowserEval
+            or AgentMuxMethods.BrowserClick
+            or AgentMuxMethods.BrowserFill
+            or AgentMuxMethods.BrowserScreenshot;
+    }
+
     private void StopPanePty(string paneId)
     {
         _ptyStartFailedPaneIds.Remove(paneId);
@@ -1150,5 +1286,26 @@ public partial class MainWindow : Window
     private sealed class OpenUrlParams
     {
         public string? Url { get; set; }
+    }
+
+    private sealed class BrowserEvalParams
+    {
+        public string? Script { get; set; }
+    }
+
+    private sealed class BrowserSelectorParams
+    {
+        public string? Selector { get; set; }
+    }
+
+    private sealed class BrowserFillParams
+    {
+        public string? Selector { get; set; }
+        public string? Text { get; set; }
+    }
+
+    private sealed class BrowserScreenshotParams
+    {
+        public string? Path { get; set; }
     }
 }

@@ -15,5 +15,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\AgentMux.Core\AgentMux.Core.csproj" />
+    <ProjectReference Include="..\..\src\AgentMux.Cli\AgentMux.Cli.csproj" />
   </ItemGroup>
 </Project>

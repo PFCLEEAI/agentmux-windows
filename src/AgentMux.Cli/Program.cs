@@ -1,4 +1,5 @@
 using System.IO.Pipes;
+using System.IO;
 using System.Text.Json;
 using AgentMux.Core.Ipc;
 
@@ -73,9 +74,21 @@ public static class Program
 
     private static async Task<AgentMuxResponse> HandleBrowserAsync(NamedPipeRpcClient client, string[] args)
     {
+        var request = ParseBrowserRequestForTests(args, out var error);
+        if (request is null)
+        {
+            return AgentMuxResponse.Failure("", error);
+        }
+
+        return await client.SendAsync(request.Method, request.Parameters).ConfigureAwait(false);
+    }
+
+    internal static BrowserRequest? ParseBrowserRequestForTests(string[] args, out string error)
+    {
         if (args.Length == 0)
         {
-            return AgentMuxResponse.Failure("", "Usage: agentmux browser open <url>");
+            error = "Usage: agentmux browser open <url>";
+            return null;
         }
 
         if (args[0].Equals("open", StringComparison.OrdinalIgnoreCase)
@@ -83,18 +96,80 @@ public static class Program
         {
             if (args.Length == 1)
             {
-                return AgentMuxResponse.Failure("", "Usage: agentmux browser open <url>");
+                error = "Usage: agentmux browser open <url>";
+                return null;
             }
 
-            return await client.SendAsync(AgentMuxMethods.OpenUrl, ParseOpenUrl(args[1..])).ConfigureAwait(false);
+            error = "";
+            return new BrowserRequest(AgentMuxMethods.OpenUrl, ParseOpenUrl(args[1..]));
+        }
+
+        if (args[0].Equals("eval", StringComparison.OrdinalIgnoreCase))
+        {
+            var named = ParseNamed(args[1..]);
+            var script = NamedOrJoined(named, "script");
+            if (string.IsNullOrWhiteSpace(script))
+            {
+                error = "Usage: agentmux browser eval <script>";
+                return null;
+            }
+
+            error = "";
+            return new BrowserRequest(AgentMuxMethods.BrowserEval, new { script });
+        }
+
+        if (args[0].Equals("click", StringComparison.OrdinalIgnoreCase))
+        {
+            var named = ParseNamed(args[1..]);
+            var selector = NamedOrJoined(named, "selector");
+            if (string.IsNullOrWhiteSpace(selector))
+            {
+                error = "Usage: agentmux browser click <selector>";
+                return null;
+            }
+
+            error = "";
+            return new BrowserRequest(AgentMuxMethods.BrowserClick, new { selector });
+        }
+
+        if (args[0].Equals("fill", StringComparison.OrdinalIgnoreCase))
+        {
+            var named = ParseNamed(args[1..]);
+            var selectorWasNamed = named.ContainsKey("selector");
+            var selector = NamedOrFirst(named, "selector");
+            var text = NamedOrRemaining(named, "text", selectorWasNamed ? 0 : 1);
+            if (string.IsNullOrWhiteSpace(selector))
+            {
+                error = "Usage: agentmux browser fill <selector> <text>";
+                return null;
+            }
+
+            error = "";
+            return new BrowserRequest(AgentMuxMethods.BrowserFill, new { selector, text = text ?? "" });
+        }
+
+        if (args[0].Equals("screenshot", StringComparison.OrdinalIgnoreCase))
+        {
+            var named = ParseNamed(args[1..]);
+            var path = NamedOrFirst(named, "path");
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                error = "Usage: agentmux browser screenshot <path>";
+                return null;
+            }
+
+            error = "";
+            return new BrowserRequest(AgentMuxMethods.BrowserScreenshot, new { path = Path.GetFullPath(path) });
         }
 
         if (args.Length == 1)
         {
-            return await client.SendAsync(AgentMuxMethods.OpenUrl, ParseOpenUrl(args)).ConfigureAwait(false);
+            error = "";
+            return new BrowserRequest(AgentMuxMethods.OpenUrl, ParseOpenUrl(args));
         }
 
-        return AgentMuxResponse.Failure("", $"Unknown browser command: {args[0]}");
+        error = $"Unknown browser command: {args[0]}";
+        return null;
     }
 
     private static async Task<AgentMuxResponse> HandleOpenUrlAsync(NamedPipeRpcClient client, string[] args)
@@ -116,6 +191,36 @@ public static class Program
         }
 
         return named;
+    }
+
+    private static string? NamedOrJoined(Dictionary<string, string> named, string key)
+    {
+        return named.TryGetValue(key, out var value) ? value : NamedOrRemaining(named, key, 0);
+    }
+
+    private static string? NamedOrFirst(Dictionary<string, string> named, string key)
+    {
+        return named.TryGetValue(key, out var value)
+            ? value
+            : named.TryGetValue("_arg0", out var first)
+                ? first
+                : null;
+    }
+
+    private static string? NamedOrRemaining(Dictionary<string, string> named, string key, int skip)
+    {
+        if (named.TryGetValue(key, out var value))
+        {
+            return value;
+        }
+
+        var values = new List<string>();
+        for (var index = skip; named.TryGetValue($"_arg{index}", out var arg); index++)
+        {
+            values.Add(arg);
+        }
+
+        return values.Count == 0 ? null : string.Join(' ', values);
     }
 
     private static object ParseNotify(string[] args)
@@ -194,6 +299,8 @@ public static class Program
 
     private static bool IsHelp(string value) => value is "-h" or "--help" or "help";
 
+    internal sealed record BrowserRequest(string Method, object Parameters);
+
     private static void PrintHelp()
     {
         Console.WriteLine("""
@@ -211,6 +318,10 @@ public static class Program
           agentmux split down
           agentmux open-url https://example.com
           agentmux browser open https://example.com
+          agentmux browser eval "document.title"
+          agentmux browser click "#submit"
+          agentmux browser fill "#prompt" "write tests"
+          agentmux browser screenshot .\browser.png
           agentmux send "npm test"
           agentmux send-key Enter
           agentmux read-screen --lines 50
