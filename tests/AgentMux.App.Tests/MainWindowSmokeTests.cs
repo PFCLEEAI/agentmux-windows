@@ -4,6 +4,7 @@ using System.Windows.Input;
 using System.Windows.Threading;
 using AgentMux.Core.Ipc;
 using AgentMux.Core.Models;
+using AgentMux.Core.Persistence;
 using AgentMux.Win.App.Controls;
 using AgentMux.Win.App.Input;
 using AgentMux.Win.App.Views;
@@ -29,7 +30,7 @@ public sealed class MainWindowSmokeTests
         {
             EnsureApplicationResources();
 
-            var window = new MainWindow();
+            var window = new MainWindow(ShortcutSettings.Default());
             try
             {
                 window.InitializeForSmokeTest();
@@ -198,14 +199,105 @@ public sealed class MainWindowSmokeTests
                 fallbackWindow.Close();
             }
 
+            await RunSessionRestoreSmokeAsync();
             await RunHostedWebView2RuntimeSmokeAsync();
             await RunActiveBrowserRpcSmokeAsync();
         });
     }
 
+    private static async Task RunSessionRestoreSmokeAsync()
+    {
+        var root = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "agentmux-session-smoke", Guid.NewGuid().ToString("N"));
+        var store = new SessionSnapshotStore(root);
+
+        try
+        {
+            var source = new MainWindow(
+                ShortcutSettings.Default(),
+                store,
+                restoreSessionOnStartup: false,
+                persistSession: true);
+            try
+            {
+                source.InitializeForSmokeTest();
+
+                var createdWorkspace = await source.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceCreate, new
+                {
+                    title = "Persisted workspace",
+                    cwd = root
+                });
+                Assert.True(createdWorkspace.Ok, createdWorkspace.Error);
+
+                source.SetActivePaneTextForSmokeTest("AGENTMUX_SESSION_RESTORE_TEXT");
+                Assert.True(source.SplitActivePaneForSmokeTest(SplitDirection.Right));
+                var browserUrl = source.OpenBrowserInActivePaneForSmokeTest("example.com/session-restore");
+                Assert.Equal("https://example.com/session-restore", browserUrl);
+                Assert.Equal(PaneKind.Browser, source.ActivePaneKindForSmokeTest);
+
+                await source.SaveSessionForSmokeTestAsync();
+            }
+            finally
+            {
+                source.Close();
+            }
+
+            var restored = new MainWindow(
+                ShortcutSettings.Default(),
+                store,
+                restoreSessionOnStartup: true,
+                persistSession: false);
+            try
+            {
+                await restored.InitializeForSmokeTestAsync();
+
+                Assert.Equal(2, restored.WorkspaceCountForSmokeTest);
+                Assert.Equal("Persisted workspace", restored.ActiveWorkspaceTitleForSmokeTest);
+                Assert.Equal(2, restored.PaneCountForSmokeTest);
+                Assert.Equal(PaneKind.Browser, restored.ActivePaneKindForSmokeTest);
+                Assert.Equal("https://example.com/session-restore", restored.ActivePaneUrlForSmokeTest);
+                Assert.Equal(1, restored.RenderedBrowserPaneCountForSmokeTest);
+                Assert.Equal(1, restored.RenderedTerminalPaneCountForSmokeTest);
+                Assert.True(restored.RenderedTextContainsForSmokeTest("AGENTMUX_SESSION_RESTORE_TEXT"));
+            }
+            finally
+            {
+                restored.Close();
+            }
+
+            var corruptRoot = System.IO.Path.Combine(root, "corrupt");
+            var corruptStore = new SessionSnapshotStore(corruptRoot);
+            await System.IO.File.WriteAllTextAsync(corruptStore.FilePath, "{ not-json");
+            var fallback = new MainWindow(
+                ShortcutSettings.Default(),
+                corruptStore,
+                restoreSessionOnStartup: true,
+                persistSession: false);
+            try
+            {
+                await fallback.InitializeForSmokeTestAsync();
+
+                Assert.Equal(1, fallback.WorkspaceCountForSmokeTest);
+                Assert.Equal("Default", fallback.ActiveWorkspaceTitleForSmokeTest);
+                Assert.Equal(1, fallback.PaneCountForSmokeTest);
+                Assert.Equal(PaneKind.Terminal, fallback.ActivePaneKindForSmokeTest);
+            }
+            finally
+            {
+                fallback.Close();
+            }
+        }
+        finally
+        {
+            if (System.IO.Directory.Exists(root))
+            {
+                System.IO.Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
     private static async Task RunActiveBrowserRpcSmokeAsync()
     {
-        var window = new MainWindow
+        var window = new MainWindow(ShortcutSettings.Default())
         {
             Width = 900,
             Height = 560,

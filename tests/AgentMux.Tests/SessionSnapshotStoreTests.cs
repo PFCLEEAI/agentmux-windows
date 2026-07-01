@@ -6,6 +6,18 @@ namespace AgentMux.Tests;
 public sealed class SessionSnapshotStoreTests
 {
     [Fact]
+    public async Task LoadReturnsNullWhenSnapshotIsMissing()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"agentmux-tests-{Guid.NewGuid():N}");
+        var store = new SessionSnapshotStore(root);
+
+        var loaded = await store.LoadAsync();
+
+        Assert.Null(loaded);
+        Directory.Delete(root, recursive: true);
+    }
+
+    [Fact]
     public async Task SaveAndLoadRoundTripsSnapshot()
     {
         var root = Path.Combine(Path.GetTempPath(), $"agentmux-tests-{Guid.NewGuid():N}");
@@ -38,7 +50,21 @@ public sealed class SessionSnapshotStoreTests
         Assert.Equal(paneId, loaded.Workspaces[0].Surfaces[0].Root.Pane?.Id);
         Assert.Equal(PaneKind.Browser, loaded.Workspaces[0].Surfaces[0].Root.Pane?.Kind);
         Assert.Equal("https://example.com", loaded.Workspaces[0].Surfaces[0].Root.Pane?.Url);
+        Assert.Empty(Directory.GetFiles(root, "*.tmp"));
 
+        Directory.Delete(root, recursive: true);
+    }
+
+    [Fact]
+    public async Task LoadReturnsNullForCorruptSnapshot()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"agentmux-tests-{Guid.NewGuid():N}");
+        var store = new SessionSnapshotStore(root);
+        await File.WriteAllTextAsync(store.FilePath, "{ not-json");
+
+        var loaded = await store.LoadAsync();
+
+        Assert.Null(loaded);
         Directory.Delete(root, recursive: true);
     }
 }

@@ -18,9 +18,11 @@ It is inspired by the terminal/workspace workflow category popularized by cmux, 
 
 Pre-alpha scaffold.
 
-This repository currently contains the public-safe foundation: project structure, core models, OSC notification parsing, named-pipe JSON-RPC contracts, CLI skeleton, a WPF shell with workspace sidebar and recursive split panes, per-pane ConPTY session hosting, a WebView2/xterm terminal-renderer bridge with WPF fallback, a WebView2 browser-pane preview, direct terminal/browser input, lightweight browser automation commands, configurable app shortcuts, tests, CI, a framework-dependent Windows package artifact, and a prerelease ZIP workflow. Broader browser automation semantics and true manual Windows desktop smoke remain future implementation work.
+This repository currently contains the public-safe foundation: project structure, core models, OSC notification parsing, named-pipe JSON-RPC contracts, CLI skeleton, a WPF shell with workspace sidebar and recursive split panes, per-pane ConPTY session hosting, app-level session restore, a WebView2/xterm terminal-renderer bridge with WPF fallback, a WebView2 browser-pane preview, direct terminal/browser input, lightweight browser automation commands, configurable app shortcuts, tests, CI, a framework-dependent Windows package artifact, and a prerelease ZIP workflow. Broader browser automation semantics and true manual Windows desktop smoke remain future implementation work.
 
 Required Windows CI proves the solution restores, builds, runs deterministic unit tests, composes the WPF split-pane window in an STA smoke test, and passes a headless ConPTY smoke test for command output plus stdin echo. A real visible Windows desktop smoke test is still required before calling this release-ready.
+
+AgentMux saves `%LOCALAPPDATA%\AgentMux\session.json` and restores workspaces, active workspace, split layout, active pane, pane titles, browser URLs, and last terminal screen text. It does not restore live terminal processes; restored terminal panes start fresh ConPTY sessions as needed.
 
 ## Tech Stack
 

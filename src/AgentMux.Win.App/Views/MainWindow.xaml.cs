@@ -8,6 +8,7 @@ using System.Windows.Input;
 using System.Windows.Media;
 using AgentMux.Core.Ipc;
 using AgentMux.Core.Models;
+using AgentMux.Core.Persistence;
 using AgentMux.Win.App.Controls;
 using AgentMux.Win.App.Input;
 using AgentMux.Win.Pty;
@@ -23,39 +24,58 @@ public partial class MainWindow : Window
     private readonly Dictionary<string, BrowserPaneView> _browserViews = [];
     private readonly HashSet<string> _ptyStartFailedPaneIds = [];
     private readonly ShortcutSettings _shortcutSettings;
+    private readonly SessionSnapshotStore? _sessionStore;
+    private readonly bool _restoreSessionOnStartup;
+    private readonly bool _persistSession;
     private NamedPipeRpcServer? _server;
+    private CancellationTokenSource? _sessionSaveDebounce;
     private int _activeWorkspaceIndex;
 
-    public MainWindow() : this(ShortcutSettings.Load())
+    public MainWindow()
+        : this(ShortcutSettings.Load(), new SessionSnapshotStore(), restoreSessionOnStartup: true, persistSession: true)
     {
     }
 
     internal MainWindow(ShortcutSettings shortcutSettings)
+        : this(shortcutSettings, sessionStore: null, restoreSessionOnStartup: false, persistSession: false)
+    {
+    }
+
+    internal MainWindow(
+        ShortcutSettings shortcutSettings,
+        SessionSnapshotStore? sessionStore,
+        bool restoreSessionOnStartup,
+        bool persistSession)
     {
         _shortcutSettings = shortcutSettings;
+        _sessionStore = sessionStore;
+        _restoreSessionOnStartup = restoreSessionOnStartup;
+        _persistSession = persistSession;
         InitializeComponent();
-        _workspaces.Add(new WorkspaceState
-        {
-            Title = "Default",
-            WorkingDirectory = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)
-        });
+        EnsureDefaultWorkspace();
     }
 
     private async void Window_Loaded(object sender, RoutedEventArgs e)
     {
-        WorkspaceList.ItemsSource = _workspaces;
-        WorkspaceList.SelectedIndex = 0;
+        if (_restoreSessionOnStartup)
+        {
+            await LoadSessionSnapshotAsync().ConfigureAwait(true);
+        }
+
+        InitializeWorkspaceListForCurrentSession();
 
         _server = new NamedPipeRpcServer(HandleRpcAsync);
         _server.Start();
         PipeStatus.Text = $"Pipe: {AgentMuxPipe.ForCurrentUser()}";
 
-        RefreshWorkspaceView();
         await EnsurePanePtyAsync(ActivePane()).ConfigureAwait(false);
     }
 
     private async void Window_Closed(object? sender, EventArgs e)
     {
+        _sessionSaveDebounce?.Cancel();
+        await SaveSessionSnapshotAsync().ConfigureAwait(true);
+
         var sessions = _ptySessions.Values.ToArray();
         _ptySessions.Clear();
 
@@ -112,6 +132,7 @@ public partial class MainWindow : Window
         {
             _activeWorkspaceIndex = WorkspaceList.SelectedIndex;
             RefreshWorkspaceView();
+            QueueSessionSave();
         }
     }
 
@@ -134,6 +155,175 @@ public partial class MainWindow : Window
     private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
     {
         e.Handled = HandlePreviewKeyDown(e.Key, e.SystemKey, Keyboard.Modifiers);
+    }
+
+    private async Task LoadSessionSnapshotAsync()
+    {
+        if (_sessionStore is null)
+        {
+            return;
+        }
+
+        var snapshot = await _sessionStore.LoadAsync().ConfigureAwait(true);
+        if (snapshot?.Workspaces is { Count: > 0 })
+        {
+            ApplySessionSnapshot(snapshot);
+        }
+        else
+        {
+            EnsureDefaultWorkspace();
+        }
+    }
+
+    private void ApplySessionSnapshot(SessionSnapshot snapshot)
+    {
+        _workspaces.Clear();
+        foreach (var workspace in snapshot.Workspaces)
+        {
+            if (workspace is null)
+            {
+                continue;
+            }
+
+            NormalizeWorkspace(workspace);
+            _workspaces.Add(workspace);
+        }
+
+        EnsureDefaultWorkspace();
+        _activeWorkspaceIndex = Math.Clamp(snapshot.ActiveWorkspaceIndex, 0, _workspaces.Count - 1);
+    }
+
+    private void EnsureDefaultWorkspace()
+    {
+        if (_workspaces.Count > 0)
+        {
+            return;
+        }
+
+        _workspaces.Add(new WorkspaceState
+        {
+            Title = "Default",
+            WorkingDirectory = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)
+        });
+        _activeWorkspaceIndex = 0;
+    }
+
+    private void InitializeWorkspaceListForCurrentSession()
+    {
+        EnsureDefaultWorkspace();
+        _activeWorkspaceIndex = Math.Clamp(_activeWorkspaceIndex, 0, _workspaces.Count - 1);
+        WorkspaceList.ItemsSource = _workspaces;
+        WorkspaceList.SelectedIndex = _activeWorkspaceIndex;
+        RefreshWorkspaceView();
+    }
+
+    private static void NormalizeWorkspace(WorkspaceState workspace)
+    {
+        workspace.Surfaces ??= [];
+        if (workspace.Surfaces.Count == 0)
+        {
+            workspace.Surfaces.Add(SurfaceState.CreateDefault());
+        }
+
+        workspace.ActiveSurfaceIndex = Math.Clamp(workspace.ActiveSurfaceIndex, 0, workspace.Surfaces.Count - 1);
+        foreach (var surface in workspace.Surfaces)
+        {
+            NormalizeSurface(surface);
+        }
+    }
+
+    private static void NormalizeSurface(SurfaceState surface)
+    {
+        surface.Root ??= SplitNodeState.CreateLeaf();
+        if (!HasAnyPane(surface.Root))
+        {
+            surface.Root = SplitNodeState.CreateLeaf();
+        }
+
+        if (surface.ActivePaneId is null || FindPane(surface.Root, surface.ActivePaneId) is null)
+        {
+            surface.ActivePaneId = FindFirstPane(surface.Root)?.Id;
+        }
+
+        if (surface.ZoomedPaneId is not null && FindPane(surface.Root, surface.ZoomedPaneId) is null)
+        {
+            surface.ZoomedPaneId = null;
+        }
+    }
+
+    private static bool HasAnyPane(SplitNodeState node)
+    {
+        return node.Pane is not null
+            || (node.First is not null && HasAnyPane(node.First))
+            || (node.Second is not null && HasAnyPane(node.Second));
+    }
+
+    private SessionSnapshot BuildSessionSnapshot()
+    {
+        EnsureDefaultWorkspace();
+        _activeWorkspaceIndex = Math.Clamp(_activeWorkspaceIndex, 0, _workspaces.Count - 1);
+        foreach (var workspace in _workspaces)
+        {
+            NormalizeWorkspace(workspace);
+        }
+
+        return new SessionSnapshot
+        {
+            ActiveWorkspaceIndex = _activeWorkspaceIndex,
+            Workspaces = _workspaces.ToList()
+        };
+    }
+
+    private void QueueSessionSave()
+    {
+        if (!_persistSession || _sessionStore is null)
+        {
+            return;
+        }
+
+        _sessionSaveDebounce?.Cancel();
+        _sessionSaveDebounce = new CancellationTokenSource();
+        _ = SaveSessionSnapshotAfterDelayAsync(_sessionSaveDebounce);
+    }
+
+    private async Task SaveSessionSnapshotAfterDelayAsync(CancellationTokenSource debounce)
+    {
+        try
+        {
+            await Task.Delay(250, debounce.Token).ConfigureAwait(false);
+            await SaveSessionSnapshotAsync(debounce.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        finally
+        {
+            if (ReferenceEquals(_sessionSaveDebounce, debounce))
+            {
+                _sessionSaveDebounce = null;
+            }
+
+            debounce.Dispose();
+        }
+    }
+
+    private async Task SaveSessionSnapshotAsync(CancellationToken cancellationToken = default)
+    {
+        if (!_persistSession || _sessionStore is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var snapshot = Dispatcher.CheckAccess()
+                ? BuildSessionSnapshot()
+                : await Dispatcher.InvokeAsync(BuildSessionSnapshot).Task.ConfigureAwait(false);
+            await _sessionStore.SaveAsync(snapshot, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or OperationCanceledException)
+        {
+        }
     }
 
     private bool HandlePreviewKeyDown(Key key, Key systemKey, ModifierKeys modifiers)
@@ -251,6 +441,7 @@ public partial class MainWindow : Window
 
         _activeWorkspaceIndex = index;
         Dispatcher.Invoke(() => WorkspaceList.SelectedIndex = index);
+        QueueSessionSave();
         return new { selected = true, index };
     }
 
@@ -527,6 +718,7 @@ public partial class MainWindow : Window
                 {
                     pane.LastScreenText = string.Concat(pane.LastScreenText, text);
                     AppendTerminalView(pane, text);
+                    QueueSessionSave();
                 }
             });
         };
@@ -540,6 +732,7 @@ public partial class MainWindow : Window
                     var text = string.Concat(tail, Environment.NewLine, $"[process exited: {exitCode}]", Environment.NewLine);
                     pane.LastScreenText = string.Concat(pane.LastScreenText, text);
                     AppendTerminalView(pane, text);
+                    QueueSessionSave();
                 }
 
                 RefreshWorkspaceView();
@@ -621,6 +814,7 @@ public partial class MainWindow : Window
                     var text = string.Concat(Environment.NewLine, $"[send failed: {ex.Message}]", Environment.NewLine);
                     pane.LastScreenText = string.Concat(pane.LastScreenText, text);
                     AppendTerminalView(pane, text);
+                    QueueSessionSave();
                 }
 
                 RefreshWorkspaceView();
@@ -633,6 +827,7 @@ public partial class MainWindow : Window
                 var text = fallbackText ?? sequence;
                 pane.LastScreenText = string.Concat(pane.LastScreenText, text);
                 AppendTerminalView(pane, text);
+                QueueSessionSave();
             }
 
             RefreshWorkspaceView();
@@ -656,6 +851,7 @@ public partial class MainWindow : Window
             WorkspaceList.SelectedIndex = _activeWorkspaceIndex;
         });
 
+        QueueSessionSave();
         return workspace;
     }
 
@@ -680,6 +876,7 @@ public partial class MainWindow : Window
             pane.HasUnreadNotification = true;
         }
 
+        QueueSessionSave();
         return notification;
     }
 
@@ -767,6 +964,7 @@ public partial class MainWindow : Window
         {
             surface.ZoomedPaneId = null;
             surface.ActivePaneId = newPane?.Id ?? activePane.Id;
+            QueueSessionSave();
         }
 
         return changed;
@@ -797,6 +995,7 @@ public partial class MainWindow : Window
         }
 
         RefreshWorkspaceView();
+        QueueSessionSave();
         return true;
     }
 
@@ -810,6 +1009,7 @@ public partial class MainWindow : Window
         }
 
         RefreshWorkspaceView();
+        QueueSessionSave();
         return new { zoomed, paneId = pane.Id };
     }
 
@@ -834,6 +1034,7 @@ public partial class MainWindow : Window
         }
 
         RefreshWorkspaceView();
+        QueueSessionSave();
         return new { closed = true, paneId = closedPane!.Id, activePaneId = focusedPane?.Id };
     }
 
@@ -922,6 +1123,7 @@ public partial class MainWindow : Window
             splitter.DragCompleted += (_, _) =>
             {
                 node.Ratio = RatioFromActual(grid.RowDefinitions[0].ActualHeight, grid.RowDefinitions[2].ActualHeight);
+                QueueSessionSave();
             };
             Grid.SetRow(splitter, 1);
             grid.Children.Add(splitter);
@@ -955,6 +1157,7 @@ public partial class MainWindow : Window
             splitter.DragCompleted += (_, _) =>
             {
                 node.Ratio = RatioFromActual(grid.ColumnDefinitions[0].ActualWidth, grid.ColumnDefinitions[2].ActualWidth);
+                QueueSessionSave();
             };
             Grid.SetColumn(splitter, 1);
             grid.Children.Add(splitter);
@@ -991,6 +1194,7 @@ public partial class MainWindow : Window
             }
 
             RefreshWorkspaceView();
+            QueueSessionSave();
         };
 
         var layout = new Grid();
@@ -1109,6 +1313,7 @@ public partial class MainWindow : Window
         pane.LastScreenText = null;
         ActiveSurface().ActivePaneId = pane.Id;
         UpdateBrowserView(pane);
+        QueueSessionSave();
         return normalizedUrl;
     }
 
@@ -1315,9 +1520,27 @@ public partial class MainWindow : Window
 
     internal void InitializeForSmokeTest()
     {
-        WorkspaceList.ItemsSource = _workspaces;
-        WorkspaceList.SelectedIndex = 0;
-        RefreshWorkspaceView();
+        if (_restoreSessionOnStartup)
+        {
+            throw new InvalidOperationException("Use InitializeForSmokeTestAsync when session restore is enabled.");
+        }
+
+        InitializeWorkspaceListForCurrentSession();
+    }
+
+    internal async Task InitializeForSmokeTestAsync()
+    {
+        if (_restoreSessionOnStartup)
+        {
+            await LoadSessionSnapshotAsync().ConfigureAwait(true);
+        }
+
+        InitializeWorkspaceListForCurrentSession();
+    }
+
+    internal Task SaveSessionForSmokeTestAsync()
+    {
+        return SaveSessionSnapshotAsync();
     }
 
     internal async Task<AgentMuxResponse> HandleRpcForSmokeTestAsync(string method, object? parameters = null)
@@ -1336,6 +1559,10 @@ public partial class MainWindow : Window
 
     internal int PaneCountForSmokeTest => CountPanes(ActiveSurface().Root);
 
+    internal int WorkspaceCountForSmokeTest => _workspaces.Count;
+
+    internal string ActiveWorkspaceTitleForSmokeTest => ActiveWorkspace().Title;
+
     internal int RenderedTerminalPaneCountForSmokeTest => CountVisualDescendants<TerminalPaneView>(PaneHost);
 
     internal int RenderedBrowserPaneCountForSmokeTest => CountVisualDescendants<BrowserPaneView>(PaneHost);
@@ -1345,6 +1572,10 @@ public partial class MainWindow : Window
     internal int CachedBrowserPaneViewCountForSmokeTest => _browserViews.Count;
 
     internal string? ActivePaneIdForSmokeTest => ActivePane()?.Id;
+
+    internal PaneKind? ActivePaneKindForSmokeTest => ActivePane()?.Kind;
+
+    internal string? ActivePaneUrlForSmokeTest => ActivePane()?.Url;
 
     internal bool IsActivePaneZoomedForSmokeTest => ActiveSurface().ZoomedPaneId == ActivePane()?.Id;
 

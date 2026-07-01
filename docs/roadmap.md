@@ -44,14 +44,16 @@
 
 ## Sprint 5 - Persistence
 
-- JSON session snapshot.
-- Layout restore. Core split tree and active pane id round-trip through JSON snapshot tests.
-- Working directory restore.
-- Scrollback best effort.
+- JSON session snapshot. Implemented through `SessionSnapshotStore`.
+- App-level layout restore. Implemented for workspaces, active workspace, split layout, active pane, pane titles, browser URLs, and last terminal screen text.
+- Corrupt snapshot fallback. Implemented so bad `session.json` starts with a default workspace.
+- Working directory restore. Implemented in the saved model for workspaces and panes.
+- Scrollback best effort. Preview implemented through `PaneState.LastScreenText`; live terminal processes are not restored.
 
 ## Sprint 5.5 - Windows UI Smoke
 
 - WPF split-pane composition smoke. Implemented in Windows CI.
+- WPF session restore smoke. Implemented in Windows CI with a temp snapshot store.
 - Real visible desktop smoke. Still required before release-ready status.
 
 ## Sprint 5.6 - Packaging
