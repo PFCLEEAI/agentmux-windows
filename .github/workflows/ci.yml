@@ -34,5 +34,6 @@ jobs:
         run: dotnet build AgentMux.sln -c Release --no-restore
       - name: Test
         run: dotnet test tests/AgentMux.Tests/AgentMux.Tests.csproj -c Release --no-build
-      - name: Windows ConPTY smoke
+      - name: Experimental Windows ConPTY smoke (non-blocking)
+        continue-on-error: true
         run: dotnet test tests/AgentMux.Windows.Tests/AgentMux.Windows.Tests.csproj -c Release --no-build

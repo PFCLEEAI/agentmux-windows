@@ -20,7 +20,7 @@ Pre-alpha scaffold.
 
 This repository currently contains the public-safe foundation: project structure, core models, OSC notification parsing, named-pipe JSON-RPC contracts, CLI skeleton, a minimal WPF shell, ConPTY session interop, tests, and CI. The WebView2/xterm terminal renderer and full pane UI are the next implementation sprint.
 
-Windows CI proves the solution restores, builds, and runs unit tests. A real Windows desktop smoke test is still required before calling this release-ready.
+Required Windows CI proves the solution restores, builds, and runs deterministic unit tests. The Windows ConPTY smoke suite is present in CI but currently non-blocking: on GitHub-hosted Windows runners, child console processes initialize and exit without delivering expected console output through the PTY. Treat terminal input/output as experimental until that smoke passes in CI and on a real Windows desktop.
 
 ## Tech Stack
 
@@ -44,6 +44,12 @@ The Windows app targets `net9.0-windows10.0.17763.0` and should be built on Wind
 ```powershell
 dotnet build AgentMux.sln -c Release
 dotnet run --project src/AgentMux.Win.App/AgentMux.Win.App.csproj
+```
+
+Experimental ConPTY smoke tests:
+
+```powershell
+dotnet test tests/AgentMux.Windows.Tests/AgentMux.Windows.Tests.csproj -c Release
 ```
 
 ## CLI Preview
