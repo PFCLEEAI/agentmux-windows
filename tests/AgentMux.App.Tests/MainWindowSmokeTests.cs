@@ -793,6 +793,11 @@ public sealed class MainWindowSmokeTests
             Assert.Equal(rendererInputPane, window.ActivePaneIdForSmokeTest);
             await WaitForReadScreenContainsAsync(window, "RAW:58");
             await WaitForReadScreenContainsAsync(window, "RAW:54");
+            var terminalRuntimeText = await window.WaitForActiveTerminalRuntimeTextForSmokeTestAsync("RAW:54");
+            Assert.Contains("RAW:4B", terminalRuntimeText, StringComparison.Ordinal);
+            Assert.Contains("RAW:4D", terminalRuntimeText, StringComparison.Ordinal);
+            Assert.Contains("RAW:58", terminalRuntimeText, StringComparison.Ordinal);
+            Assert.Contains("RAW:54", terminalRuntimeText, StringComparison.Ordinal);
             var terminalKeyCapture = await window.CaptureActiveTerminalPngForSmokeTestAsync(
                 System.IO.Path.Combine(SmokeArtifactDirectory(), "terminal-key-capture.png"));
             AssertPngFile(terminalKeyCapture);

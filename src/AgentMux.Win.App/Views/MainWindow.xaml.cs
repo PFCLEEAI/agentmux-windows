@@ -2557,6 +2557,17 @@ public partial class MainWindow : Window
         return await view.CapturePngForSmokeTestAsync(path).ConfigureAwait(true);
     }
 
+    internal async Task<string> WaitForActiveTerminalRuntimeTextForSmokeTestAsync(string expectedText)
+    {
+        if (ActivePane() is not { Kind: PaneKind.Terminal } pane
+            || !_terminalViews.TryGetValue(pane.Id, out var view))
+        {
+            throw new InvalidOperationException("active pane is not a rendered terminal");
+        }
+
+        return await view.WaitForRuntimeTextForSmokeTestAsync(expectedText).ConfigureAwait(true);
+    }
+
     internal int PaneCountForSmokeTest => CountPanes(ActiveSurface().Root);
 
     internal int WorkspaceCountForSmokeTest => _workspaces.Count;
