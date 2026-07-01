@@ -20,7 +20,7 @@ Pre-alpha scaffold.
 
 This repository currently contains the public-safe foundation: project structure, core models, OSC notification parsing, named-pipe JSON-RPC contracts, CLI skeleton, a minimal WPF shell, ConPTY session interop, tests, and CI. The WebView2/xterm terminal renderer and full pane UI are the next implementation sprint.
 
-Required Windows CI proves the solution restores, builds, and runs deterministic unit tests. The Windows ConPTY smoke suite is present in CI but currently non-blocking: on GitHub-hosted Windows runners, child console processes initialize and exit without delivering expected console output through the PTY. Treat terminal input/output as experimental until that smoke passes in CI and on a real Windows desktop.
+Required Windows CI proves the solution restores, builds, runs deterministic unit tests, and passes a headless ConPTY smoke test for command output plus stdin echo. A real Windows desktop smoke test is still required before calling this release-ready.
 
 ## Tech Stack
 

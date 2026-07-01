@@ -12,7 +12,7 @@
 - Input/output pump. In progress.
 - Resize support. In progress.
 - Process cleanup and timeout handling. In progress.
-- Headless Windows smoke tests. Started; non-blocking in CI until ConPTY child-process output/input passes on hosted runners and a real Windows desktop.
+- Headless Windows smoke tests. Passing as a blocking GitHub Actions gate; real Windows desktop smoke still required before release-ready status.
 
 ## Sprint 2 - Workspace UI
 
