@@ -222,7 +222,7 @@ public sealed class ConPtySession : IPtySession
                 throw new Win32Exception(Marshal.GetLastWin32Error(), "Could not attach pseudoconsole to process attributes.");
             }
 
-            var commandLine = new StringBuilder(QuoteCommand(options.ShellPath));
+            var commandLine = new StringBuilder(BuildCommandLine(options.ShellPath));
             if (!ConPtyNative.CreateProcessW(
                     null,
                     commandLine,
@@ -282,16 +282,14 @@ public sealed class ConPtySession : IPtySession
         return readHandle;
     }
 
-    private static string QuoteCommand(string command)
+    private static string BuildCommandLine(string command)
     {
         if (string.IsNullOrWhiteSpace(command))
         {
             return "pwsh.exe";
         }
 
-        return command.Contains(' ', StringComparison.Ordinal) && !command.StartsWith('"')
-            ? $"\"{command}\""
-            : command;
+        return command;
     }
 }
 

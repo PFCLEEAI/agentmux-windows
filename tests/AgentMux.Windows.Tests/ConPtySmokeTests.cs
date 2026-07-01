@@ -31,13 +31,14 @@ public sealed class ConPtySmokeTests
 
         await session.StartAsync(new PtyLaunchOptions
         {
-            ShellPath = "cmd.exe",
+            ShellPath = "cmd.exe /Q /K",
             WorkingDirectory = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
             Cols = 120,
             Rows = 30
         });
 
         await sawAnyOutput.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await Task.Delay(750);
         await session.WriteAsync("echo AGENTMUX_SMOKE\r\n"u8.ToArray());
 
         var completed = await Task.WhenAny(sawSmoke.Task, Task.Delay(TimeSpan.FromSeconds(10)));
