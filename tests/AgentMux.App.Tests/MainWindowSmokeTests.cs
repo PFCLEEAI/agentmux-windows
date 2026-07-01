@@ -1,3 +1,6 @@
+using System.Net;
+using System.Net.Sockets;
+using System.Text;
 using System.Threading;
 using System.Windows;
 using System.Windows.Input;
@@ -540,6 +543,40 @@ public sealed class MainWindowSmokeTests
             Assert.True(TryFindFrameByName(rootFrameTree, "agentmux-child-frame", out var childFrame), frameTree.ToString());
             Assert.Equal("agentmux-child-frame", childFrame.GetProperty("name").GetString());
             Assert.False(string.IsNullOrWhiteSpace(childFrame.GetProperty("parentId").GetString()));
+
+            var networkToken = $"agentmux-network-{Guid.NewGuid():N}";
+            await using var networkServer = LoopbackHttpServer.Start($"/{networkToken}", networkToken);
+            AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserNetworkClear));
+            AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserEval, new
+            {
+                script = $$"""
+                    window.__agentMuxNetworkText = "";
+                    fetch({{System.Text.Json.JsonSerializer.Serialize(networkServer.Url.ToString())}})
+                        .then(response => response.text())
+                        .then(text => { window.__agentMuxNetworkText = text; })
+                        .catch(error => { window.__agentMuxNetworkText = "ERROR:" + error.message; });
+                    true;
+                    """
+            }));
+            await WaitForBrowserEvalTrueAsync(
+                window,
+                $"window.__agentMuxNetworkText === {System.Text.Json.JsonSerializer.Serialize(networkToken)}").ConfigureAwait(true);
+
+            var networkLog = await WaitForNetworkEventAsync(window, networkToken, "responseReceived").ConfigureAwait(true);
+            Assert.True(TryFindNetworkEvent(networkLog, networkToken, "requestWillBeSent", out var requestEvent), networkLog.ToString());
+            Assert.Equal("GET", requestEvent.GetProperty("method").GetString());
+            Assert.True(TryFindNetworkEvent(networkLog, networkToken, "responseReceived", out var responseEvent), networkLog.ToString());
+            Assert.Equal(200, responseEvent.GetProperty("status").GetInt32());
+            Assert.Equal("text/plain", responseEvent.GetProperty("mimeType").GetString());
+
+            await Task.Delay(250).ConfigureAwait(true);
+            var networkClear = AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserNetworkClear));
+            Assert.True(networkClear.GetProperty("cleared").GetInt32() >= 1);
+            var emptyNetworkLog = AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserNetworkLog, new
+            {
+                limit = 10
+            }));
+            Assert.Equal(0, emptyNetworkLog.GetProperty("count").GetInt32());
         }
         finally
         {
@@ -779,6 +816,55 @@ public sealed class MainWindowSmokeTests
         throw new InvalidOperationException($"Browser eval did not become true. Last result: {lastResult?.ToString() ?? "<none>"}");
     }
 
+    private static async Task<System.Text.Json.JsonElement> WaitForNetworkEventAsync(MainWindow window, string urlFragment, string eventName)
+    {
+        System.Text.Json.JsonElement? lastResult = null;
+        for (var attempt = 0; attempt < 20; attempt++)
+        {
+            var response = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserNetworkLog, new { limit = 50 }).ConfigureAwait(true);
+            if (response.Ok)
+            {
+                var result = System.Text.Json.JsonSerializer.SerializeToElement(response.Result, AgentMuxJson.Options);
+                lastResult = result.Clone();
+                if (result.TryGetProperty("ok", out var ok)
+                    && ok.GetBoolean()
+                    && TryFindNetworkEvent(result, urlFragment, eventName, out _))
+                {
+                    return result.Clone();
+                }
+            }
+
+            await Task.Delay(250).ConfigureAwait(true);
+        }
+
+        throw new InvalidOperationException($"Browser network log did not contain {eventName} for {urlFragment}. Last result: {lastResult?.ToString() ?? "<none>"}");
+    }
+
+    private static bool TryFindNetworkEvent(System.Text.Json.JsonElement networkLog, string urlFragment, string eventName, out System.Text.Json.JsonElement networkEvent)
+    {
+        networkEvent = default;
+        if (!networkLog.TryGetProperty("events", out var events)
+            || events.ValueKind != System.Text.Json.JsonValueKind.Array)
+        {
+            return false;
+        }
+
+        foreach (var candidate in events.EnumerateArray())
+        {
+            if (candidate.TryGetProperty("event", out var eventProperty)
+                && string.Equals(eventProperty.GetString(), eventName, StringComparison.Ordinal)
+                && candidate.TryGetProperty("url", out var urlProperty)
+                && urlProperty.ValueKind == System.Text.Json.JsonValueKind.String
+                && (urlProperty.GetString()?.Contains(urlFragment, StringComparison.Ordinal) ?? false))
+            {
+                networkEvent = candidate.Clone();
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private static async Task<System.Text.Json.JsonElement> WaitForFrameTreeWithChildAsync(MainWindow window, string frameName)
     {
         System.Text.Json.JsonElement? lastResult = null;
@@ -878,6 +964,88 @@ public sealed class MainWindowSmokeTests
         | (buffer[offset + 1] << 16)
         | (buffer[offset + 2] << 8)
         | buffer[offset + 3];
+
+    private sealed class LoopbackHttpServer : IAsyncDisposable
+    {
+        private readonly TcpListener _listener;
+        private readonly CancellationTokenSource _cancellation = new();
+        private readonly Task _serverTask;
+        private readonly string _body;
+
+        private LoopbackHttpServer(string path, string body)
+        {
+            _body = body;
+            _listener = new TcpListener(IPAddress.Loopback, 0);
+            _listener.Start();
+            var port = ((IPEndPoint)_listener.LocalEndpoint).Port;
+            Url = new Uri($"http://127.0.0.1:{port}{path}");
+            _serverTask = ServeOneRequestAsync();
+        }
+
+        public Uri Url { get; }
+
+        public static LoopbackHttpServer Start(string path, string body) => new(path, body);
+
+        public async ValueTask DisposeAsync()
+        {
+            _cancellation.Cancel();
+            _listener.Stop();
+            try
+            {
+                await _serverTask.WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException or SocketException or TimeoutException)
+            {
+            }
+
+            _cancellation.Dispose();
+        }
+
+        private async Task ServeOneRequestAsync()
+        {
+            try
+            {
+                using var client = await _listener.AcceptTcpClientAsync(_cancellation.Token).ConfigureAwait(false);
+                await using var stream = client.GetStream();
+                await ReadRequestHeadersAsync(stream).ConfigureAwait(false);
+
+                var bodyBytes = Encoding.UTF8.GetBytes(_body);
+                var headers = Encoding.ASCII.GetBytes(
+                    "HTTP/1.1 200 OK\r\n" +
+                    "Content-Type: text/plain; charset=utf-8\r\n" +
+                    "Access-Control-Allow-Origin: *\r\n" +
+                    "Cache-Control: no-store\r\n" +
+                    $"Content-Length: {bodyBytes.Length}\r\n" +
+                    "Connection: close\r\n\r\n");
+
+                await stream.WriteAsync(headers, _cancellation.Token).ConfigureAwait(false);
+                await stream.WriteAsync(bodyBytes, _cancellation.Token).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException or SocketException)
+            {
+            }
+            finally
+            {
+                _listener.Stop();
+            }
+        }
+
+        private async Task ReadRequestHeadersAsync(NetworkStream stream)
+        {
+            var buffer = new byte[1024];
+            var request = new StringBuilder();
+            while (!request.ToString().Contains("\r\n\r\n", StringComparison.Ordinal))
+            {
+                var bytesRead = await stream.ReadAsync(buffer, _cancellation.Token).ConfigureAwait(false);
+                if (bytesRead == 0)
+                {
+                    return;
+                }
+
+                request.Append(Encoding.ASCII.GetString(buffer, 0, bytesRead));
+            }
+        }
+    }
 
     private static class WpfTestHost
     {

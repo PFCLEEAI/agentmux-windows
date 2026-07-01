@@ -72,5 +72,6 @@
 - Eval/click/fill/type/press. Preview implemented through lightweight WebView2 helpers; click/type/press use WebView2 input automation where practical, and click/fill/type/press can target same-origin child frames by name or id.
 - Screenshot. Preview implemented as WebView2 PNG capture to a local path.
 - Frame tree. Preview implemented through WebView2/CDP `Page.getFrameTree` for active-pane inspection.
+- Network event log. Preview implemented through compact in-memory WebView2/CDP Network events for the active browser pane.
 
-Browser automation has hosted WebView2 runtime smoke and CI PNG artifacts. Click/type/press now cover richer pointer/key preview semantics, same-origin frame-targeted selector actions cover the first actionable frame-parity step, and frame-tree inspection exposes the active pane's frame structure. Full Playwright-style automation such as cross-origin frame control, downloads, tracing, network interception, and trusted physical input remains future work.
+Browser automation has hosted WebView2 runtime smoke and CI PNG artifacts. Click/type/press now cover richer pointer/key preview semantics, same-origin frame-targeted selector actions cover the first actionable frame-parity step, frame-tree inspection exposes the active pane's frame structure, and network-log preview captures recent request/response/failure metadata without headers or bodies. Full Playwright-style automation such as cross-origin frame control, request interception/mutation, HAR export, downloads, tracing, and trusted physical input remains future work.

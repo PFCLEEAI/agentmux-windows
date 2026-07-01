@@ -4,26 +4,36 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using AgentMux.Core.Ipc;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.Wpf;
 
 namespace AgentMux.Win.App.Controls;
 
-internal sealed class BrowserPaneView : Grid
+internal sealed class BrowserPaneView : Grid, IDisposable
 {
     private const string DefaultUrl = "about:blank";
+    private const int MaxNetworkEventCount = 200;
 
+    private readonly List<BrowserNetworkEvent> _networkEvents = [];
     private readonly TextBox _addressBox;
     private readonly Button _goButton;
     private readonly TextBlock _fallback;
     private readonly WebView2 _webView;
+    private CoreWebView2DevToolsProtocolEventReceiver? _networkRequestWillBeSentReceiver;
+    private CoreWebView2DevToolsProtocolEventReceiver? _networkResponseReceivedReceiver;
+    private CoreWebView2DevToolsProtocolEventReceiver? _networkLoadingFailedReceiver;
+    private CoreWebView2DevToolsProtocolEventReceiver? _networkLoadingFinishedReceiver;
     private Task? _readyTask;
     private TaskCompletionSource? _navigationCompletion;
     private ulong? _pendingNavigationId;
     private string _url = DefaultUrl;
+    private long _networkEventSequence;
     private bool _webViewEventsWired;
+    private bool _networkEventsEnabled;
     private bool _webViewReady;
     private bool _webViewFailed;
+    private bool _disposed;
 
     public event EventHandler<string>? NavigateRequested;
 
@@ -91,6 +101,18 @@ internal sealed class BrowserPaneView : Grid
         Children.Add(_webView);
 
         Loaded += OnLoaded;
+    }
+
+    public void Dispose()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
+        UnwireNetworkEventLogging();
+        _webView.Dispose();
     }
 
     public void SetUrl(string? url)
@@ -418,6 +440,45 @@ internal sealed class BrowserPaneView : Grid
         }
     }
 
+    public async Task<string> GetNetworkLogAsync(int? limit = null)
+    {
+        await EnsureReadyAsync().ConfigureAwait(true);
+        var cappedLimit = limit is > 0
+            ? Math.Min(limit.Value, MaxNetworkEventCount)
+            : MaxNetworkEventCount;
+
+        BrowserNetworkEvent[] events;
+        int count;
+        lock (_networkEvents)
+        {
+            count = _networkEvents.Count;
+            events = _networkEvents
+                .Skip(Math.Max(0, _networkEvents.Count - cappedLimit))
+                .ToArray();
+        }
+
+        return JsonSerializer.Serialize(new
+        {
+            ok = true,
+            count,
+            maxEvents = MaxNetworkEventCount,
+            events
+        }, AgentMuxJson.Options);
+    }
+
+    public async Task<string> ClearNetworkLogAsync()
+    {
+        await EnsureReadyAsync().ConfigureAwait(true);
+        int cleared;
+        lock (_networkEvents)
+        {
+            cleared = _networkEvents.Count;
+            _networkEvents.Clear();
+        }
+
+        return JsonSerializer.Serialize(new { ok = true, cleared }, AgentMuxJson.Options);
+    }
+
     private void AddressBox_KeyDown(object sender, KeyEventArgs e)
     {
         if (e.Key != Key.Enter)
@@ -456,6 +517,7 @@ internal sealed class BrowserPaneView : Grid
         {
             await _webView.EnsureCoreWebView2Async().ConfigureAwait(true);
             WireWebViewEvents();
+            await EnableNetworkEventLoggingAsync().ConfigureAwait(true);
             _webViewReady = true;
             _webView.Visibility = Visibility.Visible;
             _fallback.Visibility = Visibility.Collapsed;
@@ -492,6 +554,87 @@ internal sealed class BrowserPaneView : Grid
             }
         };
         _webViewEventsWired = true;
+    }
+
+    private async Task EnableNetworkEventLoggingAsync()
+    {
+        if (_networkEventsEnabled || _webView.CoreWebView2 is null)
+        {
+            return;
+        }
+
+        var core = _webView.CoreWebView2;
+        _networkRequestWillBeSentReceiver = core.GetDevToolsProtocolEventReceiver("Network.requestWillBeSent");
+        _networkResponseReceivedReceiver = core.GetDevToolsProtocolEventReceiver("Network.responseReceived");
+        _networkLoadingFailedReceiver = core.GetDevToolsProtocolEventReceiver("Network.loadingFailed");
+        _networkLoadingFinishedReceiver = core.GetDevToolsProtocolEventReceiver("Network.loadingFinished");
+
+        _networkRequestWillBeSentReceiver.DevToolsProtocolEventReceived += NetworkRequestWillBeSent;
+        _networkResponseReceivedReceiver.DevToolsProtocolEventReceived += NetworkResponseReceived;
+        _networkLoadingFailedReceiver.DevToolsProtocolEventReceived += NetworkLoadingFailed;
+        _networkLoadingFinishedReceiver.DevToolsProtocolEventReceived += NetworkLoadingFinished;
+
+        try
+        {
+            await core.CallDevToolsProtocolMethodAsync("Network.enable", "{}").ConfigureAwait(true);
+            _networkEventsEnabled = true;
+        }
+        catch
+        {
+            UnwireNetworkEventLogging();
+            throw;
+        }
+    }
+
+    private void UnwireNetworkEventLogging()
+    {
+        if (_networkRequestWillBeSentReceiver is not null)
+        {
+            _networkRequestWillBeSentReceiver.DevToolsProtocolEventReceived -= NetworkRequestWillBeSent;
+            _networkRequestWillBeSentReceiver = null;
+        }
+
+        if (_networkResponseReceivedReceiver is not null)
+        {
+            _networkResponseReceivedReceiver.DevToolsProtocolEventReceived -= NetworkResponseReceived;
+            _networkResponseReceivedReceiver = null;
+        }
+
+        if (_networkLoadingFailedReceiver is not null)
+        {
+            _networkLoadingFailedReceiver.DevToolsProtocolEventReceived -= NetworkLoadingFailed;
+            _networkLoadingFailedReceiver = null;
+        }
+
+        if (_networkLoadingFinishedReceiver is not null)
+        {
+            _networkLoadingFinishedReceiver.DevToolsProtocolEventReceived -= NetworkLoadingFinished;
+            _networkLoadingFinishedReceiver = null;
+        }
+    }
+
+    private void NetworkRequestWillBeSent(object? sender, CoreWebView2DevToolsProtocolEventReceivedEventArgs args) =>
+        RecordNetworkEvent("requestWillBeSent", args);
+
+    private void NetworkResponseReceived(object? sender, CoreWebView2DevToolsProtocolEventReceivedEventArgs args) =>
+        RecordNetworkEvent("responseReceived", args);
+
+    private void NetworkLoadingFailed(object? sender, CoreWebView2DevToolsProtocolEventReceivedEventArgs args) =>
+        RecordNetworkEvent("loadingFailed", args);
+
+    private void NetworkLoadingFinished(object? sender, CoreWebView2DevToolsProtocolEventReceivedEventArgs args) =>
+        RecordNetworkEvent("loadingFinished", args);
+
+    private void RecordNetworkEvent(string eventName, CoreWebView2DevToolsProtocolEventReceivedEventArgs args)
+    {
+        lock (_networkEvents)
+        {
+            _networkEvents.Add(CreateNetworkEvent(++_networkEventSequence, eventName, args.SessionId, args.ParameterObjectAsJson));
+            if (_networkEvents.Count > MaxNetworkEventCount)
+            {
+                _networkEvents.RemoveRange(0, _networkEvents.Count - MaxNetworkEventCount);
+            }
+        }
     }
 
     private async Task WaitForNavigationAsync(bool allowStartDelay = false)
@@ -591,6 +734,89 @@ internal sealed class BrowserPaneView : Grid
             return new AutomationTarget(false, 0, 0);
         }
     }
+
+    private static BrowserNetworkEvent CreateNetworkEvent(long sequence, string eventName, string? sessionId, string parametersJson)
+    {
+        string? requestId = null;
+        string? url = null;
+        string? method = null;
+        int? status = null;
+        string? resourceType = null;
+        string? mimeType = null;
+        string? errorText = null;
+        bool? canceled = null;
+        double? encodedDataLength = null;
+
+        try
+        {
+            using var document = JsonDocument.Parse(parametersJson);
+            var root = document.RootElement;
+            requestId = JsonString(root, "requestId");
+            resourceType = JsonString(root, "type");
+
+            if (root.TryGetProperty("request", out var request) && request.ValueKind == JsonValueKind.Object)
+            {
+                url = JsonString(request, "url");
+                method = JsonString(request, "method");
+            }
+
+            if (root.TryGetProperty("response", out var response) && response.ValueKind == JsonValueKind.Object)
+            {
+                url ??= JsonString(response, "url");
+                status = JsonInt(response, "status");
+                mimeType = JsonString(response, "mimeType");
+            }
+
+            url ??= JsonString(root, "documentURL");
+            errorText = JsonString(root, "errorText");
+            canceled = JsonBool(root, "canceled");
+            encodedDataLength = JsonDouble(root, "encodedDataLength");
+        }
+        catch (JsonException)
+        {
+            errorText = "network event parse failed";
+        }
+
+        return new BrowserNetworkEvent(
+            sequence,
+            eventName,
+            requestId,
+            url,
+            method,
+            status,
+            resourceType,
+            mimeType,
+            errorText,
+            canceled,
+            encodedDataLength,
+            string.IsNullOrWhiteSpace(sessionId) ? null : sessionId,
+            DateTimeOffset.UtcNow);
+    }
+
+    private static string? JsonString(JsonElement element, string propertyName) =>
+        element.TryGetProperty(propertyName, out var property) && property.ValueKind == JsonValueKind.String
+            ? property.GetString()
+            : null;
+
+    private static int? JsonInt(JsonElement element, string propertyName) =>
+        element.TryGetProperty(propertyName, out var property) && property.ValueKind == JsonValueKind.Number && property.TryGetInt32(out var value)
+            ? value
+            : null;
+
+    private static double? JsonDouble(JsonElement element, string propertyName) =>
+        element.TryGetProperty(propertyName, out var property) && property.ValueKind == JsonValueKind.Number && property.TryGetDouble(out var value)
+            ? value
+            : null;
+
+    private static bool? JsonBool(JsonElement element, string propertyName) =>
+        element.TryGetProperty(propertyName, out var property)
+            ? property.ValueKind switch
+            {
+                JsonValueKind.True => true,
+                JsonValueKind.False => false,
+                _ => null
+            }
+            : null;
 
     private static string? NormalizeFrame(string? frame) =>
         string.IsNullOrWhiteSpace(frame) ? null : frame.Trim();
@@ -703,4 +929,19 @@ internal sealed class BrowserPaneView : Grid
     private readonly record struct AutomationTarget(bool Ok, double X, double Y);
 
     private readonly record struct BrowserKey(string Key, string Code, int VirtualKeyCode);
+
+    private sealed record BrowserNetworkEvent(
+        long Sequence,
+        string Event,
+        string? RequestId,
+        string? Url,
+        string? Method,
+        int? Status,
+        string? ResourceType,
+        string? MimeType,
+        string? ErrorText,
+        bool? Canceled,
+        double? EncodedDataLength,
+        string? SessionId,
+        DateTimeOffset CapturedAtUtc);
 }

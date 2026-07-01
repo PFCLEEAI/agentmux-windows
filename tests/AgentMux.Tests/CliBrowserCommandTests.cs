@@ -97,6 +97,45 @@ public sealed class CliBrowserCommandTests
         Assert.Equal(AgentMuxMethods.BrowserFrameTree, request.Method);
     }
 
+    [Theory]
+    [InlineData("network")]
+    [InlineData("network-log")]
+    public void BrowserNetworkParsesNetworkLogCommand(string command)
+    {
+        var request = Program.ParseBrowserRequestForTests([command, "--limit", "20"], out var error);
+
+        Assert.Equal("", error);
+        Assert.NotNull(request);
+        Assert.Equal(AgentMuxMethods.BrowserNetworkLog, request.Method);
+        var parameters = JsonSerializer.SerializeToElement(request.Parameters, AgentMuxJson.Options);
+        Assert.Equal(20, parameters.GetProperty("limit").GetInt32());
+    }
+
+    [Theory]
+    [InlineData("network-clear")]
+    [InlineData("clear-network")]
+    public void BrowserNetworkParsesClearCommand(string command)
+    {
+        var request = Program.ParseBrowserRequestForTests([command], out var error);
+
+        Assert.Equal("", error);
+        Assert.NotNull(request);
+        Assert.Equal(AgentMuxMethods.BrowserNetworkClear, request.Method);
+    }
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("-1")]
+    [InlineData("abc")]
+    [InlineData("true")]
+    public void BrowserNetworkRejectsInvalidLimit(string limit)
+    {
+        var request = Program.ParseBrowserRequestForTests(["network", "--limit", limit], out var error);
+
+        Assert.Null(request);
+        Assert.Equal("Usage: agentmux browser network [--limit <count>]", error);
+    }
+
     [Fact]
     public void BrowserTypeKeepsPositionalText()
     {

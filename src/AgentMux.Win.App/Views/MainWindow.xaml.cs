@@ -404,6 +404,8 @@ public partial class MainWindow : Window
             AgentMuxMethods.BrowserPress => AgentMuxResponse.Success(request.Id, await HandleBrowserPressAsync(request.Params).ConfigureAwait(true)),
             AgentMuxMethods.BrowserScreenshot => AgentMuxResponse.Success(request.Id, await HandleBrowserScreenshotAsync(request.Params).ConfigureAwait(true)),
             AgentMuxMethods.BrowserFrameTree => AgentMuxResponse.Success(request.Id, await HandleBrowserFrameTreeAsync().ConfigureAwait(true)),
+            AgentMuxMethods.BrowserNetworkLog => AgentMuxResponse.Success(request.Id, await HandleBrowserNetworkLogAsync(request.Params).ConfigureAwait(true)),
+            AgentMuxMethods.BrowserNetworkClear => AgentMuxResponse.Success(request.Id, await HandleBrowserNetworkClearAsync().ConfigureAwait(true)),
             _ => AgentMuxResponse.Failure(request.Id, $"Unsupported method: {request.Method}")
         };
 
@@ -686,6 +688,17 @@ public partial class MainWindow : Window
     private async Task<object> HandleBrowserFrameTreeAsync()
     {
         return await RunBrowserScriptAsync(view => view.GetFrameTreeAsync()).ConfigureAwait(true);
+    }
+
+    private async Task<object> HandleBrowserNetworkLogAsync(JsonElement? parameters)
+    {
+        var parsed = Deserialize<BrowserNetworkLogParams>(parameters);
+        return await RunBrowserScriptAsync(view => view.GetNetworkLogAsync(parsed?.Limit)).ConfigureAwait(true);
+    }
+
+    private async Task<object> HandleBrowserNetworkClearAsync()
+    {
+        return await RunBrowserScriptAsync(view => view.ClearNetworkLogAsync()).ConfigureAwait(true);
     }
 
     private async Task<ConPtySession?> EnsurePanePtyAsync(PaneState? pane)
@@ -1480,7 +1493,9 @@ public partial class MainWindow : Window
             or AgentMuxMethods.BrowserType
             or AgentMuxMethods.BrowserPress
             or AgentMuxMethods.BrowserScreenshot
-            or AgentMuxMethods.BrowserFrameTree;
+            or AgentMuxMethods.BrowserFrameTree
+            or AgentMuxMethods.BrowserNetworkLog
+            or AgentMuxMethods.BrowserNetworkClear;
     }
 
     private void StopPanePty(string paneId)
@@ -1496,7 +1511,10 @@ public partial class MainWindow : Window
     {
         StopPanePty(pane.Id);
         _terminalViews.Remove(pane.Id);
-        _browserViews.Remove(pane.Id);
+        if (_browserViews.Remove(pane.Id, out var browserView))
+        {
+            browserView.Dispose();
+        }
     }
 
     private static void DetachFromParent(FrameworkElement element)
@@ -1880,5 +1898,10 @@ public partial class MainWindow : Window
     private sealed class BrowserScreenshotParams
     {
         public string? Path { get; set; }
+    }
+
+    private sealed class BrowserNetworkLogParams
+    {
+        public int? Limit { get; set; }
     }
 }
