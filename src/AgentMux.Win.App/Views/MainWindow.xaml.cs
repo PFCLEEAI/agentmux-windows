@@ -133,11 +133,14 @@ public partial class MainWindow : Window
 
     private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
     {
-        var key = EffectiveKey(e);
-        if (_shortcutSettings.TryMatch(key, Keyboard.Modifiers, out var action))
-        {
-            e.Handled = HandleShortcutAction(action);
-        }
+        e.Handled = HandlePreviewKeyDown(e.Key, e.SystemKey, Keyboard.Modifiers);
+    }
+
+    private bool HandlePreviewKeyDown(Key key, Key systemKey, ModifierKeys modifiers)
+    {
+        var effectiveKey = EffectiveKey(key, systemKey);
+        return _shortcutSettings.TryMatch(effectiveKey, modifiers, out var action)
+            && HandleShortcutAction(action);
     }
 
     private bool HandleShortcutAction(ShortcutAction action)
@@ -1305,8 +1308,10 @@ public partial class MainWindow : Window
 
     private static Key EffectiveKey(KeyEventArgs e)
     {
-        return e.Key == Key.System ? e.SystemKey : e.Key;
+        return EffectiveKey(e.Key, e.SystemKey);
     }
+
+    private static Key EffectiveKey(Key key, Key systemKey) => key == Key.System ? systemKey : key;
 
     internal void InitializeForSmokeTest()
     {
@@ -1354,31 +1359,9 @@ public partial class MainWindow : Window
         return changed;
     }
 
-    internal bool CycleActivePaneForSmokeTest(bool reverse) => CycleActivePane(reverse);
-
-    internal bool HandlePaneFocusShortcutForSmokeTest(Key key)
+    internal bool HandlePreviewKeyDownForSmokeTest(Key key, ModifierKeys modifiers, Key systemKey = Key.None)
     {
-        return TryMapArrowKey(key, out var direction) && FocusPane(direction);
-    }
-
-    internal bool HandlePaneActionShortcutForSmokeTest(Key key)
-    {
-        switch (key)
-        {
-            case Key.Z:
-                ToggleActivePaneZoom();
-                return true;
-            case Key.X:
-                CloseActivePane();
-                return true;
-            default:
-                return false;
-        }
-    }
-
-    internal bool HandleShortcutForSmokeTest(Key key, ModifierKeys modifiers)
-    {
-        return _shortcutSettings.TryMatch(key, modifiers, out var action) && HandleShortcutAction(action);
+        return HandlePreviewKeyDown(key, systemKey, modifiers);
     }
 
     internal void SetActivePaneTextForSmokeTest(string text)

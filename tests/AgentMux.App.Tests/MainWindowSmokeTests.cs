@@ -45,45 +45,45 @@ public sealed class MainWindowSmokeTests
                 Assert.Equal(2, window.RenderedTerminalPaneCountForSmokeTest);
                 var activeAfterSplit = window.ActivePaneIdForSmokeTest;
 
-                Assert.True(window.HandleShortcutForSmokeTest(Key.Tab, ModifierKeys.Control));
+                Assert.True(window.HandlePreviewKeyDownForSmokeTest(Key.Tab, ModifierKeys.Control));
                 Assert.NotEqual(activeAfterSplit, window.ActivePaneIdForSmokeTest);
                 var leftPane = window.ActivePaneIdForSmokeTest;
 
-                Assert.True(window.HandleShortcutForSmokeTest(Key.Right, ModifierKeys.Control | ModifierKeys.Alt));
+                Assert.True(window.HandlePreviewKeyDownForSmokeTest(Key.System, ModifierKeys.Control | ModifierKeys.Alt, Key.Right));
                 Assert.Equal(activeAfterSplit, window.ActivePaneIdForSmokeTest);
 
-                Assert.True(window.HandleShortcutForSmokeTest(Key.Right, ModifierKeys.Control | ModifierKeys.Alt));
+                Assert.False(window.HandlePreviewKeyDownForSmokeTest(Key.System, ModifierKeys.Control | ModifierKeys.Alt, Key.Right));
                 Assert.Equal(activeAfterSplit, window.ActivePaneIdForSmokeTest);
 
-                Assert.True(window.HandleShortcutForSmokeTest(Key.Left, ModifierKeys.Control | ModifierKeys.Alt));
+                Assert.True(window.HandlePreviewKeyDownForSmokeTest(Key.System, ModifierKeys.Control | ModifierKeys.Alt, Key.Left));
                 Assert.Equal(leftPane, window.ActivePaneIdForSmokeTest);
-                Assert.False(window.HandleShortcutForSmokeTest(Key.A, ModifierKeys.Control | ModifierKeys.Alt));
+                Assert.False(window.HandlePreviewKeyDownForSmokeTest(Key.A, ModifierKeys.Control | ModifierKeys.Alt));
                 Assert.Equal(leftPane, window.ActivePaneIdForSmokeTest);
 
                 Assert.True(window.SplitActivePaneForSmokeTest(SplitDirection.Down));
                 var bottomLeftPane = window.ActivePaneIdForSmokeTest;
-                Assert.True(window.HandleShortcutForSmokeTest(Key.Up, ModifierKeys.Control | ModifierKeys.Alt));
+                Assert.True(window.HandlePreviewKeyDownForSmokeTest(Key.System, ModifierKeys.Control | ModifierKeys.Alt, Key.Up));
                 var topLeftPane = window.ActivePaneIdForSmokeTest;
                 Assert.NotEqual(bottomLeftPane, topLeftPane);
-                Assert.True(window.HandleShortcutForSmokeTest(Key.Down, ModifierKeys.Control | ModifierKeys.Alt));
+                Assert.True(window.HandlePreviewKeyDownForSmokeTest(Key.System, ModifierKeys.Control | ModifierKeys.Alt, Key.Down));
                 Assert.Equal(bottomLeftPane, window.ActivePaneIdForSmokeTest);
 
-                Assert.True(window.HandleShortcutForSmokeTest(Key.Z, ModifierKeys.Control | ModifierKeys.Shift));
+                Assert.True(window.HandlePreviewKeyDownForSmokeTest(Key.Z, ModifierKeys.Control | ModifierKeys.Shift));
                 Assert.True(window.IsActivePaneZoomedForSmokeTest);
                 Assert.Equal(3, window.PaneCountForSmokeTest);
                 Assert.Equal(1, window.RenderedTerminalPaneCountForSmokeTest);
 
-                Assert.True(window.HandleShortcutForSmokeTest(Key.Right, ModifierKeys.Control | ModifierKeys.Alt));
+                Assert.True(window.HandlePreviewKeyDownForSmokeTest(Key.System, ModifierKeys.Control | ModifierKeys.Alt, Key.Right));
                 Assert.False(window.IsActivePaneZoomedForSmokeTest);
                 Assert.Equal(3, window.PaneCountForSmokeTest);
                 Assert.Equal(3, window.RenderedTerminalPaneCountForSmokeTest);
-                Assert.True(window.HandleShortcutForSmokeTest(Key.Left, ModifierKeys.Control | ModifierKeys.Alt));
+                Assert.True(window.HandlePreviewKeyDownForSmokeTest(Key.System, ModifierKeys.Control | ModifierKeys.Alt, Key.Left));
 
-                Assert.True(window.HandleShortcutForSmokeTest(Key.Z, ModifierKeys.Control | ModifierKeys.Shift));
+                Assert.True(window.HandlePreviewKeyDownForSmokeTest(Key.Z, ModifierKeys.Control | ModifierKeys.Shift));
                 Assert.True(window.IsActivePaneZoomedForSmokeTest);
-                Assert.True(window.HandleShortcutForSmokeTest(Key.Z, ModifierKeys.Control | ModifierKeys.Shift));
+                Assert.True(window.HandlePreviewKeyDownForSmokeTest(Key.Z, ModifierKeys.Control | ModifierKeys.Shift));
                 Assert.Equal(3, window.RenderedTerminalPaneCountForSmokeTest);
-                Assert.False(window.HandleShortcutForSmokeTest(Key.A, ModifierKeys.Control | ModifierKeys.Shift));
+                Assert.False(window.HandlePreviewKeyDownForSmokeTest(Key.A, ModifierKeys.Control | ModifierKeys.Shift));
 
                 window.SetActivePaneTextForSmokeTest("AGENTMUX_UI_SMOKE");
                 Assert.Equal(3, window.RenderedTerminalPaneCountForSmokeTest);
@@ -92,7 +92,7 @@ public sealed class MainWindowSmokeTests
                 window.AppendActivePaneTextForSmokeTest("_STREAM_APPEND");
                 Assert.True(window.RenderedTextContainsForSmokeTest("AGENTMUX_UI_SMOKE_STREAM_APPEND"));
 
-                Assert.True(window.HandleShortcutForSmokeTest(Key.Right, ModifierKeys.Control | ModifierKeys.Alt));
+                Assert.True(window.HandlePreviewKeyDownForSmokeTest(Key.System, ModifierKeys.Control | ModifierKeys.Alt, Key.Right));
 
                 var browserUrl = window.OpenBrowserInActivePaneForSmokeTest("example.com");
                 Assert.Equal("https://example.com/", browserUrl);
@@ -100,45 +100,45 @@ public sealed class MainWindowSmokeTests
                 Assert.Equal(2, window.RenderedTerminalPaneCountForSmokeTest);
                 Assert.True(window.RenderedTextContainsForSmokeTest(browserUrl));
 
-                Assert.True(window.HandleShortcutForSmokeTest(Key.Left, ModifierKeys.Control | ModifierKeys.Alt));
+                Assert.True(window.HandlePreviewKeyDownForSmokeTest(Key.System, ModifierKeys.Control | ModifierKeys.Alt, Key.Left));
                 Assert.Equal(1, window.RenderedBrowserPaneCountForSmokeTest);
                 Assert.Equal(2, window.RenderedTerminalPaneCountForSmokeTest);
-                Assert.True(window.HandleShortcutForSmokeTest(Key.Right, ModifierKeys.Control | ModifierKeys.Alt));
+                Assert.True(window.HandlePreviewKeyDownForSmokeTest(Key.System, ModifierKeys.Control | ModifierKeys.Alt, Key.Right));
 
                 var safeUrl = window.OpenBrowserInActivePaneForSmokeTest("https://");
                 Assert.Equal("about:blank", safeUrl);
                 Assert.True(window.RenderedTextContainsForSmokeTest(safeUrl));
 
-                Assert.True(window.HandleShortcutForSmokeTest(Key.Z, ModifierKeys.Control | ModifierKeys.Shift));
+                Assert.True(window.HandlePreviewKeyDownForSmokeTest(Key.Z, ModifierKeys.Control | ModifierKeys.Shift));
                 Assert.True(window.IsActivePaneZoomedForSmokeTest);
                 Assert.Equal(1, window.RenderedBrowserPaneCountForSmokeTest);
                 Assert.Equal(0, window.RenderedTerminalPaneCountForSmokeTest);
 
-                Assert.True(window.HandleShortcutForSmokeTest(Key.Z, ModifierKeys.Control | ModifierKeys.Shift));
+                Assert.True(window.HandlePreviewKeyDownForSmokeTest(Key.Z, ModifierKeys.Control | ModifierKeys.Shift));
                 Assert.False(window.IsActivePaneZoomedForSmokeTest);
                 Assert.Equal(1, window.RenderedBrowserPaneCountForSmokeTest);
                 Assert.Equal(2, window.RenderedTerminalPaneCountForSmokeTest);
 
                 Assert.Equal(1, window.CachedBrowserPaneViewCountForSmokeTest);
-                Assert.True(window.HandleShortcutForSmokeTest(Key.X, ModifierKeys.Control | ModifierKeys.Shift));
+                Assert.True(window.HandlePreviewKeyDownForSmokeTest(Key.X, ModifierKeys.Control | ModifierKeys.Shift));
                 Assert.Equal(2, window.PaneCountForSmokeTest);
                 Assert.Equal(0, window.RenderedBrowserPaneCountForSmokeTest);
                 Assert.Equal(2, window.RenderedTerminalPaneCountForSmokeTest);
                 Assert.Equal(0, window.CachedBrowserPaneViewCountForSmokeTest);
 
-                Assert.True(window.HandleShortcutForSmokeTest(Key.X, ModifierKeys.Control | ModifierKeys.Shift));
+                Assert.True(window.HandlePreviewKeyDownForSmokeTest(Key.X, ModifierKeys.Control | ModifierKeys.Shift));
                 Assert.Equal(1, window.PaneCountForSmokeTest);
                 Assert.Equal(1, window.RenderedTerminalPaneCountForSmokeTest);
                 Assert.Equal(1, window.CachedTerminalPaneViewCountForSmokeTest);
 
                 var lastPane = window.ActivePaneIdForSmokeTest;
-                Assert.True(window.HandleShortcutForSmokeTest(Key.X, ModifierKeys.Control | ModifierKeys.Shift));
+                Assert.True(window.HandlePreviewKeyDownForSmokeTest(Key.X, ModifierKeys.Control | ModifierKeys.Shift));
                 Assert.Equal(1, window.PaneCountForSmokeTest);
                 Assert.Equal(lastPane, window.ActivePaneIdForSmokeTest);
 
-                Assert.True(window.HandleShortcutForSmokeTest(Key.Z, ModifierKeys.Control | ModifierKeys.Shift));
+                Assert.True(window.HandlePreviewKeyDownForSmokeTest(Key.Z, ModifierKeys.Control | ModifierKeys.Shift));
                 Assert.True(window.IsActivePaneZoomedForSmokeTest);
-                Assert.True(window.HandleShortcutForSmokeTest(Key.Z, ModifierKeys.Control | ModifierKeys.Shift));
+                Assert.True(window.HandlePreviewKeyDownForSmokeTest(Key.Z, ModifierKeys.Control | ModifierKeys.Shift));
                 Assert.False(window.IsActivePaneZoomedForSmokeTest);
             }
             finally
@@ -164,16 +164,16 @@ public sealed class MainWindowSmokeTests
             try
             {
                 customWindow.InitializeForSmokeTest();
-                Assert.True(customWindow.HandleShortcutForSmokeTest(Key.F11, ModifierKeys.Control | ModifierKeys.Shift));
+                Assert.True(customWindow.HandlePreviewKeyDownForSmokeTest(Key.F11, ModifierKeys.Control | ModifierKeys.Shift));
                 Assert.True(customWindow.IsActivePaneZoomedForSmokeTest);
-                Assert.False(customWindow.HandleShortcutForSmokeTest(Key.Z, ModifierKeys.Control | ModifierKeys.Shift));
+                Assert.False(customWindow.HandlePreviewKeyDownForSmokeTest(Key.Z, ModifierKeys.Control | ModifierKeys.Shift));
                 Assert.True(customWindow.SplitActivePaneForSmokeTest(SplitDirection.Right));
-                Assert.True(customWindow.HandleShortcutForSmokeTest(Key.Tab, ModifierKeys.Control));
+                Assert.True(customWindow.HandlePreviewKeyDownForSmokeTest(Key.Tab, ModifierKeys.Control));
                 var leftCustomPane = customWindow.ActivePaneIdForSmokeTest;
-                Assert.True(customWindow.HandleShortcutForSmokeTest(Key.L, ModifierKeys.Control | ModifierKeys.Alt));
+                Assert.True(customWindow.HandlePreviewKeyDownForSmokeTest(Key.System, ModifierKeys.Control | ModifierKeys.Alt, Key.L));
                 Assert.NotEqual(leftCustomPane, customWindow.ActivePaneIdForSmokeTest);
-                Assert.True(customWindow.HandleShortcutForSmokeTest(Key.F11, ModifierKeys.Control | ModifierKeys.Shift));
-                Assert.True(customWindow.HandleShortcutForSmokeTest(Key.X, ModifierKeys.Control | ModifierKeys.Shift));
+                Assert.True(customWindow.HandlePreviewKeyDownForSmokeTest(Key.F11, ModifierKeys.Control | ModifierKeys.Shift));
+                Assert.True(customWindow.HandlePreviewKeyDownForSmokeTest(Key.X, ModifierKeys.Control | ModifierKeys.Shift));
                 Assert.Equal(1, customWindow.PaneCountForSmokeTest);
             }
             finally
@@ -190,7 +190,7 @@ public sealed class MainWindowSmokeTests
             try
             {
                 fallbackWindow.InitializeForSmokeTest();
-                Assert.True(fallbackWindow.HandleShortcutForSmokeTest(Key.Z, ModifierKeys.Control | ModifierKeys.Shift));
+                Assert.True(fallbackWindow.HandlePreviewKeyDownForSmokeTest(Key.Z, ModifierKeys.Control | ModifierKeys.Shift));
                 Assert.True(fallbackWindow.IsActivePaneZoomedForSmokeTest);
             }
             finally
