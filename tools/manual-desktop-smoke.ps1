@@ -174,8 +174,8 @@ function Get-WebView2RuntimeInfo {
   }
 }
 
-$isWindows = [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::Windows)
-if (-not $isWindows) {
+$runningOnWindows = [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::Windows)
+if (-not $runningOnWindows) {
   throw "manual-desktop-smoke.ps1 must be run from an interactive Windows desktop session."
 }
 
