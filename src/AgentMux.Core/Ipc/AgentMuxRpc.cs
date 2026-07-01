@@ -54,6 +54,7 @@ public static class AgentMuxMethods
     public const string Split = "split";
     public const string SendText = "surface.send_text";
     public const string SendKey = "surface.send_key";
+    public const string ResizeTerminal = "surface.resize_terminal";
     public const string ReadScreen = "surface.read_screen";
     public const string FocusPane = "surface.focus_pane";
     public const string ToggleZoom = "surface.toggle_zoom";

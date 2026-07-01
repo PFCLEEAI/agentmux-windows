@@ -15,6 +15,13 @@ while (Console.ReadLine() is { } line)
         return;
     }
 
+    if (line.Equals("size", StringComparison.OrdinalIgnoreCase))
+    {
+        Console.WriteLine($"SIZE:{Console.WindowWidth}x{Console.WindowHeight}");
+        Console.Out.Flush();
+        continue;
+    }
+
     Console.WriteLine($"ECHO:{line}");
     Console.Out.Flush();
 }

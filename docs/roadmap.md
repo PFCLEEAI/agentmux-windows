@@ -10,7 +10,7 @@
 
 - Launch a shell through ConPTY. Passing in hosted Windows smoke for process output and stdin echo.
 - Input/output pump. Passing in hosted Windows smoke.
-- Resize support. In progress.
+- Resize support. Preview implemented through WPF pane-size propagation, explicit `surface.resize_terminal`, and hosted ConPTY resize smoke.
 - Process cleanup and timeout handling. In progress.
 - Headless Windows smoke tests. Passing as a blocking GitHub Actions gate; real Windows desktop smoke still required before release-ready status.
 
@@ -33,6 +33,7 @@
 - Zoom and close pane. Preview implemented.
 - Send text. Preview implemented.
 - Send key.
+- Resize terminal. Preview implemented for the active terminal pane.
 - Read screen. Preview implemented for active pane text.
 
 ## Sprint 4 - Notifications

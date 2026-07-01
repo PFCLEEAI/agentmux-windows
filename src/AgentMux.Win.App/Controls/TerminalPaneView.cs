@@ -15,9 +15,11 @@ internal sealed class TerminalPaneView : Grid
 
     private readonly WebView2 _webView;
     private readonly TextBox _fallback;
-    private readonly Queue<TerminalScriptCall> _pendingScripts = [];
+    private readonly Queue<string> _pendingScripts = [];
     private TaskCompletionSource? _runtimeReady;
     private string _screenText = EmptyText;
+    private int _cols = 120;
+    private int _rows = 30;
     private bool _isFlushingScripts;
     private bool _webViewInitializing;
     private bool _webViewReady;
@@ -91,6 +93,22 @@ internal sealed class TerminalPaneView : Grid
         }
     }
 
+    public void ResizeTerminal(int cols, int rows)
+    {
+        if (cols <= 0 || rows <= 0)
+        {
+            return;
+        }
+
+        _cols = cols;
+        _rows = rows;
+
+        if (_webViewReady)
+        {
+            QueueTerminalResize();
+        }
+    }
+
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
         if (_webViewReady || _webViewFailed || _webViewInitializing)
@@ -117,6 +135,7 @@ internal sealed class TerminalPaneView : Grid
                 _webViewReady = true;
                 _webView.Visibility = Visibility.Visible;
                 _fallback.Visibility = Visibility.Collapsed;
+                QueueTerminalResize();
                 QueueTerminalScript("agentmuxSetText", _screenText);
                 await FlushTerminalScriptsAsync().ConfigureAwait(true);
                 _runtimeReady?.TrySetResult();
@@ -173,6 +192,33 @@ internal sealed class TerminalPaneView : Grid
         }
 
         throw new InvalidOperationException($"terminal WebView2 runtime did not render expected text. Last text: {lastText}");
+    }
+
+    internal async Task WaitForRuntimeGeometryForSmokeTestAsync(int cols, int rows)
+    {
+        await EnsureRuntimeReadyForSmokeTestAsync().ConfigureAwait(true);
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
+        var lastGeometry = string.Empty;
+
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            lastGeometry = await ExecuteRuntimeScriptForSmokeTestAsync("""
+                (() => typeof window.agentmuxGetGeometryForSmoke === "function"
+                    ? window.agentmuxGetGeometryForSmoke()
+                    : { cols: 0, rows: 0 })()
+                """).ConfigureAwait(true);
+
+            using var document = JsonDocument.Parse(lastGeometry);
+            var root = document.RootElement;
+            if (root.GetProperty("cols").GetInt32() == cols && root.GetProperty("rows").GetInt32() == rows)
+            {
+                return;
+            }
+
+            await Task.Delay(50).ConfigureAwait(true);
+        }
+
+        throw new InvalidOperationException($"terminal WebView2 runtime did not resize to {cols}x{rows}. Last geometry: {lastGeometry}");
     }
 
     internal async Task<string> CapturePngForSmokeTestAsync(string path)
@@ -234,7 +280,18 @@ internal sealed class TerminalPaneView : Grid
 
     private void QueueTerminalScript(string functionName, string text)
     {
-        _pendingScripts.Enqueue(new TerminalScriptCall(functionName, text));
+        var json = JsonSerializer.Serialize(text);
+        QueueRawTerminalScript($"window.{functionName}({json});");
+    }
+
+    private void QueueTerminalResize()
+    {
+        QueueRawTerminalScript($"window.agentmuxResize({_cols}, {_rows});");
+    }
+
+    private void QueueRawTerminalScript(string script)
+    {
+        _pendingScripts.Enqueue(script);
         if (!_isFlushingScripts)
         {
             _ = FlushTerminalScriptsAsync();
@@ -253,8 +310,8 @@ internal sealed class TerminalPaneView : Grid
         {
             while (_webViewReady && _pendingScripts.Count > 0)
             {
-                var call = _pendingScripts.Dequeue();
-                await ExecuteTerminalFunctionAsync(call.FunctionName, call.Text).ConfigureAwait(true);
+                var script = _pendingScripts.Dequeue();
+                await ExecuteTerminalScriptAsync(script).ConfigureAwait(true);
             }
         }
         catch
@@ -272,15 +329,14 @@ internal sealed class TerminalPaneView : Grid
         }
     }
 
-    private async Task ExecuteTerminalFunctionAsync(string functionName, string text)
+    private async Task ExecuteTerminalScriptAsync(string script)
     {
         if (_webView.CoreWebView2 is null)
         {
             return;
         }
 
-        var json = JsonSerializer.Serialize(text);
-        await _webView.ExecuteScriptAsync($"window.{functionName}({json});").ConfigureAwait(true);
+        await _webView.ExecuteScriptAsync(script).ConfigureAwait(true);
     }
 
     private void UseFallback()
@@ -299,5 +355,4 @@ internal sealed class TerminalPaneView : Grid
             "AgentMux",
             "WebView2");
 
-    private readonly record struct TerminalScriptCall(string FunctionName, string Text);
 }

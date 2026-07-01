@@ -248,7 +248,7 @@ public static class Program
     {
         if (args.Length == 0)
         {
-            error = "Usage: agentmux pane <zoom|close>";
+            error = "Usage: agentmux pane <zoom|close|resize>";
             return null;
         }
 
@@ -264,6 +264,28 @@ public static class Program
         {
             error = "";
             return new CliRequest(AgentMuxMethods.ClosePane, new { });
+        }
+
+        if (args[0].Equals("resize", StringComparison.OrdinalIgnoreCase)
+            || args[0].Equals("resize-terminal", StringComparison.OrdinalIgnoreCase))
+        {
+            var named = ParseNamed(args[1..]);
+            var colsValue = NamedOrFirst(named, "cols");
+            var rowsValue = named.TryGetValue("rows", out var namedRows)
+                ? namedRows
+                : named.TryGetValue("_arg1", out var second)
+                    ? second
+                    : null;
+
+            if (!TryParsePositiveInt(colsValue, out var cols)
+                || !TryParsePositiveInt(rowsValue, out var rows))
+            {
+                error = "Usage: agentmux pane resize --cols <cols> --rows <rows>";
+                return null;
+            }
+
+            error = "";
+            return new CliRequest(AgentMuxMethods.ResizeTerminal, new { cols, rows });
         }
 
         error = $"Unknown pane command: {args[0]}";
@@ -352,6 +374,11 @@ public static class Program
         return named;
     }
 
+    private static bool TryParsePositiveInt(string? value, out int number)
+    {
+        return int.TryParse(value, out number) && number > 0;
+    }
+
     private static Dictionary<string, string> ParseNamed(string[] args)
     {
         var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -418,6 +445,7 @@ public static class Program
           agentmux focus right
           agentmux zoom
           agentmux close-pane
+          agentmux pane resize --cols 100 --rows 30
           agentmux open-url https://example.com
           agentmux browser open https://example.com
           agentmux browser eval "document.title"

@@ -35,11 +35,38 @@ public sealed class MainWindowSmokeTests
             {
                 window.InitializeForSmokeTest();
 
+                Assert.True(TerminalPaneSizeCalculator.TryCalculate(640, 340, out var calculatedCols, out var calculatedRows));
+                Assert.Equal(80, calculatedCols);
+                Assert.Equal(20, calculatedRows);
+                Assert.False(TerminalPaneSizeCalculator.TryCalculate(double.NaN, 340, out _, out _));
+
                 Assert.True(window.HasButtonForSmokeTest("Split right"));
                 Assert.True(window.HasButtonForSmokeTest("Split down"));
                 Assert.True(window.HasButtonForSmokeTest("Browser"));
                 Assert.Equal(1, window.PaneCountForSmokeTest);
                 Assert.Equal(1, window.RenderedTerminalPaneCountForSmokeTest);
+                Assert.Equal(120, window.ActivePaneColsForSmokeTest);
+                Assert.Equal(30, window.ActivePaneRowsForSmokeTest);
+
+                Assert.True(window.ResizeActiveTerminalPaneForSmokeTest(640, 340));
+                Assert.Equal(80, window.ActivePaneColsForSmokeTest);
+                Assert.Equal(20, window.ActivePaneRowsForSmokeTest);
+                Assert.False(window.ResizeActiveTerminalPaneForSmokeTest(640, 340));
+                Assert.False(window.ResizeActiveTerminalPaneForSmokeTest(double.NaN, 340));
+
+                var resizeResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.ResizeTerminal, new
+                {
+                    cols = 100,
+                    rows = 30
+                });
+                Assert.True(resizeResponse.Ok, resizeResponse.Error);
+                var resizeResult = System.Text.Json.JsonSerializer.SerializeToElement(resizeResponse.Result, AgentMuxJson.Options);
+                Assert.True(resizeResult.GetProperty("resized").GetBoolean());
+                Assert.True(resizeResult.GetProperty("changed").GetBoolean());
+                Assert.Equal(100, resizeResult.GetProperty("cols").GetInt32());
+                Assert.Equal(30, resizeResult.GetProperty("rows").GetInt32());
+                Assert.Equal(100, window.ActivePaneColsForSmokeTest);
+                Assert.Equal(30, window.ActivePaneRowsForSmokeTest);
 
                 Assert.True(window.SplitActivePaneForSmokeTest(SplitDirection.Right));
                 Assert.Equal(2, window.PaneCountForSmokeTest);
@@ -425,6 +452,8 @@ public sealed class MainWindowSmokeTests
 
             var runtimeText = await terminal.WaitForRuntimeTextForSmokeTestAsync(terminalMarker);
             Assert.Contains(terminalMarker, runtimeText);
+            terminal.ResizeTerminal(84, 24);
+            await terminal.WaitForRuntimeGeometryForSmokeTestAsync(84, 24);
 
             var terminalScreenshot = await terminal.CapturePngForSmokeTestAsync(
                 System.IO.Path.Combine(SmokeArtifactDirectory(), "terminal-webview2.png"));

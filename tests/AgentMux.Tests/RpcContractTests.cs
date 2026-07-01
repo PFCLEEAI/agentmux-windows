@@ -41,6 +41,12 @@ public sealed class RpcContractTests
     }
 
     [Fact]
+    public void ResizeTerminalMethodIsStable()
+    {
+        Assert.Equal("surface.resize_terminal", AgentMuxMethods.ResizeTerminal);
+    }
+
+    [Fact]
     public void FocusPaneMethodIsStable()
     {
         Assert.Equal("surface.focus_pane", AgentMuxMethods.FocusPane);

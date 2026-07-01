@@ -35,6 +35,7 @@ AgentMux.Win.App
 - Pane focus movement is computed from the split-tree geometry in `AgentMux.Core`, so CLI/RPC and WPF shortcuts share the same target selection.
 - Pane actions use shared Core tree helpers: zoom stores a `ZoomedPaneId` on the surface, while close collapses the split tree to the closed pane's sibling branch.
 - Terminal panes own independent ConPTY sessions, started lazily when a pane becomes active or receives input.
+- Terminal pane dimensions are estimated from the rendered WPF content size and stored on `PaneState.Cols` / `PaneState.Rows`. Size changes update the model, resize the cached xterm view, and resize an existing live ConPTY session through `ResizePseudoConsole` on a best-effort path. The same path is available explicitly through `surface.resize_terminal` / `agentmux pane resize`.
 - Terminal panes render through a cached WebView2/xterm bridge with a WPF text fallback. The bridge displays current pane text and keeps `PaneState.LastScreenText` as the automation/read-screen source.
 - Browser panes render through a cached WebView2 bridge with a WPF fallback. `PaneState.Url` is the current browser navigation source, and `surface.open_url` converts or navigates the active pane.
 - Browser automation uses the active browser pane and WebView2 directly: `surface.eval_js`, `surface.click_selector`, `surface.fill_selector`, `surface.browser_type_text`, `surface.browser_press_key`, and `surface.capture_screenshot`. These are local trust-boundary APIs; JavaScript executes in the active browser pane, click/type/press use WebView2 input automation where practical, and screenshots write to local paths.
@@ -68,4 +69,4 @@ The default pipe is per-user named and intended for the current user session onl
 
 ## Verification Boundary
 
-macOS can verify shared library tests, Windows-targeted builds, and documentation. Hosted Windows CI verifies WPF composition, session restore smoke with a temp snapshot, corrupt snapshot fallback, shortcut dispatch, WebView2 runtime smoke with PNG artifacts, ConPTY output/input smoke, Windows builds, and framework-dependent package creation. A true manual Windows desktop smoke is still required for physical keyboard behavior, clipboard behavior, and release readiness.
+macOS can verify shared library tests, Windows-targeted builds, and documentation. Hosted Windows CI verifies WPF composition, terminal pane size propagation, session restore smoke with a temp snapshot, corrupt snapshot fallback, shortcut dispatch, WebView2 runtime smoke with PNG artifacts, ConPTY output/input/resize smoke, Windows builds, and framework-dependent package creation. A true manual Windows desktop smoke is still required for physical keyboard behavior, clipboard behavior, and release readiness.

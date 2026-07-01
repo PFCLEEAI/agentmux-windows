@@ -85,7 +85,19 @@
       });
     };
 
+    window.agentmuxResize = (cols, rows) => {
+      const nextCols = Math.floor(Number(cols));
+      const nextRows = Math.floor(Number(rows));
+      if (!Number.isFinite(nextCols) || !Number.isFinite(nextRows) || nextCols <= 0 || nextRows <= 0) {
+        return false;
+      }
+
+      terminal.resize(nextCols, nextRows);
+      return true;
+    };
+
     window.agentmuxGetTextForSmoke = () => smokeScreenText;
+    window.agentmuxGetGeometryForSmoke = () => ({ cols: terminal.cols, rows: terminal.rows });
   </script>
 </body>
 </html>

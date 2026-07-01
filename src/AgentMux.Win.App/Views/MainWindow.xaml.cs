@@ -391,6 +391,7 @@ public partial class MainWindow : Window
             AgentMuxMethods.Split => AgentMuxResponse.Success(request.Id, HandleSplit(request.Params)),
             AgentMuxMethods.SendText => AgentMuxResponse.Success(request.Id, HandleSendText(request.Params)),
             AgentMuxMethods.SendKey => AgentMuxResponse.Success(request.Id, HandleSendKey(request.Params)),
+            AgentMuxMethods.ResizeTerminal => AgentMuxResponse.Success(request.Id, HandleResizeTerminal(request.Params)),
             AgentMuxMethods.ReadScreen => AgentMuxResponse.Success(request.Id, new { text = ActivePane()?.LastScreenText ?? "" }),
             AgentMuxMethods.FocusPane => HandleFocusPane(request.Id, request.Params),
             AgentMuxMethods.ToggleZoom => AgentMuxResponse.Success(request.Id, HandleToggleZoom()),
@@ -504,6 +505,34 @@ public partial class MainWindow : Window
 
         _ = SendTerminalSequenceAsync(sequence, $"[key: {key}]{Environment.NewLine}");
         return new { sent = true, key, bytes = Encoding.UTF8.GetByteCount(sequence) };
+    }
+
+    private object HandleResizeTerminal(JsonElement? parameters)
+    {
+        if (!TryReadPositiveIntParam(parameters, "cols", out var cols)
+            || !TryReadPositiveIntParam(parameters, "rows", out var rows))
+        {
+            return new { resized = false, reason = "cols and rows must be positive integers" };
+        }
+
+        var pane = ActivePane();
+        if (pane?.Kind != PaneKind.Terminal)
+        {
+            return new { resized = false, reason = "active pane is not a terminal" };
+        }
+
+        var running = _ptySessions.TryGetValue(pane.Id, out var session) && session.IsRunning;
+        var changed = ResizeTerminalPane(pane, cols, rows);
+
+        return new
+        {
+            resized = true,
+            changed,
+            paneId = pane.Id,
+            pane.Cols,
+            pane.Rows,
+            running
+        };
     }
 
     private AgentMuxResponse HandleFocusPane(string requestId, JsonElement? parameters)
@@ -1242,12 +1271,74 @@ public partial class MainWindow : Window
                 ActiveSurface().ActivePaneId = pane.Id;
                 _ = SendTerminalSequenceToPaneAsync(pane, data);
             };
+            view.SizeChanged += (_, args) => ApplyTerminalPaneSize(pane.Id, args.NewSize.Width, args.NewSize.Height);
             _terminalViews[pane.Id] = view;
         }
 
         DetachFromParent(view);
         view.SetScreenText(pane.LastScreenText);
+        ApplyTerminalPaneSize(pane.Id, view.ActualWidth, view.ActualHeight);
         return view;
+    }
+
+    private bool ApplyTerminalPaneSize(string paneId, double width, double height)
+    {
+        if (FindPaneById(paneId) is not { Kind: PaneKind.Terminal } pane
+            || !TerminalPaneSizeCalculator.TryCalculate(width, height, out var cols, out var rows))
+        {
+            return false;
+        }
+
+        return ResizeTerminalPane(pane, cols, rows);
+    }
+
+    private bool ResizeTerminalPane(PaneState pane, int cols, int rows)
+    {
+        if (pane.Kind != PaneKind.Terminal
+            || !TerminalPaneSizeCalculator.TryNormalize(cols, rows, out cols, out rows))
+        {
+            return false;
+        }
+
+        var changed = pane.Cols != cols || pane.Rows != rows;
+        pane.Cols = cols;
+        pane.Rows = rows;
+        ResizeTerminalView(pane);
+
+        if (!changed)
+        {
+            return false;
+        }
+
+        QueueSessionSave();
+        if (_ptySessions.TryGetValue(pane.Id, out var session) && session.IsRunning)
+        {
+            _ = ResizePanePtyAsync(session, cols, rows);
+        }
+
+        return true;
+    }
+
+    private void ResizeTerminalView(PaneState pane)
+    {
+        if (_terminalViews.TryGetValue(pane.Id, out var view))
+        {
+            view.ResizeTerminal(pane.Cols, pane.Rows);
+        }
+    }
+
+    private static async Task ResizePanePtyAsync(ConPtySession session, int cols, int rows)
+    {
+        try
+        {
+            await session.ResizeAsync(cols, rows).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException
+            or ObjectDisposedException
+            or PlatformNotSupportedException
+            or System.ComponentModel.Win32Exception)
+        {
+        }
     }
 
     private BrowserPaneView GetBrowserView(PaneState pane)
@@ -1577,6 +1668,10 @@ public partial class MainWindow : Window
 
     internal string? ActivePaneUrlForSmokeTest => ActivePane()?.Url;
 
+    internal int? ActivePaneColsForSmokeTest => ActivePane()?.Cols;
+
+    internal int? ActivePaneRowsForSmokeTest => ActivePane()?.Rows;
+
     internal bool IsActivePaneZoomedForSmokeTest => ActiveSurface().ZoomedPaneId == ActivePane()?.Id;
 
     internal bool HasButtonForSmokeTest(string content) => VisualTreeContainsButton(this, content);
@@ -1614,6 +1709,12 @@ public partial class MainWindow : Window
 
         pane.LastScreenText = string.Concat(pane.LastScreenText, text);
         AppendTerminalView(pane, text);
+    }
+
+    internal bool ResizeActiveTerminalPaneForSmokeTest(double width, double height)
+    {
+        return ActivePane() is { Kind: PaneKind.Terminal } pane
+            && ApplyTerminalPaneSize(pane.Id, width, height);
     }
 
     internal string OpenBrowserInActivePaneForSmokeTest(string url)
@@ -1687,6 +1788,23 @@ public partial class MainWindow : Window
         return parameters is { } element
             ? element.Deserialize<T>(AgentMuxJson.Options)
             : default;
+    }
+
+    private static bool TryReadPositiveIntParam(JsonElement? parameters, string name, out int value)
+    {
+        value = 0;
+        if (parameters is not { ValueKind: JsonValueKind.Object } element
+            || !element.TryGetProperty(name, out var property))
+        {
+            return false;
+        }
+
+        return property.ValueKind switch
+        {
+            JsonValueKind.Number => property.TryGetInt32(out value) && value > 0,
+            JsonValueKind.String => int.TryParse(property.GetString(), out value) && value > 0,
+            _ => false
+        };
     }
 
     private sealed class NotifyParams

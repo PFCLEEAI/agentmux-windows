@@ -37,6 +37,26 @@ public sealed class ConPtySmokeTests
         await probe.WaitForOutputAsync("ECHO:AGENTMUX_SMOKE", TimeSpan.FromSeconds(10));
     }
 
+    [Fact]
+    public async Task LiveSessionResizeKeepsInputOutputWorking()
+    {
+        if (!OperatingSystem.IsWindowsVersionAtLeast(10, 0, 17763))
+        {
+            return;
+        }
+
+        var hostPath = ResolveTestHostPath();
+        await using var probe = await StartAndCaptureAsync(QuoteCommand(hostPath));
+
+        await probe.WaitForOutputAsync("AGENTMUX_READY", TimeSpan.FromSeconds(5));
+        await probe.Session.ResizeAsync(80, 20);
+        await probe.Session.WriteAsync("size\r\n"u8.ToArray());
+        await probe.WaitForOutputAsync("SIZE:80x20", TimeSpan.FromSeconds(10));
+        await probe.Session.WriteAsync("AGENTMUX_AFTER_RESIZE\r\n"u8.ToArray());
+
+        await probe.WaitForOutputAsync("ECHO:AGENTMUX_AFTER_RESIZE", TimeSpan.FromSeconds(10));
+    }
+
     private static async Task<ConPtyProbe> StartAndCaptureAsync(string commandLine)
     {
         var probe = new ConPtyProbe();
