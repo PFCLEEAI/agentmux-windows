@@ -1506,6 +1506,7 @@ internal sealed class BrowserPaneView : Grid, IDisposable
         {
             requestId = paused.RequestId,
             responseCode = decision.Status ?? 200,
+            responsePhrase = "AgentMux",
             responseHeaders = new[]
             {
                 new { name = "Content-Type", value = decision.ContentType ?? "text/plain" },
