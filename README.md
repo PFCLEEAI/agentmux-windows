@@ -54,7 +54,7 @@ The package contains:
 
 - `AgentMux.exe`: WPF desktop app
 - `cli\agentmux.exe`: CLI for the running app
-- runtime config, dependency files, WebView2/xterm assets, `PACKAGE.json`, `SHA256SUMS.txt`, README, license, a no-admin user install helper, and the manual desktop-smoke helper/runbook
+- runtime config, dependency files, WebView2/xterm assets, `PACKAGE.json`, `EVIDENCE.json`, `SHA256SUMS.txt`, README, license, a no-admin user install helper, and the manual desktop-smoke helper/runbook
 
 It expects .NET 9 Desktop Runtime and WebView2 Runtime on the Windows machine. It is a smoke-ready pre-alpha package with a lightweight user install helper, not a signed installer or MSIX package.
 
@@ -71,7 +71,7 @@ Set-ExecutionPolicy -Scope Process Bypass -Force
 .\tools\install-user.ps1
 ```
 
-The install helper copies the package to `%LOCALAPPDATA%\Programs\AgentMux`, creates `agentmux.cmd` and `agentmux-app.cmd` shims under the install folder's `bin` directory, verifies `SHA256SUMS.txt`, and adds that shim directory to the current user's PATH. Use `-PackagePath` to point at a package from a repo checkout, `-InstallRoot` to choose a different user-local target, and `-SkipPathUpdate` for CI/preflight runs that should not change PATH. Open a new terminal after a PATH update. Package checksums verify local package integrity; they do not prove publisher authenticity by themselves.
+The install helper copies the package to `%LOCALAPPDATA%\Programs\AgentMux`, creates `agentmux.cmd` and `agentmux-app.cmd` shims under the install folder's `bin` directory, verifies `SHA256SUMS.txt`, and adds that shim directory to the current user's PATH. Use `-PackagePath` to point at a package from a repo checkout, `-InstallRoot` to choose a different user-local target, and `-SkipPathUpdate` for CI/preflight runs that should not change PATH. Open a new terminal after a PATH update. Package checksums verify local package integrity; they do not prove publisher authenticity by themselves. `EVIDENCE.json` records commit/run provenance, expected hosted gates, smoke artifact names, and the remaining manual desktop gate; it is audit metadata, not a signature or release approval.
 
 For the manual desktop proof gate, run:
 

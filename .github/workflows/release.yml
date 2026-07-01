@@ -145,10 +145,37 @@ jobs:
             throw "Release ZIP contains an extra package parent folder."
           }
 
-          foreach ($file in @("AgentMux.exe", "cli\agentmux.exe", "PACKAGE.json", "SHA256SUMS.txt", "tools\install-user.ps1")) {
+          foreach ($file in @("AgentMux.exe", "cli\agentmux.exe", "PACKAGE.json", "EVIDENCE.json", "SHA256SUMS.txt", "tools\install-user.ps1")) {
             if (-not (Test-Path (Join-Path $smokeDir $file))) {
               throw "Release ZIP missing root file: $file"
             }
+          }
+
+          $manifest = Get-Content (Join-Path $smokeDir "PACKAGE.json") -Raw | ConvertFrom-Json
+          $evidence = Get-Content (Join-Path $smokeDir "EVIDENCE.json") -Raw | ConvertFrom-Json
+          if ($manifest.commit -ne "${{ github.sha }}") {
+            throw "PACKAGE.json commit does not match this workflow run."
+          }
+          if ($manifest.runId -ne "${{ github.run_id }}") {
+            throw "PACKAGE.json runId does not match this workflow run."
+          }
+          if ($evidence.provenance.commit -ne "${{ github.sha }}") {
+            throw "EVIDENCE.json commit does not match this workflow run."
+          }
+          if ($evidence.provenance.runId -ne "${{ github.run_id }}") {
+            throw "EVIDENCE.json runId does not match this workflow run."
+          }
+          if ($evidence.assetBase -ne $env:AGENTMUX_ASSET_BASE) {
+            throw "EVIDENCE.json assetBase does not match release asset base."
+          }
+          if ($evidence.packageLayout -ne "zip-root") {
+            throw "EVIDENCE.json packageLayout should be zip-root for release assets."
+          }
+          if ($evidence.integrity.checksumFile -ne "SHA256SUMS.txt") {
+            throw "EVIDENCE.json integrity.checksumFile should be SHA256SUMS.txt."
+          }
+          if ($evidence.releaseReadiness.status -ne "blocked") {
+            throw "EVIDENCE.json releaseReadiness.status should remain blocked until real desktop smoke passes."
           }
 
           $cliHelp = & (Join-Path $smokeDir "cli\agentmux.exe") --help

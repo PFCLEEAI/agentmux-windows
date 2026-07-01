@@ -75,6 +75,7 @@ function Assert-RequiredPackageFiles {
     "cli\agentmux.exe",
     "cli\agentmux.dll",
     "PACKAGE.json",
+    "EVIDENCE.json",
     "SHA256SUMS.txt",
     "tools\install-user.ps1",
     "tools\manual-desktop-smoke.ps1"
@@ -139,8 +140,8 @@ function Test-Sha256Sums {
   }
 
   Get-ChildItem -LiteralPath $Root -Recurse -File -Force | ForEach-Object {
-    if ($_.Name -ne "SHA256SUMS.txt") {
-      $relative = [System.IO.Path]::GetRelativePath($Root, $_.FullName).Replace("\", "/")
+    $relative = [System.IO.Path]::GetRelativePath($Root, $_.FullName).Replace("\", "/")
+    if ($relative -ne "SHA256SUMS.txt") {
       if (-not $listed.ContainsKey($relative.ToLowerInvariant())) {
         throw "Package file is not covered by SHA256SUMS.txt: $relative"
       }

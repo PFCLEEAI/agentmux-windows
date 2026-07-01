@@ -61,6 +61,8 @@ Set-ExecutionPolicy -Scope Process Bypass -Force
 
 The helper verifies package checksums, copies the extracted package to `%LOCALAPPDATA%\Programs\AgentMux`, creates `agentmux.cmd` and `agentmux-app.cmd` shims, and updates only the current user's PATH unless `-SkipPathUpdate` is used. It does not install runtimes, write to Program Files, create services, or replace the manual visible desktop smoke.
 
+Packages include `EVIDENCE.json` beside `PACKAGE.json` and `SHA256SUMS.txt`. Treat it as audit metadata for the package commit/run, hosted smoke gates, related CI artifact names, and known proof boundaries. It is not a signature, publisher-authenticity proof, or a substitute for the manual checks below.
+
 From a repo checkout, pass the package explicitly:
 
 ```powershell
@@ -92,7 +94,7 @@ Set-ExecutionPolicy -Scope Process Bypass -Force
 .\tools\manual-desktop-smoke.ps1 -PackagePath C:\Downloads\agentmux-windows-v0.1.0-framework-dependent.zip
 ```
 
-The helper creates a timestamped evidence folder, verifies package checksums when available, captures environment and CLI help output, launches `AgentMux.exe` unless `-SkipLaunch` is set, and writes `manual-checklist.md`.
+The helper creates a timestamped evidence folder, verifies package checksums when available, captures environment, package metadata, evidence-manifest content, and CLI help output, launches `AgentMux.exe` unless `-SkipLaunch` is set, and writes `manual-checklist.md`.
 
 If you already launched the app manually:
 

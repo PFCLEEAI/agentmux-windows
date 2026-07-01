@@ -66,6 +66,7 @@
 
 - Framework-dependent Windows CI package. Implemented as `agentmux-windows-package` after smoke gates pass.
 - Package provenance, checksums, and packaged CLI smoke. Implemented in CI.
+- Package evidence manifest. Implemented as `EVIDENCE.json` with hosted-gate names, smoke artifact names, checksum coverage, proof boundaries, and the still-required manual desktop gate.
 - Packaged manual desktop-smoke runbook/helper. Implemented so testers can run the proof packet from an extracted package.
 - No-admin user install helper. Implemented as `tools\install-user.ps1` for copying an extracted package to `%LOCALAPPDATA%\Programs\AgentMux`, creating user-local command shims, and optionally updating only the current user's PATH.
 - Shared package script. Implemented so CI artifacts and release assets use the same required-file and CLI-smoke gate.

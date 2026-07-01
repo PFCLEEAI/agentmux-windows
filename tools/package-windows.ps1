@@ -121,6 +121,7 @@ try {
     "tools\install-user.ps1",
     "tools\manual-desktop-smoke.ps1",
     "PACKAGE.json",
+    "EVIDENCE.json",
     "SHA256SUMS.txt"
   )
 
@@ -148,8 +149,79 @@ try {
   }
   $manifest | ConvertTo-Json -Depth 5 | Set-Content -Encoding UTF8 (Join-Path $package "PACKAGE.json")
 
+  $evidence = [ordered]@{
+    evidenceVersion = 1
+    name = "AgentMux Windows"
+    packageKind = "framework-dependent"
+    packageLayout = $PackageLayout
+    assetBase = $AssetBase
+    generatedAtUtc = (Get-Date).ToUniversalTime().ToString("o")
+    provenance = [ordered]@{
+      repository = Get-ProvenanceValue $Repository "local"
+      ref = Get-ProvenanceValue $Ref "local"
+      refName = Get-ProvenanceValue $RefName "local"
+      refType = Get-ProvenanceValue $RefType "local"
+      eventName = Get-ProvenanceValue $EventName "local"
+      workflow = Get-ProvenanceValue $Workflow "local"
+      releaseTag = if ([string]::IsNullOrWhiteSpace($ReleaseTag)) { $null } else { $ReleaseTag }
+      commit = Get-ProvenanceValue $Commit "local"
+      runId = Get-ProvenanceValue $RunId "local"
+      runNumber = Get-ProvenanceValue $RunNumber "local"
+      runAttempt = Get-ProvenanceValue $RunAttempt "local"
+    }
+    integrity = [ordered]@{
+      checksumFile = "SHA256SUMS.txt"
+      algorithm = "SHA-256"
+      coverage = "all package files except root SHA256SUMS.txt"
+      packageManifest = "PACKAGE.json"
+    }
+    expectedHostedGates = @(
+      "Core tests",
+      "Windows restore/build/unit tests",
+      "Windows WPF app smoke",
+      "Windows app smoke artifact upload",
+      "Windows ConPTY smoke",
+      "Package publish required-file and CLI smoke",
+      "Manual desktop-smoke helper preflight with -SkipLaunch",
+      "User install helper preflight with -SkipPathUpdate",
+      "Tampered-package install rejection",
+      "Package artifact upload"
+    )
+    relatedHostedSmokeArtifacts = @(
+      "windows-app-smoke-artifacts/terminal-webview2.png",
+      "windows-app-smoke-artifacts/terminal-key-capture.png",
+      "windows-app-smoke-artifacts/browser-webview2.png",
+      "windows-app-smoke-artifacts/browser-network.har.json",
+      "windows-app-smoke-artifacts/browser-trace.json"
+    )
+    manualGate = [ordered]@{
+      status = "required"
+      runbook = "docs/manual-windows-desktop-smoke.md"
+      helper = "tools/manual-desktop-smoke.ps1"
+      requires = @(
+        "real visible Windows desktop session",
+        "physical keyboard evidence",
+        "human-visible WPF usability check",
+        "native Windows toast visibility check under real notification settings"
+      )
+    }
+    releaseReadiness = [ordered]@{
+      status = "blocked"
+      blocker = "real visible Windows desktop smoke with physical-keyboard evidence"
+    }
+    proofBoundaries = @(
+      "Hosted CI evidence is not physical keyboard proof.",
+      "Hosted CI evidence is not trusted OS input or Windows SendInput proof.",
+      "Hosted CI evidence is not human-visible desktop usability proof.",
+      "Hosted CI evidence is not native Windows toast visibility proof.",
+      "Checksums prove local package integrity only; they do not prove publisher authenticity.",
+      "This package is not signed, MSIX-packaged, winget-distributed, or release-ready."
+    )
+  }
+  $evidence | ConvertTo-Json -Depth 8 | Set-Content -Encoding UTF8 (Join-Path $package "EVIDENCE.json")
+
   $hashes = Get-ChildItem $package -Recurse -File |
-    Where-Object { $_.Name -ne "SHA256SUMS.txt" } |
+    Where-Object { [System.IO.Path]::GetRelativePath($package, $_.FullName).Replace("\", "/") -ne "SHA256SUMS.txt" } |
     Sort-Object FullName |
     ForEach-Object {
       $relative = [System.IO.Path]::GetRelativePath($package, $_.FullName).Replace("\", "/")

@@ -241,6 +241,7 @@ if (-not [string]::IsNullOrWhiteSpace($packageInput)) {
 }
 
 $packageManifest = $null
+$evidenceManifest = $null
 if (-not [string]::IsNullOrWhiteSpace($packageRoot)) {
   $manifestPath = Join-Path $packageRoot "PACKAGE.json"
   if (Test-Path -LiteralPath $manifestPath -PathType Leaf) {
@@ -251,6 +252,17 @@ if (-not [string]::IsNullOrWhiteSpace($packageRoot)) {
     }
   } else {
     Add-Failure "PACKAGE.json not found in package root: $packageRoot"
+  }
+
+  $evidencePath = Join-Path $packageRoot "EVIDENCE.json"
+  if (Test-Path -LiteralPath $evidencePath -PathType Leaf) {
+    try {
+      $evidenceManifest = Get-Content -LiteralPath $evidencePath -Raw | ConvertFrom-Json
+    } catch {
+      Add-Failure "EVIDENCE.json is invalid: $($_.Exception.Message)"
+    }
+  } else {
+    Add-Failure "EVIDENCE.json not found in package root: $packageRoot"
   }
 }
 
@@ -294,6 +306,7 @@ if (-not [string]::IsNullOrWhiteSpace($packageRoot)) {
     "AgentMux.exe",
     "cli\agentmux.exe",
     "PACKAGE.json",
+    "EVIDENCE.json",
     "SHA256SUMS.txt",
     "docs\manual-windows-desktop-smoke.md",
     "tools\install-user.ps1",
@@ -341,6 +354,7 @@ $packageMetadata = [ordered]@{
   appPath = $resolvedAppPath
   cliPath = $resolvedCliPath
   manifest = $packageManifest
+  evidence = $evidenceManifest
 }
 $packageMetadata | ConvertTo-Json -Depth 10 | Set-Content -Encoding UTF8 (Join-Path $evidenceDir "package-metadata.json")
 
