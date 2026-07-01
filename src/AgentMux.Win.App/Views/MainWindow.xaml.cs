@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using AgentMux.Core.Ipc;
 using AgentMux.Core.Models;
 using AgentMux.Win.Pty;
@@ -70,6 +71,22 @@ public partial class MainWindow : Window
             _activeWorkspaceIndex = WorkspaceList.SelectedIndex;
             RefreshWorkspaceView();
         }
+    }
+
+    private async void SendTerminalInput_Click(object sender, RoutedEventArgs e)
+    {
+        await SendTerminalInputAsync().ConfigureAwait(false);
+    }
+
+    private async void TerminalInput_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Enter)
+        {
+            return;
+        }
+
+        e.Handled = true;
+        await SendTerminalInputAsync().ConfigureAwait(false);
     }
 
     private Task<AgentMuxResponse> HandleRpcAsync(AgentMuxRequest request, CancellationToken cancellationToken)
@@ -151,14 +168,7 @@ public partial class MainWindow : Window
         }
 
         var text = parsed?.Text ?? "";
-        if (_pty is { IsRunning: true })
-        {
-            _ = _pty.WriteAsync(Encoding.UTF8.GetBytes(text + Environment.NewLine));
-        }
-        else
-        {
-            pane.LastScreenText = string.Concat(pane.LastScreenText, text, Environment.NewLine);
-        }
+        _ = SendTextToTerminalAsync(text);
 
         return new { sent = true, bytes = (parsed?.Text ?? "").Length };
     }
@@ -206,6 +216,57 @@ public partial class MainWindow : Window
                 if (pane is not null)
                 {
                     pane.LastScreenText = $"ConPTY did not start: {ex.Message}";
+                }
+
+                RefreshWorkspaceView();
+            });
+        }
+    }
+
+    private async Task SendTerminalInputAsync()
+    {
+        string text;
+        Dispatcher.VerifyAccess();
+        text = TerminalInput.Text;
+        TerminalInput.Clear();
+
+        await SendTextToTerminalAsync(text).ConfigureAwait(false);
+    }
+
+    private async Task SendTextToTerminalAsync(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return;
+        }
+
+        var pane = FirstPane();
+        if (_pty is { IsRunning: true })
+        {
+            try
+            {
+                await _pty.WriteAsync(Encoding.UTF8.GetBytes(text + Environment.NewLine)).ConfigureAwait(false);
+            }
+            catch (InvalidOperationException ex)
+            {
+                Dispatcher.Invoke(() =>
+                {
+                    if (pane is not null)
+                    {
+                        pane.LastScreenText = string.Concat(pane.LastScreenText, Environment.NewLine, $"[send failed: {ex.Message}]", Environment.NewLine);
+                    }
+
+                    RefreshWorkspaceView();
+                });
+            }
+        }
+        else
+        {
+            Dispatcher.Invoke(() =>
+            {
+                if (pane is not null)
+                {
+                    pane.LastScreenText = string.Concat(pane.LastScreenText, "> ", text, Environment.NewLine);
                 }
 
                 RefreshWorkspaceView();
@@ -306,6 +367,8 @@ public partial class MainWindow : Window
         WorkspaceTitle.Text = workspace.Title;
         WorkspaceMeta.Text = $"{workspace.WorkingDirectory}  |  unread: {workspace.UnreadCount}";
         ScreenPreview.Text = FirstPane()?.LastScreenText ?? "No terminal output yet.";
+        TerminalStatus.Text = _pty is { IsRunning: true } ? "running" : "stopped";
+        ScreenPreview.ScrollToEnd();
         WorkspaceList.Items.Refresh();
     }
 
