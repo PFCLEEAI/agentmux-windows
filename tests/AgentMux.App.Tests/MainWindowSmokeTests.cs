@@ -693,7 +693,7 @@ public sealed class MainWindowSmokeTests
             await WaitForReadScreenContainsAsync(window, "AGENTMUX_RAW_READY");
 
             await AssertSendKeyDeliveredAsync(window, "PageDown", "\u001b[6~", "RAW:1B", "RAW:5B", "RAW:36", "RAW:7E");
-            await AssertSendKeyDeliveredAsync(window, "Ctrl+Z", "\u001a", "RAW:1A");
+            await AssertSendKeyDeliveredAsync(window, "Ctrl+A", "\u0001", "RAW:01");
 
             var unsupportedResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.SendKey, new
             {
