@@ -55,6 +55,7 @@ public static class AgentMuxMethods
     public const string SendText = "surface.send_text";
     public const string SendKey = "surface.send_key";
     public const string ReadScreen = "surface.read_screen";
+    public const string FocusPane = "surface.focus_pane";
     public const string OpenUrl = "surface.open_url";
     public const string BrowserEval = "surface.eval_js";
     public const string BrowserClick = "surface.click_selector";

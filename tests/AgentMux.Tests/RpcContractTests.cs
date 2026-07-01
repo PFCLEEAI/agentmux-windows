@@ -41,6 +41,12 @@ public sealed class RpcContractTests
     }
 
     [Fact]
+    public void FocusPaneMethodIsStable()
+    {
+        Assert.Equal("surface.focus_pane", AgentMuxMethods.FocusPane);
+    }
+
+    [Fact]
     public void OpenUrlMethodIsStable()
     {
         Assert.Equal("surface.open_url", AgentMuxMethods.OpenUrl);

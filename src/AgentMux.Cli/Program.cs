@@ -2,6 +2,7 @@ using System.IO.Pipes;
 using System.IO;
 using System.Text.Json;
 using AgentMux.Core.Ipc;
+using AgentMux.Core.Models;
 
 namespace AgentMux.Cli;
 
@@ -28,6 +29,7 @@ public static class Program
                 "notify" => await client.SendAsync(AgentMuxMethods.Notify, ParseNotify(args[1..])).ConfigureAwait(false),
                 "workspace" => await HandleWorkspaceAsync(client, args[1..]).ConfigureAwait(false),
                 "split" => await HandleSplitAsync(client, args[1..]).ConfigureAwait(false),
+                "focus" => await HandleFocusAsync(client, args[1..]).ConfigureAwait(false),
                 "open-url" => await HandleOpenUrlAsync(client, args[1..]).ConfigureAwait(false),
                 "browser" or "browse" or "open" => await HandleBrowserAsync(client, args[1..]).ConfigureAwait(false),
                 "send" => await client.SendAsync(AgentMuxMethods.SendText, new { text = string.Join(' ', args[1..]) }).ConfigureAwait(false),
@@ -83,7 +85,18 @@ public static class Program
         return await client.SendAsync(request.Method, request.Parameters).ConfigureAwait(false);
     }
 
-    internal static BrowserRequest? ParseBrowserRequestForTests(string[] args, out string error)
+    private static async Task<AgentMuxResponse> HandleFocusAsync(NamedPipeRpcClient client, string[] args)
+    {
+        var request = ParseFocusRequestForTests(args, out var error);
+        if (request is null)
+        {
+            return AgentMuxResponse.Failure("", error);
+        }
+
+        return await client.SendAsync(request.Method, request.Parameters).ConfigureAwait(false);
+    }
+
+    internal static CliRequest? ParseBrowserRequestForTests(string[] args, out string error)
     {
         if (args.Length == 0)
         {
@@ -101,7 +114,7 @@ public static class Program
             }
 
             error = "";
-            return new BrowserRequest(AgentMuxMethods.OpenUrl, ParseOpenUrl(args[1..]));
+            return new CliRequest(AgentMuxMethods.OpenUrl, ParseOpenUrl(args[1..]));
         }
 
         if (args[0].Equals("eval", StringComparison.OrdinalIgnoreCase))
@@ -115,7 +128,7 @@ public static class Program
             }
 
             error = "";
-            return new BrowserRequest(AgentMuxMethods.BrowserEval, new { script });
+            return new CliRequest(AgentMuxMethods.BrowserEval, new { script });
         }
 
         if (args[0].Equals("click", StringComparison.OrdinalIgnoreCase))
@@ -129,7 +142,7 @@ public static class Program
             }
 
             error = "";
-            return new BrowserRequest(AgentMuxMethods.BrowserClick, new { selector });
+            return new CliRequest(AgentMuxMethods.BrowserClick, new { selector });
         }
 
         if (args[0].Equals("fill", StringComparison.OrdinalIgnoreCase))
@@ -145,7 +158,7 @@ public static class Program
             }
 
             error = "";
-            return new BrowserRequest(AgentMuxMethods.BrowserFill, new { selector, text = text ?? "" });
+            return new CliRequest(AgentMuxMethods.BrowserFill, new { selector, text = text ?? "" });
         }
 
         if (args[0].Equals("screenshot", StringComparison.OrdinalIgnoreCase))
@@ -159,17 +172,31 @@ public static class Program
             }
 
             error = "";
-            return new BrowserRequest(AgentMuxMethods.BrowserScreenshot, new { path = Path.GetFullPath(path) });
+            return new CliRequest(AgentMuxMethods.BrowserScreenshot, new { path = Path.GetFullPath(path) });
         }
 
         if (args.Length == 1)
         {
             error = "";
-            return new BrowserRequest(AgentMuxMethods.OpenUrl, ParseOpenUrl(args));
+            return new CliRequest(AgentMuxMethods.OpenUrl, ParseOpenUrl(args));
         }
 
         error = $"Unknown browser command: {args[0]}";
         return null;
+    }
+
+    internal static CliRequest? ParseFocusRequestForTests(string[] args, out string error)
+    {
+        var named = ParseNamed(args);
+        var direction = NamedOrFirst(named, "direction");
+        if (!PaneFocusNavigator.TryParseDirection(direction, out var parsedDirection))
+        {
+            error = "Usage: agentmux focus <next|previous|left|right|up|down>";
+            return null;
+        }
+
+        error = "";
+        return new CliRequest(AgentMuxMethods.FocusPane, new { direction = parsedDirection.ToString().ToLowerInvariant() });
     }
 
     private static async Task<AgentMuxResponse> HandleOpenUrlAsync(NamedPipeRpcClient client, string[] args)
@@ -299,7 +326,7 @@ public static class Program
 
     private static bool IsHelp(string value) => value is "-h" or "--help" or "help";
 
-    internal sealed record BrowserRequest(string Method, object Parameters);
+    internal sealed record CliRequest(string Method, object Parameters);
 
     private static void PrintHelp()
     {
@@ -316,6 +343,8 @@ public static class Program
           agentmux workspace select --index 0
           agentmux split right
           agentmux split down
+          agentmux focus next
+          agentmux focus right
           agentmux open-url https://example.com
           agentmux browser open https://example.com
           agentmux browser eval "document.title"

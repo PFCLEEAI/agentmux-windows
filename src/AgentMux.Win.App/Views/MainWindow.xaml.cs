@@ -126,7 +126,17 @@ public partial class MainWindow : Window
 
     private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
     {
-        if (e.Key != Key.Tab || !Keyboard.Modifiers.HasFlag(ModifierKeys.Control))
+        var key = EffectiveKey(e);
+        if (Keyboard.Modifiers.HasFlag(ModifierKeys.Control)
+            && Keyboard.Modifiers.HasFlag(ModifierKeys.Alt)
+            && TryMapArrowKey(key, out var focusDirection))
+        {
+            e.Handled = true;
+            FocusPane(focusDirection);
+            return;
+        }
+
+        if (key != Key.Tab || !Keyboard.Modifiers.HasFlag(ModifierKeys.Control))
         {
             return;
         }
@@ -162,6 +172,7 @@ public partial class MainWindow : Window
             AgentMuxMethods.SendText => AgentMuxResponse.Success(request.Id, HandleSendText(request.Params)),
             AgentMuxMethods.SendKey => AgentMuxResponse.Success(request.Id, HandleSendKey(request.Params)),
             AgentMuxMethods.ReadScreen => AgentMuxResponse.Success(request.Id, new { text = ActivePane()?.LastScreenText ?? "" }),
+            AgentMuxMethods.FocusPane => HandleFocusPane(request.Id, request.Params),
             AgentMuxMethods.OpenUrl => AgentMuxResponse.Success(request.Id, HandleOpenUrl(request.Params)),
             AgentMuxMethods.BrowserEval => AgentMuxResponse.Success(request.Id, await HandleBrowserEvalAsync(request.Params).ConfigureAwait(true)),
             AgentMuxMethods.BrowserClick => AgentMuxResponse.Success(request.Id, await HandleBrowserClickAsync(request.Params).ConfigureAwait(true)),
@@ -268,6 +279,39 @@ public partial class MainWindow : Window
 
         _ = SendTerminalSequenceAsync(sequence, $"[key: {key}]{Environment.NewLine}");
         return new { sent = true, key, bytes = Encoding.UTF8.GetByteCount(sequence) };
+    }
+
+    private AgentMuxResponse HandleFocusPane(string requestId, JsonElement? parameters)
+    {
+        var parsed = Deserialize<FocusPaneParams>(parameters);
+        if (!PaneFocusNavigator.TryParseDirection(parsed?.Direction, out var direction))
+        {
+            return AgentMuxResponse.Failure(requestId, "direction must be next, previous, left, right, up, or down");
+        }
+
+        var previousPaneId = ActivePane()?.Id;
+        if (!FocusPane(direction))
+        {
+            return AgentMuxResponse.Success(
+                requestId,
+                new
+                {
+                    focused = false,
+                    direction = direction.ToString().ToLowerInvariant(),
+                    activePaneId = previousPaneId,
+                    reason = "no pane in that direction"
+                });
+        }
+
+        return AgentMuxResponse.Success(
+            requestId,
+            new
+            {
+                focused = true,
+                direction = direction.ToString().ToLowerInvariant(),
+                previousPaneId,
+                paneId = ActivePane()?.Id
+            });
     }
 
     private object HandleOpenUrl(JsonElement? parameters)
@@ -651,49 +695,19 @@ public partial class MainWindow : Window
 
     private bool CycleActivePane(bool reverse)
     {
+        return FocusPane(reverse ? PaneFocusDirection.Previous : PaneFocusDirection.Next);
+    }
+
+    private bool FocusPane(PaneFocusDirection direction)
+    {
         var surface = ActiveSurface();
-        var panes = FlattenPanes(surface.Root);
-        if (panes.Count < 2)
+        if (!PaneFocusNavigator.TryMoveFocus(surface, direction, out _))
         {
             return false;
         }
 
-        var activePane = ActivePane();
-        var activeIndex = activePane is null ? -1 : panes.FindIndex(pane => pane.Id == activePane.Id);
-        var nextIndex = activeIndex < 0
-            ? 0
-            : reverse
-                ? (activeIndex - 1 + panes.Count) % panes.Count
-                : (activeIndex + 1) % panes.Count;
-        surface.ActivePaneId = panes[nextIndex].Id;
         RefreshWorkspaceView();
         return true;
-    }
-
-    private static List<PaneState> FlattenPanes(SplitNodeState root)
-    {
-        var panes = new List<PaneState>();
-        CollectPanes(root, panes);
-        return panes;
-    }
-
-    private static void CollectPanes(SplitNodeState node, List<PaneState> panes)
-    {
-        if (node.Pane is not null)
-        {
-            panes.Add(node.Pane);
-            return;
-        }
-
-        if (node.First is not null)
-        {
-            CollectPanes(node.First, panes);
-        }
-
-        if (node.Second is not null)
-        {
-            CollectPanes(node.Second, panes);
-        }
     }
 
     private static bool SplitPane(SplitNodeState node, string paneId, SplitDirection direction, out PaneState? newPane)
@@ -1133,6 +1147,25 @@ public partial class MainWindow : Window
         return total <= 0 ? 0.5 : Math.Clamp(first / total, 0.1, 0.9);
     }
 
+    private static bool TryMapArrowKey(Key key, out PaneFocusDirection direction)
+    {
+        direction = key switch
+        {
+            Key.Left => PaneFocusDirection.Left,
+            Key.Right => PaneFocusDirection.Right,
+            Key.Up => PaneFocusDirection.Up,
+            Key.Down => PaneFocusDirection.Down,
+            _ => PaneFocusDirection.Next
+        };
+
+        return key is Key.Left or Key.Right or Key.Up or Key.Down;
+    }
+
+    private static Key EffectiveKey(KeyEventArgs e)
+    {
+        return e.Key == Key.System ? e.SystemKey : e.Key;
+    }
+
     internal void InitializeForSmokeTest()
     {
         WorkspaceList.ItemsSource = _workspaces;
@@ -1160,6 +1193,11 @@ public partial class MainWindow : Window
     }
 
     internal bool CycleActivePaneForSmokeTest(bool reverse) => CycleActivePane(reverse);
+
+    internal bool HandlePaneFocusShortcutForSmokeTest(Key key)
+    {
+        return TryMapArrowKey(key, out var direction) && FocusPane(direction);
+    }
 
     internal void SetActivePaneTextForSmokeTest(string text)
     {
@@ -1286,6 +1324,11 @@ public partial class MainWindow : Window
     private sealed class OpenUrlParams
     {
         public string? Url { get; set; }
+    }
+
+    private sealed class FocusPaneParams
+    {
+        public string? Direction { get; set; }
     }
 
     private sealed class BrowserEvalParams
