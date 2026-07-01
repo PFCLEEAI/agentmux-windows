@@ -66,7 +66,8 @@ static void TryEnableRawConsoleInput()
         return;
     }
 
-    var rawMode = mode & ~(NativeMethods.EnableLineInput | NativeMethods.EnableEchoInput | NativeMethods.EnableProcessedInput);
+    var rawMode = (mode | NativeMethods.EnableVirtualTerminalInput)
+        & ~(NativeMethods.EnableLineInput | NativeMethods.EnableEchoInput | NativeMethods.EnableProcessedInput);
     _ = NativeMethods.SetConsoleMode(inputHandle, rawMode);
 }
 
@@ -76,6 +77,7 @@ internal static class NativeMethods
     public const uint EnableProcessedInput = 0x0001;
     public const uint EnableLineInput = 0x0002;
     public const uint EnableEchoInput = 0x0004;
+    public const uint EnableVirtualTerminalInput = 0x0200;
 
     [DllImport("kernel32.dll", SetLastError = true)]
     public static extern IntPtr GetStdHandle(int nStdHandle);
