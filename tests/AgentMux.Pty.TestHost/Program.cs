@@ -10,6 +10,25 @@ if (args.Contains("--raw-bytes", StringComparer.OrdinalIgnoreCase))
     return;
 }
 
+if (args.Contains("--cleanup-cooperative", StringComparer.OrdinalIgnoreCase))
+{
+    Console.WriteLine($"AGENTMUX_CLEANUP_COOPERATIVE_READY:{Environment.ProcessId}");
+    Console.Out.Flush();
+    while (Console.ReadLine() is not null)
+    {
+    }
+
+    return;
+}
+
+if (args.Contains("--cleanup-stubborn", StringComparer.OrdinalIgnoreCase))
+{
+    Console.WriteLine($"AGENTMUX_CLEANUP_STUBBORN_READY:{Environment.ProcessId}");
+    Console.Out.Flush();
+    Thread.Sleep(Timeout.InfiniteTimeSpan);
+    return;
+}
+
 Console.WriteLine("AGENTMUX_READY");
 Console.Out.Flush();
 

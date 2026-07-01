@@ -10,6 +10,9 @@ public sealed class ConPtySession : IPtySession
 {
     private const int ExtendedStartupInfoPresent = 0x00080000;
     private const int StartfUseStdHandles = 0x00000100;
+    private static readonly TimeSpan DirectChildCooperativeExitTimeout = TimeSpan.FromSeconds(1);
+    private static readonly TimeSpan DirectChildKillExitTimeout = TimeSpan.FromSeconds(1);
+    private static readonly TimeSpan ReaderShutdownTimeout = TimeSpan.FromSeconds(1);
     private static readonly IntPtr ProcThreadAttributePseudoConsole = 0x00020016;
 
     private readonly object _gate = new();
@@ -19,11 +22,46 @@ public sealed class ConPtySession : IPtySession
     private Process? _process;
     private CancellationTokenSource? _readerStop;
     private Task? _readerTask;
+    private int? _processId;
     private int? _exitCode;
     private bool _exitReported;
+    private bool _killedProcessOnDispose;
 
     public string Id { get; } = $"pty-{Guid.NewGuid():N}";
     public bool IsRunning { get; private set; }
+
+    internal int? DirectChildProcessIdForTests
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _processId;
+            }
+        }
+    }
+
+    internal int? DirectChildExitCodeForTests
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _exitCode;
+            }
+        }
+    }
+
+    internal bool LastDisposeKillAttemptedForTests
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _killedProcessOnDispose;
+            }
+        }
+    }
 
     public event Action<ReadOnlyMemory<byte>>? OutputReceived;
     public event Action<int>? Exited;
@@ -44,6 +82,8 @@ public sealed class ConPtySession : IPtySession
 
             _exitCode = null;
             _exitReported = false;
+            _processId = null;
+            _killedProcessOnDispose = false;
         }
 
         var inputReadForPseudoConsole = CreatePipe(out var inputWrite);
@@ -156,28 +196,48 @@ public sealed class ConPtySession : IPtySession
     {
         CancellationTokenSource? stop;
         Task? reader;
+        Process? process;
+        FileStream? inputWriter;
+        FileStream? outputReader;
 
         lock (_gate)
         {
             stop = _readerStop;
             reader = _readerTask;
+            process = _process;
+            inputWriter = _inputWriter;
+            outputReader = _outputReader;
+            _readerStop = null;
+            _readerTask = null;
+            _process = null;
+            _inputWriter = null;
+            _outputReader = null;
             IsRunning = false;
         }
 
+        inputWriter?.Dispose();
+        await DisposeProcessAsync(process).ConfigureAwait(false);
+
         if (stop is not null)
         {
-            await stop.CancelAsync().ConfigureAwait(false);
+            try
+            {
+                await stop.CancelAsync().ConfigureAwait(false);
+            }
+            catch (ObjectDisposedException)
+            {
+                // DisposeAsync is intentionally idempotent.
+            }
         }
 
-        _inputWriter?.Dispose();
-        _outputReader?.Dispose();
+        outputReader?.Dispose();
         DisposeNative();
 
         if (reader is not null)
         {
             try
             {
-                await reader.WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false);
+                await reader.WaitAsync(ReaderShutdownTimeout).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
@@ -191,14 +251,43 @@ public sealed class ConPtySession : IPtySession
             {
                 // A closing synchronous pipe can surface access errors while the reader unwinds.
             }
+            catch (ObjectDisposedException)
+            {
+                // DisposeAsync can be called again while a prior shutdown is unwinding.
+            }
             catch (TimeoutException)
             {
                 // Do not let a blocked pipe reader hang app shutdown.
             }
         }
 
-        _process?.Dispose();
+        process?.Dispose();
         stop?.Dispose();
+    }
+
+    private async Task DisposeProcessAsync(Process? process)
+    {
+        if (process is null)
+        {
+            return;
+        }
+
+        if (await WaitForExitAsync(process, DirectChildCooperativeExitTimeout).ConfigureAwait(false))
+        {
+            MarkProcessExitedIfPossible(process);
+            return;
+        }
+
+        if (TryKillProcess(process))
+        {
+            lock (_gate)
+            {
+                _killedProcessOnDispose = true;
+            }
+        }
+
+        _ = await WaitForExitAsync(process, DirectChildKillExitTimeout).ConfigureAwait(false);
+        MarkProcessExitedIfPossible(process);
     }
 
     private async Task ReadOutputLoopAsync(CancellationToken cancellationToken)
@@ -280,9 +369,10 @@ public sealed class ConPtySession : IPtySession
             try
             {
                 var process = Process.GetProcessById((int)processInformation.dwProcessId);
-                process.Exited += (_, _) => MarkProcessExited(process.ExitCode);
+                process.Exited += (_, _) => MarkProcessExitedIfPossible(process);
                 process.EnableRaisingEvents = true;
                 _process = process;
+                _processId = process.Id;
 
                 if (process.HasExited)
                 {
@@ -326,6 +416,86 @@ public sealed class ConPtySession : IPtySession
         }
 
         Exited?.Invoke(exitCode);
+    }
+
+    private void MarkProcessExitedIfPossible(Process process)
+    {
+        if (TryGetExitCode(process, out var exitCode))
+        {
+            MarkProcessExited(exitCode);
+        }
+    }
+
+    private static async Task<bool> WaitForExitAsync(Process process, TimeSpan timeout)
+    {
+        if (HasExited(process))
+        {
+            return true;
+        }
+
+        using var wait = new CancellationTokenSource(timeout);
+        try
+        {
+            await process.WaitForExitAsync(wait.Token).ConfigureAwait(false);
+            return true;
+        }
+        catch (OperationCanceledException)
+        {
+            return false;
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or ObjectDisposedException)
+        {
+            return true;
+        }
+    }
+
+    private static bool TryKillProcess(Process process)
+    {
+        try
+        {
+            if (HasExited(process))
+            {
+                return false;
+            }
+
+            process.Kill(entireProcessTree: false);
+            return true;
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or Win32Exception or NotSupportedException or ObjectDisposedException)
+        {
+            return false;
+        }
+    }
+
+    private static bool HasExited(Process process)
+    {
+        try
+        {
+            return process.HasExited;
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or ObjectDisposedException)
+        {
+            return true;
+        }
+    }
+
+    private static bool TryGetExitCode(Process process, out int exitCode)
+    {
+        exitCode = 0;
+        try
+        {
+            if (!process.HasExited)
+            {
+                return false;
+            }
+
+            exitCode = process.ExitCode;
+            return true;
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or ObjectDisposedException)
+        {
+            return false;
+        }
     }
 
     private void DisposeNative()

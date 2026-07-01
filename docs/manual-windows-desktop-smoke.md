@@ -21,6 +21,7 @@ Run this on a normal Windows desktop session before calling a build release-read
 - Native Windows toast integration.
 - Global hotkeys.
 - Installer, signing, or self-contained runtime packaging.
+- Full process-tree cleanup, Windows Job Object containment, or live terminal process restore.
 - Security of private prompts, credentials, or browser session data.
 
 ## Prerequisites

@@ -1,3 +1,5 @@
+using System.ComponentModel;
+using System.Diagnostics;
 using System.Globalization;
 using System.Reflection;
 using System.Text;
@@ -79,11 +81,81 @@ public sealed class ConPtySmokeTests
         await probe.WaitForOutputAsync("RAW:04", TimeSpan.FromSeconds(10));
     }
 
+    [Fact]
+    public async Task DisposeAsyncClosesCooperativeDirectChild()
+    {
+        if (!OperatingSystem.IsWindowsVersionAtLeast(10, 0, 17763))
+        {
+            return;
+        }
+
+        var hostPath = ResolveTestHostPath();
+        var probe = await StartAndCaptureAsync($"{QuoteCommand(hostPath)} --cleanup-cooperative");
+        Process? process = null;
+        try
+        {
+            await probe.WaitForOutputAsync("AGENTMUX_CLEANUP_COOPERATIVE_READY:", TimeSpan.FromSeconds(5));
+            var processId = AssertStartedProcess(probe.Session);
+            await probe.WaitForOutputAsync($"AGENTMUX_CLEANUP_COOPERATIVE_READY:{processId}", TimeSpan.FromSeconds(5));
+            process = Process.GetProcessById(processId);
+            var startTime = TryGetStartTimeUtc(process);
+
+            await DisposeSessionWithGuardAsync(probe.Session, TimeSpan.FromSeconds(5));
+
+            Assert.True(await WaitForCapturedProcessExitAsync(process, TimeSpan.FromSeconds(2)), $"Process {processId} did not exit after cooperative disposal.");
+            process.Dispose();
+            process = null;
+            AssertProcessIdGoneOrReused(processId, startTime);
+            Assert.Equal(0, probe.Session.DirectChildExitCodeForTests);
+            Assert.False(probe.Session.LastDisposeKillAttemptedForTests);
+            Assert.InRange(probe.ExitEventCount, 0, 1);
+        }
+        finally
+        {
+            process?.Dispose();
+            await probe.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public async Task DisposeAsyncKillsStubbornDirectChildAfterTimeout()
+    {
+        if (!OperatingSystem.IsWindowsVersionAtLeast(10, 0, 17763))
+        {
+            return;
+        }
+
+        var hostPath = ResolveTestHostPath();
+        var probe = await StartAndCaptureAsync($"{QuoteCommand(hostPath)} --cleanup-stubborn");
+        Process? process = null;
+        try
+        {
+            await probe.WaitForOutputAsync("AGENTMUX_CLEANUP_STUBBORN_READY:", TimeSpan.FromSeconds(5));
+            var processId = AssertStartedProcess(probe.Session);
+            await probe.WaitForOutputAsync($"AGENTMUX_CLEANUP_STUBBORN_READY:{processId}", TimeSpan.FromSeconds(5));
+            process = Process.GetProcessById(processId);
+            var startTime = TryGetStartTimeUtc(process);
+
+            await DisposeSessionWithGuardAsync(probe.Session, TimeSpan.FromSeconds(5));
+
+            Assert.True(await WaitForCapturedProcessExitAsync(process, TimeSpan.FromSeconds(2)), $"Process {processId} did not exit after stubborn disposal.");
+            process.Dispose();
+            process = null;
+            AssertProcessIdGoneOrReused(processId, startTime);
+            Assert.True(probe.Session.LastDisposeKillAttemptedForTests);
+            Assert.InRange(probe.ExitEventCount, 0, 1);
+        }
+        finally
+        {
+            process?.Dispose();
+            await probe.DisposeAsync();
+        }
+    }
+
     private static async Task<ConPtyProbe> StartAndCaptureAsync(string commandLine)
     {
         var probe = new ConPtyProbe();
-        probe.Session.Exited += exitCode =>
-            probe.Append(string.Format(CultureInfo.InvariantCulture, " [exit:{0}] ", exitCode));
+        probe.Session.Exited += probe.RecordExit;
         probe.Session.OutputReceived += bytes => probe.Append(Encoding.UTF8.GetString(bytes.Span));
 
         await probe.Session.StartAsync(new PtyLaunchOptions
@@ -139,13 +211,104 @@ public sealed class ConPtySmokeTests
         return $"\"{path}\"";
     }
 
+    private static int AssertStartedProcess(ConPtySession session)
+    {
+        var processId = session.DirectChildProcessIdForTests;
+        Assert.True(processId is > 0);
+        return processId.Value;
+    }
+
+    private static async Task DisposeSessionWithGuardAsync(ConPtySession session, TimeSpan timeout)
+    {
+        await session.DisposeAsync().AsTask().WaitAsync(timeout);
+    }
+
+    private static async Task<bool> WaitForCapturedProcessExitAsync(Process process, TimeSpan timeout)
+    {
+        try
+        {
+            if (process.HasExited)
+            {
+                return true;
+            }
+
+            using var stop = new CancellationTokenSource(timeout);
+            await process.WaitForExitAsync(stop.Token);
+            return true;
+        }
+        catch (OperationCanceledException)
+        {
+            return false;
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or ObjectDisposedException)
+        {
+            return true;
+        }
+    }
+
+    private static DateTime? TryGetStartTimeUtc(Process process)
+    {
+        try
+        {
+            return process.StartTime.ToUniversalTime();
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or Win32Exception or NotSupportedException)
+        {
+            return null;
+        }
+    }
+
+    private static void AssertProcessIdGoneOrReused(int processId, DateTime? originalStartTimeUtc)
+    {
+        if (originalStartTimeUtc is null)
+        {
+            return;
+        }
+
+        try
+        {
+            using var process = Process.GetProcessById(processId);
+            if (process.HasExited)
+            {
+                return;
+            }
+
+            var currentStartTimeUtc = TryGetStartTimeUtc(process);
+            if (currentStartTimeUtc is null)
+            {
+                return;
+            }
+
+            Assert.NotEqual(originalStartTimeUtc.Value, currentStartTimeUtc.Value);
+        }
+        catch (ArgumentException)
+        {
+            return;
+        }
+        catch (InvalidOperationException)
+        {
+            return;
+        }
+    }
+
     private sealed class ConPtyProbe : IAsyncDisposable
     {
         private readonly object _gate = new();
         private readonly StringBuilder _output = new();
         private readonly List<Waiter> _waiters = [];
+        private int _exitEventCount;
 
         public ConPtySession Session { get; } = new();
+        public int ExitEventCount
+        {
+            get
+            {
+                lock (_gate)
+                {
+                    return _exitEventCount;
+                }
+            }
+        }
 
         public async Task WaitForOutputAsync(string marker, TimeSpan timeout)
         {
@@ -190,6 +353,16 @@ public sealed class ConPtySmokeTests
                     }
                 }
             }
+        }
+
+        public void RecordExit(int exitCode)
+        {
+            lock (_gate)
+            {
+                _exitEventCount++;
+            }
+
+            Append(string.Format(CultureInfo.InvariantCulture, " [exit:{0}] ", exitCode));
         }
 
         public async ValueTask DisposeAsync()
