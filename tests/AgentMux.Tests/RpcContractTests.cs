@@ -1,0 +1,36 @@
+using System.Text.Json;
+using AgentMux.Core.Ipc;
+
+namespace AgentMux.Tests;
+
+public sealed class RpcContractTests
+{
+    [Fact]
+    public void RequestRoundTripsWithParams()
+    {
+        var request = new AgentMuxRequest
+        {
+            Id = "req-1",
+            Method = AgentMuxMethods.Notify,
+            Params = JsonSerializer.SerializeToElement(new { title = "Codex", body = "Waiting" }, AgentMuxJson.Options)
+        };
+
+        var json = JsonSerializer.Serialize(request, AgentMuxJson.Options);
+        var parsed = JsonSerializer.Deserialize<AgentMuxRequest>(json, AgentMuxJson.Options);
+
+        Assert.NotNull(parsed);
+        Assert.Equal("req-1", parsed.Id);
+        Assert.Equal(AgentMuxMethods.Notify, parsed.Method);
+        Assert.Equal("Codex", parsed.Params?.GetProperty("title").GetString());
+    }
+
+    [Fact]
+    public void PipeNameIsUserScoped()
+    {
+        var pipe = AgentMuxPipe.ForCurrentUser();
+
+        Assert.StartsWith("agentmux-", pipe, StringComparison.Ordinal);
+        Assert.DoesNotContain('\\', pipe);
+        Assert.DoesNotContain('/', pipe);
+    }
+}

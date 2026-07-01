@@ -1,0 +1,13 @@
+<Application x:Class="AgentMux.Win.App.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             StartupUri="Views/MainWindow.xaml">
+    <Application.Resources>
+        <SolidColorBrush x:Key="AgentMuxBackground" Color="#101216" />
+        <SolidColorBrush x:Key="AgentMuxPanel" Color="#171A21" />
+        <SolidColorBrush x:Key="AgentMuxBorder" Color="#2D3440" />
+        <SolidColorBrush x:Key="AgentMuxText" Color="#EEF2F8" />
+        <SolidColorBrush x:Key="AgentMuxMutedText" Color="#9EA7B3" />
+        <SolidColorBrush x:Key="AgentMuxAccent" Color="#3AA7FF" />
+    </Application.Resources>
+</Application>

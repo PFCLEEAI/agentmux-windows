@@ -1,0 +1,23 @@
+bin/
+obj/
+.vs/
+.vscode/
+.idea/
+TestResults/
+coverage/
+publish/
+artifacts/
+*.user
+*.suo
+*.rsuser
+*.nupkg
+*.snupkg
+_pm/
+
+# Local runtime state
+.agentmux/
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
