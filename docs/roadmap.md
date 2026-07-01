@@ -43,7 +43,8 @@
 - CLI `notify`. Preview implemented.
 - Pane ring and sidebar unread state. Preview implemented as in-memory workspace unread counts and pane unread markers.
 - Notification list/clear and jump latest unread. Preview implemented through `notifications.list`, `notifications.clear`, `notifications.jump_latest`, and `agentmux notifications ...`.
-- Native Windows toast integration and a richer notification panel remain future work.
+- Lightweight in-app notification center. Preview implemented with unread count, recent notification list, jump latest unread, clear unread, and read-only open/close behavior.
+- Native Windows toast integration, filters/search, rich rendering, and persistent notification history remain future work.
 
 ## Sprint 5 - Persistence
 

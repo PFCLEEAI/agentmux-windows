@@ -32,8 +32,50 @@
                 </StackPanel>
 
                 <StackPanel DockPanel.Dock="Bottom" Margin="0,14,0,0">
+                    <Button x:Name="NotificationToggle"
+                            Content="Notifications (0)"
+                            Height="34"
+                            Click="NotificationToggle_Click" />
+                    <Border x:Name="NotificationPanel"
+                            Visibility="Collapsed"
+                            Background="#11151D"
+                            BorderBrush="{StaticResource AgentMuxBorder}"
+                            BorderThickness="1"
+                            CornerRadius="4"
+                            Margin="0,8,0,0"
+                            Padding="10">
+                        <StackPanel>
+                            <DockPanel LastChildFill="False" Margin="0,0,0,8">
+                                <TextBlock Text="Notifications"
+                                           DockPanel.Dock="Left"
+                                           FontWeight="SemiBold"
+                                           VerticalAlignment="Center" />
+                                <Button Content="Close"
+                                        DockPanel.Dock="Right"
+                                        Width="54"
+                                        Height="24"
+                                        Click="NotificationClose_Click" />
+                            </DockPanel>
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                                <Button Content="Jump latest"
+                                        Width="88"
+                                        Height="26"
+                                        Click="NotificationJumpLatest_Click" />
+                                <Button Content="Clear unread"
+                                        Width="96"
+                                        Height="26"
+                                        Margin="8,0,0,0"
+                                        Click="NotificationClear_Click" />
+                            </StackPanel>
+                            <ScrollViewer MaxHeight="220"
+                                          VerticalScrollBarVisibility="Auto">
+                                <StackPanel x:Name="NotificationItems" />
+                            </ScrollViewer>
+                        </StackPanel>
+                    </Border>
                     <Button Content="New workspace"
                             Height="34"
+                            Margin="0,8,0,0"
                             Click="NewWorkspace_Click" />
                     <Button Content="Test notification"
                             Height="34"

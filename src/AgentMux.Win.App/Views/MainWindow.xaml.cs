@@ -35,6 +35,7 @@ public partial class MainWindow : Window
     private NamedPipeRpcServer? _server;
     private CancellationTokenSource? _sessionSaveDebounce;
     private int _activeWorkspaceIndex;
+    private bool _notificationPanelOpen;
 
     public MainWindow()
         : this(ShortcutSettings.Load(), new SessionSnapshotStore(), restoreSessionOnStartup: true, persistSession: true)
@@ -103,6 +104,7 @@ public partial class MainWindow : Window
     private void TestNotification_Click(object sender, RoutedEventArgs e)
     {
         AddNotification("AgentMux", "Scaffold notification");
+        RefreshWorkspaceView();
     }
 
     private async void SplitRight_Click(object sender, RoutedEventArgs e)
@@ -128,6 +130,31 @@ public partial class MainWindow : Window
     private void OpenBrowser_Click(object sender, RoutedEventArgs e)
     {
         OpenBrowserInActivePane("about:blank");
+        RefreshWorkspaceView();
+    }
+
+    private void NotificationToggle_Click(object sender, RoutedEventArgs e)
+    {
+        _notificationPanelOpen = !_notificationPanelOpen;
+        RefreshNotificationCenter();
+    }
+
+    private void NotificationClose_Click(object sender, RoutedEventArgs e)
+    {
+        _notificationPanelOpen = false;
+        RefreshNotificationCenter();
+    }
+
+    private async void NotificationJumpLatest_Click(object sender, RoutedEventArgs e)
+    {
+        HandleNotificationsJumpLatest();
+        await EnsurePanePtyAsync(ActivePane()).ConfigureAwait(true);
+        RefreshWorkspaceView();
+    }
+
+    private void NotificationClear_Click(object sender, RoutedEventArgs e)
+    {
+        HandleNotificationsClear();
         RefreshWorkspaceView();
     }
 
@@ -1499,6 +1526,7 @@ public partial class MainWindow : Window
         var activeKind = activePane?.Kind.ToString().ToLowerInvariant() ?? "none";
         TerminalStatus.Text = $"{(activeSessionRunning ? "running" : "stopped")}  |  active: {activePane?.Title ?? "none"}  |  {activeKind}";
         TerminalInput.IsEnabled = activePane is not null;
+        RefreshNotificationCenter();
         PaneHost.Children.Clear();
         if (PaneTreeEditor.FindPane(surface.Root, surface.ZoomedPaneId) is { } zoomedPane)
         {
@@ -1511,6 +1539,96 @@ public partial class MainWindow : Window
         }
 
         WorkspaceList.Items.Refresh();
+    }
+
+    private void RefreshNotificationCenter()
+    {
+        var unreadCount = _notifications.Count(notification => !notification.IsRead);
+        NotificationToggle.Content = $"Notifications ({unreadCount})";
+        NotificationPanel.Visibility = _notificationPanelOpen ? Visibility.Visible : Visibility.Collapsed;
+        NotificationItems.Children.Clear();
+
+        var recentNotifications = _notifications
+            .OrderByDescending(notification => notification.CreatedAt)
+            .Take(20)
+            .ToList();
+        if (recentNotifications.Count == 0)
+        {
+            NotificationItems.Children.Add(new TextBlock
+            {
+                Text = "No notifications",
+                Foreground = Brush("AgentMuxMutedText"),
+                TextWrapping = TextWrapping.Wrap
+            });
+            return;
+        }
+
+        foreach (var notification in recentNotifications)
+        {
+            NotificationItems.Children.Add(BuildNotificationItem(notification));
+        }
+    }
+
+    private Border BuildNotificationItem(TerminalNotification notification)
+    {
+        var item = new Border
+        {
+            Background = notification.IsRead ? Brush("AgentMuxPanel") : new SolidColorBrush(Color.FromRgb(20, 36, 50)),
+            BorderBrush = notification.IsRead ? Brush("AgentMuxBorder") : Brush("AgentMuxAccent"),
+            BorderThickness = new Thickness(notification.IsRead ? 1 : 2),
+            CornerRadius = new CornerRadius(4),
+            Margin = new Thickness(0, 0, 0, 8),
+            Padding = new Thickness(8)
+        };
+
+        var layout = new StackPanel();
+        layout.Children.Add(new TextBlock
+        {
+            Text = string.IsNullOrWhiteSpace(notification.Title) ? "Notification" : notification.Title,
+            Foreground = Brush("AgentMuxText"),
+            FontWeight = FontWeights.SemiBold,
+            TextWrapping = TextWrapping.Wrap
+        });
+
+        if (!string.IsNullOrWhiteSpace(notification.Subtitle))
+        {
+            layout.Children.Add(new TextBlock
+            {
+                Text = notification.Subtitle,
+                Foreground = Brush("AgentMuxMutedText"),
+                Margin = new Thickness(0, 2, 0, 0),
+                TextWrapping = TextWrapping.Wrap
+            });
+        }
+
+        layout.Children.Add(new TextBlock
+        {
+            Text = notification.Body,
+            Foreground = Brush("AgentMuxText"),
+            Margin = new Thickness(0, 6, 0, 0),
+            TextWrapping = TextWrapping.Wrap
+        });
+        layout.Children.Add(new TextBlock
+        {
+            Text = $"{(notification.IsRead ? "read" : "unread")}  |  {NotificationContext(notification)}",
+            Foreground = Brush("AgentMuxMutedText"),
+            Margin = new Thickness(0, 6, 0, 0),
+            TextWrapping = TextWrapping.Wrap
+        });
+
+        item.Child = layout;
+        return item;
+    }
+
+    private string NotificationContext(TerminalNotification notification)
+    {
+        var workspace = _workspaces.FirstOrDefault(candidate => candidate.Id == notification.WorkspaceId);
+        var pane = string.IsNullOrWhiteSpace(notification.PaneId) ? null : FindPaneById(notification.PaneId);
+        var workspaceTitle = string.IsNullOrWhiteSpace(workspace?.Title) ? notification.WorkspaceId : workspace!.Title;
+        var paneTitle = string.IsNullOrWhiteSpace(pane?.Title) ? notification.PaneId : pane!.Title;
+        return string.IsNullOrWhiteSpace(paneTitle)
+            ? workspaceTitle
+            : $"{workspaceTitle} / {paneTitle}";
     }
 
     private void RefreshSurfaceTabs(WorkspaceState workspace)
@@ -2209,6 +2327,12 @@ public partial class MainWindow : Window
 
     internal int ActiveWorkspaceUnreadCountForSmokeTest => ActiveWorkspace().UnreadCount;
 
+    internal bool IsNotificationPanelOpenForSmokeTest => NotificationPanel.Visibility == Visibility.Visible;
+
+    internal int RenderedNotificationItemCountForSmokeTest => NotificationItems.Children.Count;
+
+    internal string NotificationButtonContentForSmokeTest => NotificationToggle.Content?.ToString() ?? "";
+
     internal bool IsActivePaneZoomedForSmokeTest => ActiveSurface().ZoomedPaneId == ActivePane()?.Id;
 
     internal bool HasButtonForSmokeTest(string content) => VisualTreeContainsButton(this, content);
@@ -2216,6 +2340,33 @@ public partial class MainWindow : Window
     internal bool RenderedTextContainsForSmokeTest(string marker) => VisualTreeTextContains(PaneHost, marker);
 
     internal bool SurfaceTabsContainTextForSmokeTest(string marker) => VisualTreeTextContains(SurfaceTabs, marker);
+
+    internal bool NotificationCenterContainsTextForSmokeTest(string marker) => VisualTreeTextContains(NotificationPanel, marker);
+
+    internal void OpenNotificationCenterForSmokeTest()
+    {
+        _notificationPanelOpen = true;
+        RefreshNotificationCenter();
+    }
+
+    internal void CloseNotificationCenterForSmokeTest()
+    {
+        _notificationPanelOpen = false;
+        RefreshNotificationCenter();
+    }
+
+    internal async Task JumpLatestNotificationForSmokeTestAsync()
+    {
+        HandleNotificationsJumpLatest();
+        await EnsurePanePtyAsync(ActivePane()).ConfigureAwait(true);
+        RefreshWorkspaceView();
+    }
+
+    internal void ClearUnreadNotificationsForSmokeTest()
+    {
+        HandleNotificationsClear();
+        RefreshWorkspaceView();
+    }
 
     internal bool SplitActivePaneForSmokeTest(SplitDirection direction)
     {

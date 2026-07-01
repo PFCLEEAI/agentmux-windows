@@ -243,6 +243,7 @@ public sealed class MainWindowSmokeTests
         var store = new SessionSnapshotStore(root);
         var firstToken = $"agentmux-osc-secret-{Guid.NewGuid():N}";
         var secondToken = $"agentmux-osc-clear-secret-{Guid.NewGuid():N}";
+        var thirdToken = $"agentmux-osc-rpc-clear-secret-{Guid.NewGuid():N}";
 
         try
         {
@@ -254,6 +255,7 @@ public sealed class MainWindowSmokeTests
             try
             {
                 window.InitializeForSmokeTest();
+                Assert.Equal("Notifications (0)", window.NotificationButtonContentForSmokeTest);
 
                 var rightPaneCreated = window.SplitActivePaneForSmokeTest(SplitDirection.Right);
                 Assert.True(rightPaneCreated);
@@ -268,6 +270,23 @@ public sealed class MainWindowSmokeTests
                 Assert.Contains("visible-beforevisible-after", window.ActivePaneLastScreenTextForSmokeTest, StringComparison.Ordinal);
                 Assert.DoesNotContain(firstToken, window.ActivePaneLastScreenTextForSmokeTest, StringComparison.Ordinal);
                 Assert.DoesNotContain("\u001b]99", window.ActivePaneLastScreenTextForSmokeTest, StringComparison.Ordinal);
+                Assert.Equal("Notifications (1)", window.NotificationButtonContentForSmokeTest);
+                Assert.False(window.IsNotificationPanelOpenForSmokeTest);
+
+                window.OpenNotificationCenterForSmokeTest();
+                Assert.True(window.IsNotificationPanelOpenForSmokeTest);
+                Assert.Equal(1, window.RenderedNotificationItemCountForSmokeTest);
+                Assert.True(window.NotificationCenterContainsTextForSmokeTest("Codex"));
+                Assert.True(window.NotificationCenterContainsTextForSmokeTest("Plan"));
+                Assert.True(window.NotificationCenterContainsTextForSmokeTest(firstToken));
+                Assert.True(window.NotificationCenterContainsTextForSmokeTest("unread"));
+                Assert.True(window.NotificationCenterContainsTextForSmokeTest("Default"));
+                Assert.Equal(1, window.ActiveWorkspaceUnreadCountForSmokeTest);
+                window.CloseNotificationCenterForSmokeTest();
+                Assert.False(window.IsNotificationPanelOpenForSmokeTest);
+                Assert.Equal(1, window.ActiveWorkspaceUnreadCountForSmokeTest);
+                window.OpenNotificationCenterForSmokeTest();
+                Assert.True(window.IsNotificationPanelOpenForSmokeTest);
 
                 var listResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.NotificationsList, new { limit = 10 });
                 Assert.True(listResponse.Ok, listResponse.Error);
@@ -283,29 +302,37 @@ public sealed class MainWindowSmokeTests
                 Assert.True(window.HandlePreviewKeyDownForSmokeTest(Key.System, ModifierKeys.Control | ModifierKeys.Alt, Key.Right));
                 Assert.Equal(rightPane, window.ActivePaneIdForSmokeTest);
 
-                var jumpResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.NotificationsJumpLatest);
-                Assert.True(jumpResponse.Ok, jumpResponse.Error);
-                var jumpRoot = System.Text.Json.JsonSerializer.SerializeToElement(jumpResponse.Result, AgentMuxJson.Options);
-                Assert.True(jumpRoot.GetProperty("jumped").GetBoolean());
-                Assert.Equal(notifiedPane, jumpRoot.GetProperty("paneId").GetString());
+                await window.JumpLatestNotificationForSmokeTestAsync();
                 Assert.Equal(notifiedPane, window.ActivePaneIdForSmokeTest);
                 Assert.Equal(0, window.ActiveWorkspaceUnreadCountForSmokeTest);
                 Assert.False(window.ActivePaneHasUnreadNotificationForSmokeTest);
+                Assert.Equal("Notifications (0)", window.NotificationButtonContentForSmokeTest);
+                Assert.True(window.NotificationCenterContainsTextForSmokeTest("read"));
 
                 window.AppendActivePaneTextForSmokeTest($"again\u001b]777;notify;Codex;{secondToken}\u001b\\done");
                 Assert.Equal(1, window.ActiveWorkspaceUnreadCountForSmokeTest);
+                Assert.Equal("Notifications (1)", window.NotificationButtonContentForSmokeTest);
+                Assert.True(window.NotificationCenterContainsTextForSmokeTest(secondToken));
 
-                var clearResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.NotificationsClear);
-                Assert.True(clearResponse.Ok, clearResponse.Error);
-                var clearRoot = System.Text.Json.JsonSerializer.SerializeToElement(clearResponse.Result, AgentMuxJson.Options);
-                Assert.Equal(1, clearRoot.GetProperty("cleared").GetInt32());
+                window.ClearUnreadNotificationsForSmokeTest();
                 Assert.Equal(0, window.ActiveWorkspaceUnreadCountForSmokeTest);
                 Assert.False(window.ActivePaneHasUnreadNotificationForSmokeTest);
+                Assert.Equal("Notifications (0)", window.NotificationButtonContentForSmokeTest);
+                Assert.True(window.NotificationCenterContainsTextForSmokeTest("read"));
+
+                window.AppendActivePaneTextForSmokeTest($"third\u001b]99;t=Codex;b={thirdToken}\u0007done");
+                Assert.Equal(1, window.ActiveWorkspaceUnreadCountForSmokeTest);
+                var rpcClearResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.NotificationsClear);
+                Assert.True(rpcClearResponse.Ok, rpcClearResponse.Error);
+                var rpcClearRoot = System.Text.Json.JsonSerializer.SerializeToElement(rpcClearResponse.Result, AgentMuxJson.Options);
+                Assert.Equal(1, rpcClearRoot.GetProperty("cleared").GetInt32());
+                Assert.Equal(0, window.ActiveWorkspaceUnreadCountForSmokeTest);
 
                 await window.SaveSessionForSmokeTestAsync();
                 var snapshotText = await System.IO.File.ReadAllTextAsync(store.FilePath);
                 Assert.DoesNotContain(firstToken, snapshotText, StringComparison.Ordinal);
                 Assert.DoesNotContain(secondToken, snapshotText, StringComparison.Ordinal);
+                Assert.DoesNotContain(thirdToken, snapshotText, StringComparison.Ordinal);
                 Assert.DoesNotContain("hasUnreadNotification\":true", snapshotText, StringComparison.OrdinalIgnoreCase);
             }
             finally
