@@ -4,11 +4,6 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:
-    inputs:
-      version:
-        description: "Optional package version label for manual artifact builds"
-        required: false
-        type: string
 
 permissions:
   contents: read
@@ -51,11 +46,6 @@ jobs:
         run: |
           $version = "${{ github.ref_name }}"
           $releaseTag = ""
-          $inputVersion = "${{ github.event.inputs.version }}"
-
-          if ("${{ github.event_name }}" -eq "workflow_dispatch" -and -not [string]::IsNullOrWhiteSpace($inputVersion)) {
-            $version = $inputVersion
-          }
 
           if ("${{ github.event_name }}" -eq "push" -and "${{ github.ref }}".StartsWith("refs/tags/")) {
             $releaseTag = "${{ github.ref_name }}"
