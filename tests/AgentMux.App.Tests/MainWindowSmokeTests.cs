@@ -1474,7 +1474,7 @@ public sealed class MainWindowSmokeTests
             Assert.False(routeClearAfterBlock.GetProperty("fetchEnabled").GetBoolean());
 
             var routeFulfillToken = $"agentmux-route-fulfill-{Guid.NewGuid():N}";
-            var routeFulfillUrl = $"http://127.0.0.1:9/{routeFulfillToken}";
+            var routeFulfillUrl = $"/{routeFulfillToken}";
             var routeFulfillBody = $"synthetic route body {Guid.NewGuid():N}";
             var fulfillRoute = AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserRouteFulfill, new
             {
