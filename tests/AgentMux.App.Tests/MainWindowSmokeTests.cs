@@ -1515,11 +1515,10 @@ public sealed class MainWindowSmokeTests
                 window,
                 $"window.__agentMuxRouteFulfill.text === {System.Text.Json.JsonSerializer.Serialize(routeFulfillBody)}").ConfigureAwait(true);
 
-            var fulfillStateRoot = AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserEval, new
+            var fulfillState = AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserEval, new
             {
                 script = "window.__agentMuxRouteFulfill"
             }));
-            var fulfillState = fulfillStateRoot.GetProperty("result");
             Assert.True(fulfillState.GetProperty("ok").GetBoolean(), fulfillState.ToString());
             Assert.Equal(209, fulfillState.GetProperty("status").GetInt32());
             Assert.Contains("text/plain", fulfillState.GetProperty("contentType").GetString(), StringComparison.OrdinalIgnoreCase);
