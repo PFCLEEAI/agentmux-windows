@@ -128,6 +128,24 @@ public partial class MainWindow : Window
     {
         var key = EffectiveKey(e);
         if (Keyboard.Modifiers.HasFlag(ModifierKeys.Control)
+            && Keyboard.Modifiers.HasFlag(ModifierKeys.Shift)
+            && key == Key.Z)
+        {
+            e.Handled = true;
+            ToggleActivePaneZoom();
+            return;
+        }
+
+        if (Keyboard.Modifiers.HasFlag(ModifierKeys.Control)
+            && Keyboard.Modifiers.HasFlag(ModifierKeys.Shift)
+            && key == Key.X)
+        {
+            e.Handled = true;
+            CloseActivePane();
+            return;
+        }
+
+        if (Keyboard.Modifiers.HasFlag(ModifierKeys.Control)
             && Keyboard.Modifiers.HasFlag(ModifierKeys.Alt)
             && TryMapArrowKey(key, out var focusDirection))
         {
@@ -173,6 +191,8 @@ public partial class MainWindow : Window
             AgentMuxMethods.SendKey => AgentMuxResponse.Success(request.Id, HandleSendKey(request.Params)),
             AgentMuxMethods.ReadScreen => AgentMuxResponse.Success(request.Id, new { text = ActivePane()?.LastScreenText ?? "" }),
             AgentMuxMethods.FocusPane => HandleFocusPane(request.Id, request.Params),
+            AgentMuxMethods.ToggleZoom => AgentMuxResponse.Success(request.Id, HandleToggleZoom()),
+            AgentMuxMethods.ClosePane => AgentMuxResponse.Success(request.Id, HandleClosePane()),
             AgentMuxMethods.OpenUrl => AgentMuxResponse.Success(request.Id, HandleOpenUrl(request.Params)),
             AgentMuxMethods.BrowserEval => AgentMuxResponse.Success(request.Id, await HandleBrowserEvalAsync(request.Params).ConfigureAwait(true)),
             AgentMuxMethods.BrowserClick => AgentMuxResponse.Success(request.Id, await HandleBrowserClickAsync(request.Params).ConfigureAwait(true)),
@@ -312,6 +332,28 @@ public partial class MainWindow : Window
                 previousPaneId,
                 paneId = ActivePane()?.Id
             });
+    }
+
+    private object HandleToggleZoom()
+    {
+        var pane = ActivePane();
+        if (pane is null)
+        {
+            return new { zoomed = false, reason = "no active pane" };
+        }
+
+        return ToggleActivePaneZoom();
+    }
+
+    private object HandleClosePane()
+    {
+        var pane = ActivePane();
+        if (pane is null)
+        {
+            return new { closed = false, reason = "no active pane" };
+        }
+
+        return CloseActivePane();
     }
 
     private object HandleOpenUrl(JsonElement? parameters)
@@ -687,6 +729,7 @@ public partial class MainWindow : Window
         var changed = SplitPane(surface.Root, activePane.Id, direction, out var newPane);
         if (changed)
         {
+            surface.ZoomedPaneId = null;
             surface.ActivePaneId = newPane?.Id ?? activePane.Id;
         }
 
@@ -701,13 +744,61 @@ public partial class MainWindow : Window
     private bool FocusPane(PaneFocusDirection direction)
     {
         var surface = ActiveSurface();
+        var zoomedPane = PaneTreeEditor.FindPane(surface.Root, surface.ZoomedPaneId);
+        if (zoomedPane is not null)
+        {
+            surface.ActivePaneId = zoomedPane.Id;
+        }
+
         if (!PaneFocusNavigator.TryMoveFocus(surface, direction, out _))
         {
             return false;
         }
 
+        if (zoomedPane is not null)
+        {
+            surface.ZoomedPaneId = null;
+        }
+
         RefreshWorkspaceView();
         return true;
+    }
+
+    private object ToggleActivePaneZoom()
+    {
+        var surface = ActiveSurface();
+        var pane = ActivePane();
+        if (pane is null || !PaneTreeEditor.TryToggleZoom(surface, pane.Id, out var zoomed))
+        {
+            return new { zoomed = false, reason = "no active pane" };
+        }
+
+        RefreshWorkspaceView();
+        return new { zoomed, paneId = pane.Id };
+    }
+
+    private object CloseActivePane()
+    {
+        var surface = ActiveSurface();
+        var pane = ActivePane();
+        if (pane is null)
+        {
+            return new { closed = false, reason = "no active pane" };
+        }
+
+        if (!PaneTreeEditor.TryClosePane(surface, pane.Id, out var closedPane, out var focusedPane))
+        {
+            return new { closed = false, paneId = pane.Id, reason = "cannot close the last pane" };
+        }
+
+        CleanupPaneResources(closedPane!);
+        if (focusedPane?.Kind == PaneKind.Terminal)
+        {
+            _ = EnsurePanePtyAsync(focusedPane);
+        }
+
+        RefreshWorkspaceView();
+        return new { closed = true, paneId = closedPane!.Id, activePaneId = focusedPane?.Id };
     }
 
     private static bool SplitPane(SplitNodeState node, string paneId, SplitDirection direction, out PaneState? newPane)
@@ -752,7 +843,16 @@ public partial class MainWindow : Window
         TerminalStatus.Text = $"{(activeSessionRunning ? "running" : "stopped")}  |  active: {activePane?.Title ?? "none"}  |  {activeKind}";
         TerminalInput.IsEnabled = activePane is not null;
         PaneHost.Children.Clear();
-        PaneHost.Children.Add(BuildSplitElement(surface.Root, activePane?.Id));
+        if (PaneTreeEditor.FindPane(surface.Root, surface.ZoomedPaneId) is { } zoomedPane)
+        {
+            PaneHost.Children.Add(BuildPaneElement(zoomedPane, zoomedPane.Id == activePane?.Id));
+        }
+        else
+        {
+            surface.ZoomedPaneId = null;
+            PaneHost.Children.Add(BuildSplitElement(surface.Root, activePane?.Id));
+        }
+
         WorkspaceList.Items.Refresh();
     }
 
@@ -1051,6 +1151,13 @@ public partial class MainWindow : Window
         }
     }
 
+    private void CleanupPaneResources(PaneState pane)
+    {
+        StopPanePty(pane.Id);
+        _terminalViews.Remove(pane.Id);
+        _browserViews.Remove(pane.Id);
+    }
+
     private static void DetachFromParent(FrameworkElement element)
     {
         switch (element.Parent)
@@ -1179,7 +1286,13 @@ public partial class MainWindow : Window
 
     internal int RenderedBrowserPaneCountForSmokeTest => CountVisualDescendants<BrowserPaneView>(PaneHost);
 
+    internal int CachedTerminalPaneViewCountForSmokeTest => _terminalViews.Count;
+
+    internal int CachedBrowserPaneViewCountForSmokeTest => _browserViews.Count;
+
     internal string? ActivePaneIdForSmokeTest => ActivePane()?.Id;
+
+    internal bool IsActivePaneZoomedForSmokeTest => ActiveSurface().ZoomedPaneId == ActivePane()?.Id;
 
     internal bool HasButtonForSmokeTest(string content) => VisualTreeContainsButton(this, content);
 
@@ -1197,6 +1310,21 @@ public partial class MainWindow : Window
     internal bool HandlePaneFocusShortcutForSmokeTest(Key key)
     {
         return TryMapArrowKey(key, out var direction) && FocusPane(direction);
+    }
+
+    internal bool HandlePaneActionShortcutForSmokeTest(Key key)
+    {
+        switch (key)
+        {
+            case Key.Z:
+                ToggleActivePaneZoom();
+                return true;
+            case Key.X:
+                CloseActivePane();
+                return true;
+            default:
+                return false;
+        }
     }
 
     internal void SetActivePaneTextForSmokeTest(string text)

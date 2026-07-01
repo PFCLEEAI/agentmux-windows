@@ -58,6 +58,23 @@ public sealed class MainWindowSmokeTests
                 Assert.True(window.HandlePaneFocusShortcutForSmokeTest(System.Windows.Input.Key.Down));
                 Assert.Equal(bottomLeftPane, window.ActivePaneIdForSmokeTest);
 
+                Assert.True(window.HandlePaneActionShortcutForSmokeTest(System.Windows.Input.Key.Z));
+                Assert.True(window.IsActivePaneZoomedForSmokeTest);
+                Assert.Equal(3, window.PaneCountForSmokeTest);
+                Assert.Equal(1, window.RenderedTerminalPaneCountForSmokeTest);
+
+                Assert.True(window.HandlePaneFocusShortcutForSmokeTest(System.Windows.Input.Key.Right));
+                Assert.False(window.IsActivePaneZoomedForSmokeTest);
+                Assert.Equal(3, window.PaneCountForSmokeTest);
+                Assert.Equal(3, window.RenderedTerminalPaneCountForSmokeTest);
+                Assert.True(window.HandlePaneFocusShortcutForSmokeTest(System.Windows.Input.Key.Left));
+
+                Assert.True(window.HandlePaneActionShortcutForSmokeTest(System.Windows.Input.Key.Z));
+                Assert.True(window.IsActivePaneZoomedForSmokeTest);
+                Assert.True(window.HandlePaneActionShortcutForSmokeTest(System.Windows.Input.Key.Z));
+                Assert.Equal(3, window.RenderedTerminalPaneCountForSmokeTest);
+                Assert.False(window.HandlePaneActionShortcutForSmokeTest(System.Windows.Input.Key.A));
+
                 window.SetActivePaneTextForSmokeTest("AGENTMUX_UI_SMOKE");
                 Assert.Equal(3, window.RenderedTerminalPaneCountForSmokeTest);
                 Assert.True(window.RenderedTextContainsForSmokeTest("AGENTMUX_UI_SMOKE"));
@@ -81,6 +98,33 @@ public sealed class MainWindowSmokeTests
                 var safeUrl = window.OpenBrowserInActivePaneForSmokeTest("https://");
                 Assert.Equal("about:blank", safeUrl);
                 Assert.True(window.RenderedTextContainsForSmokeTest(safeUrl));
+
+                Assert.True(window.HandlePaneActionShortcutForSmokeTest(System.Windows.Input.Key.Z));
+                Assert.True(window.IsActivePaneZoomedForSmokeTest);
+                Assert.Equal(1, window.RenderedBrowserPaneCountForSmokeTest);
+                Assert.Equal(0, window.RenderedTerminalPaneCountForSmokeTest);
+
+                Assert.True(window.HandlePaneActionShortcutForSmokeTest(System.Windows.Input.Key.Z));
+                Assert.False(window.IsActivePaneZoomedForSmokeTest);
+                Assert.Equal(1, window.RenderedBrowserPaneCountForSmokeTest);
+                Assert.Equal(2, window.RenderedTerminalPaneCountForSmokeTest);
+
+                Assert.Equal(1, window.CachedBrowserPaneViewCountForSmokeTest);
+                Assert.True(window.HandlePaneActionShortcutForSmokeTest(System.Windows.Input.Key.X));
+                Assert.Equal(2, window.PaneCountForSmokeTest);
+                Assert.Equal(0, window.RenderedBrowserPaneCountForSmokeTest);
+                Assert.Equal(2, window.RenderedTerminalPaneCountForSmokeTest);
+                Assert.Equal(0, window.CachedBrowserPaneViewCountForSmokeTest);
+
+                Assert.True(window.HandlePaneActionShortcutForSmokeTest(System.Windows.Input.Key.X));
+                Assert.Equal(1, window.PaneCountForSmokeTest);
+                Assert.Equal(1, window.RenderedTerminalPaneCountForSmokeTest);
+                Assert.Equal(1, window.CachedTerminalPaneViewCountForSmokeTest);
+
+                var lastPane = window.ActivePaneIdForSmokeTest;
+                Assert.True(window.HandlePaneActionShortcutForSmokeTest(System.Windows.Input.Key.X));
+                Assert.Equal(1, window.PaneCountForSmokeTest);
+                Assert.Equal(lastPane, window.ActivePaneIdForSmokeTest);
             }
             finally
             {

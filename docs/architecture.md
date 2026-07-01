@@ -33,6 +33,7 @@ AgentMux.Win.App
 - Surface contains a split tree.
 - Split leaves contain panes.
 - Pane focus movement is computed from the split-tree geometry in `AgentMux.Core`, so CLI/RPC and WPF shortcuts share the same target selection.
+- Pane actions use shared Core tree helpers: zoom stores a `ZoomedPaneId` on the surface, while close collapses the split tree to the closed pane's sibling branch.
 - Terminal panes own independent ConPTY sessions, started lazily when a pane becomes active or receives input.
 - Terminal panes render through a cached WebView2/xterm bridge with a WPF text fallback. The bridge displays current pane text and keeps `PaneState.LastScreenText` as the automation/read-screen source.
 - Browser panes render through a cached WebView2 bridge with a WPF fallback. `PaneState.Url` is the current browser navigation source, and `surface.open_url` converts or navigates the active pane.

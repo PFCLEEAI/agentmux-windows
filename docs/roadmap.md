@@ -21,7 +21,7 @@
 - Split pane layout. Implemented as recursive WPF panes with persisted split ratios.
 - WebView2/xterm renderer bridge. Preview implemented with WPF fallback.
 - Focus movement. Preview implemented with `surface.focus_pane`, `agentmux focus`, `Ctrl+Tab`, and `Ctrl+Alt+Arrow`.
-- Keyboard shortcuts. Basic pane cycling and directional pane focus implemented; customizable keybinding settings remain future work.
+- Keyboard shortcuts. Basic pane cycling, directional pane focus, and pane zoom/close shortcuts implemented; customizable keybinding settings remain future work.
 - Each terminal pane now owns an independent ConPTY session started lazily.
 
 ## Sprint 3 - CLI/API
@@ -30,6 +30,7 @@
 - Workspace create/list/select.
 - Split pane. Preview implemented.
 - Focus pane. Preview implemented.
+- Zoom and close pane. Preview implemented.
 - Send text. Preview implemented.
 - Send key.
 - Read screen. Preview implemented for active pane text.

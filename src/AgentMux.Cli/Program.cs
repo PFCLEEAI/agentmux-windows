@@ -30,6 +30,9 @@ public static class Program
                 "workspace" => await HandleWorkspaceAsync(client, args[1..]).ConfigureAwait(false),
                 "split" => await HandleSplitAsync(client, args[1..]).ConfigureAwait(false),
                 "focus" => await HandleFocusAsync(client, args[1..]).ConfigureAwait(false),
+                "zoom" => await HandlePaneAsync(client, ["zoom"]).ConfigureAwait(false),
+                "close-pane" => await HandlePaneAsync(client, ["close"]).ConfigureAwait(false),
+                "pane" => await HandlePaneAsync(client, args[1..]).ConfigureAwait(false),
                 "open-url" => await HandleOpenUrlAsync(client, args[1..]).ConfigureAwait(false),
                 "browser" or "browse" or "open" => await HandleBrowserAsync(client, args[1..]).ConfigureAwait(false),
                 "send" => await client.SendAsync(AgentMuxMethods.SendText, new { text = string.Join(' ', args[1..]) }).ConfigureAwait(false),
@@ -88,6 +91,17 @@ public static class Program
     private static async Task<AgentMuxResponse> HandleFocusAsync(NamedPipeRpcClient client, string[] args)
     {
         var request = ParseFocusRequestForTests(args, out var error);
+        if (request is null)
+        {
+            return AgentMuxResponse.Failure("", error);
+        }
+
+        return await client.SendAsync(request.Method, request.Parameters).ConfigureAwait(false);
+    }
+
+    private static async Task<AgentMuxResponse> HandlePaneAsync(NamedPipeRpcClient client, string[] args)
+    {
+        var request = ParsePaneRequestForTests(args, out var error);
         if (request is null)
         {
             return AgentMuxResponse.Failure("", error);
@@ -197,6 +211,32 @@ public static class Program
 
         error = "";
         return new CliRequest(AgentMuxMethods.FocusPane, new { direction = parsedDirection.ToString().ToLowerInvariant() });
+    }
+
+    internal static CliRequest? ParsePaneRequestForTests(string[] args, out string error)
+    {
+        if (args.Length == 0)
+        {
+            error = "Usage: agentmux pane <zoom|close>";
+            return null;
+        }
+
+        if (args[0].Equals("zoom", StringComparison.OrdinalIgnoreCase)
+            || args[0].Equals("toggle-zoom", StringComparison.OrdinalIgnoreCase))
+        {
+            error = "";
+            return new CliRequest(AgentMuxMethods.ToggleZoom, new { });
+        }
+
+        if (args[0].Equals("close", StringComparison.OrdinalIgnoreCase)
+            || args[0].Equals("close-pane", StringComparison.OrdinalIgnoreCase))
+        {
+            error = "";
+            return new CliRequest(AgentMuxMethods.ClosePane, new { });
+        }
+
+        error = $"Unknown pane command: {args[0]}";
+        return null;
     }
 
     private static async Task<AgentMuxResponse> HandleOpenUrlAsync(NamedPipeRpcClient client, string[] args)
@@ -345,6 +385,8 @@ public static class Program
           agentmux split down
           agentmux focus next
           agentmux focus right
+          agentmux zoom
+          agentmux close-pane
           agentmux open-url https://example.com
           agentmux browser open https://example.com
           agentmux browser eval "document.title"

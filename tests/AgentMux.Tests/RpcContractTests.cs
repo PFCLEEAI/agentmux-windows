@@ -47,6 +47,13 @@ public sealed class RpcContractTests
     }
 
     [Fact]
+    public void PaneActionMethodsAreStable()
+    {
+        Assert.Equal("surface.toggle_zoom", AgentMuxMethods.ToggleZoom);
+        Assert.Equal("surface.close_pane", AgentMuxMethods.ClosePane);
+    }
+
+    [Fact]
     public void OpenUrlMethodIsStable()
     {
         Assert.Equal("surface.open_url", AgentMuxMethods.OpenUrl);

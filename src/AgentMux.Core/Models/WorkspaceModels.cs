@@ -18,6 +18,7 @@ public sealed class SurfaceState
     public string Id { get; set; } = Ids.New("surface");
     public string Title { get; set; } = "Terminal";
     public string? ActivePaneId { get; set; }
+    public string? ZoomedPaneId { get; set; }
     public SplitNodeState Root { get; set; } = SplitNodeState.CreateLeaf();
 
     public static SurfaceState CreateDefault() => new();
