@@ -54,8 +54,8 @@ public sealed class ConPtySession : IPtySession
 
             StartProcess(options, _pseudoConsole);
 
-            _inputWriter = new FileStream(inputWrite, FileAccess.Write, 4096, isAsync: true);
-            _outputReader = new FileStream(outputReadForApp, FileAccess.Read, 4096, isAsync: true);
+            _inputWriter = new FileStream(inputWrite, FileAccess.Write, 4096, isAsync: false);
+            _outputReader = new FileStream(outputReadForApp, FileAccess.Read, 4096, isAsync: false);
             _readerStop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             _readerTask = Task.Run(() => ReadOutputLoopAsync(_readerStop.Token), CancellationToken.None);
 
