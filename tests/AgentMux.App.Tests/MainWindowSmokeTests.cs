@@ -1,3 +1,4 @@
+using System.IO;
 using System.Net;
 using System.Net.Sockets;
 using System.Reflection;
@@ -544,6 +545,7 @@ public sealed class MainWindowSmokeTests
     private static async Task RunWorkspaceSwitcherSmokeAsync()
     {
         var window = new MainWindow(ShortcutSettings.Default());
+        string? gitRoot = null;
         try
         {
             window.InitializeForSmokeTest();
@@ -573,13 +575,16 @@ public sealed class MainWindowSmokeTests
             Assert.False(initialWorkspace.TryGetProperty("surfaces", out _));
             Assert.False(initialWorkspace.TryGetProperty("root", out _));
             Assert.False(initialWorkspace.TryGetProperty("latestNotification", out _));
-            Assert.False(initialWorkspace.TryGetProperty("gitBranch", out _));
+            Assert.True(initialWorkspace.TryGetProperty("gitBranch", out _));
+            Assert.Equal(System.Text.Json.JsonValueKind.Null, initialWorkspace.GetProperty("gitBranch").ValueKind);
             Assert.False(initialWorkspace.TryGetProperty("isGitDirty", out _));
 
+            var gitWorkspace = CreateGitWorkspace("feature/api-sidebar");
+            gitRoot = gitWorkspace.Root;
             var createResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceCreate, new
             {
                 title = "API",
-                cwd = "C:\\src\\api"
+                cwd = gitWorkspace.WorkingDirectory
             });
             Assert.True(createResponse.Ok, createResponse.Error);
             var createResult = System.Text.Json.JsonSerializer.SerializeToElement(createResponse.Result, AgentMuxJson.Options);
@@ -590,13 +595,16 @@ public sealed class MainWindowSmokeTests
             Assert.Equal("API", createdWorkspace.GetProperty("title").GetString());
             Assert.Equal(1, createdWorkspace.GetProperty("index").GetInt32());
             Assert.True(createdWorkspace.GetProperty("isActive").GetBoolean());
-            Assert.Equal("C:\\src\\api", createdWorkspace.GetProperty("workingDirectory").GetString());
+            Assert.Equal(gitWorkspace.WorkingDirectory, createdWorkspace.GetProperty("workingDirectory").GetString());
+            Assert.Equal("feature/api-sidebar", createdWorkspace.GetProperty("gitBranch").GetString());
             Assert.False(string.IsNullOrWhiteSpace(createdWorkspaceId));
 
             Assert.Equal(2, window.WorkspaceCountForSmokeTest);
             Assert.Equal(1, window.ActiveWorkspaceIndexForSmokeTest);
             Assert.Equal(1, window.WorkspaceListSelectedIndexForSmokeTest);
             Assert.Equal("API", window.ActiveWorkspaceTitleForSmokeTest);
+            Assert.Contains("branch: feature/api-sidebar", window.ActiveWorkspaceMetaForSmokeTest, StringComparison.Ordinal);
+            Assert.True(window.WorkspaceListContainsTextForSmokeTest("branch: feature/api-sidebar"));
             Assert.False(window.RenderedTextContainsForSmokeTest("AGENTMUX_WORKSPACE_ONE"));
 
             window.SetActivePaneTextForSmokeTest("AGENTMUX_WORKSPACE_TWO");
@@ -665,6 +673,7 @@ public sealed class MainWindowSmokeTests
             Assert.True(selectSecondResponse.Ok, selectSecondResponse.Error);
             var selectSecond = System.Text.Json.JsonSerializer.SerializeToElement(selectSecondResponse.Result, AgentMuxJson.Options);
             Assert.True(selectSecond.GetProperty("selected").GetBoolean());
+            Assert.Equal("feature/api-sidebar", selectSecond.GetProperty("workspace").GetProperty("gitBranch").GetString());
             Assert.Equal(1, window.ActiveWorkspaceIndexForSmokeTest);
             Assert.Equal(1, window.WorkspaceListSelectedIndexForSmokeTest);
             Assert.Equal("API", window.ActiveWorkspaceTitleForSmokeTest);
@@ -682,11 +691,41 @@ public sealed class MainWindowSmokeTests
             Assert.Equal(1, finalWorkspaces.Count(workspace => workspace.GetProperty("isActive").GetBoolean()));
             Assert.Contains(finalWorkspaces, workspace =>
                 workspace.GetProperty("id").GetString() == createdWorkspaceId
-                && workspace.GetProperty("isActive").GetBoolean());
+                && workspace.GetProperty("isActive").GetBoolean()
+                && workspace.GetProperty("gitBranch").GetString() == "feature/api-sidebar");
         }
         finally
         {
             window.Close();
+            if (gitRoot is not null)
+            {
+                TryDeleteDirectory(gitRoot);
+            }
+        }
+    }
+
+    private static (string Root, string WorkingDirectory) CreateGitWorkspace(string branch)
+    {
+        var root = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "agentmux-workspace-git", Guid.NewGuid().ToString("N"));
+        var gitDirectory = System.IO.Path.Combine(root, ".git");
+        var workingDirectory = System.IO.Path.Combine(root, "src", "api");
+        System.IO.Directory.CreateDirectory(gitDirectory);
+        System.IO.Directory.CreateDirectory(workingDirectory);
+        System.IO.File.WriteAllText(System.IO.Path.Combine(gitDirectory, "HEAD"), $"ref: refs/heads/{branch}\n");
+        return (root, workingDirectory);
+    }
+
+    private static void TryDeleteDirectory(string path)
+    {
+        try
+        {
+            System.IO.Directory.Delete(path, recursive: true);
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
         }
     }
 

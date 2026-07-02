@@ -84,11 +84,34 @@
                 </StackPanel>
 
                 <ListBox x:Name="WorkspaceList"
-                         DisplayMemberPath="Title"
                          Background="Transparent"
                          BorderThickness="0"
                          Foreground="{StaticResource AgentMuxText}"
-                         SelectionChanged="WorkspaceList_SelectionChanged" />
+                         SelectionChanged="WorkspaceList_SelectionChanged">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate>
+                            <StackPanel Margin="0,4">
+                                <TextBlock Text="{Binding Title}"
+                                           FontWeight="SemiBold"
+                                           TextTrimming="CharacterEllipsis" />
+                                <TextBlock Text="{Binding GitBranchLabel}"
+                                           Foreground="{StaticResource AgentMuxMutedText}"
+                                           TextTrimming="CharacterEllipsis">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding GitBranchLabel}" Value="{x:Null}">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                            </StackPanel>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
             </DockPanel>
         </Border>
 

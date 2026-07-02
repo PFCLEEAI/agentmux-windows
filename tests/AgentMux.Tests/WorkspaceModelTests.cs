@@ -16,6 +16,23 @@ public sealed class WorkspaceModelTests
         Assert.NotNull(workspace.Surfaces[0].Root.Pane);
     }
 
+    [Fact]
+    public void WorkspaceGitBranchLabelIsDisplayOnly()
+    {
+        var workspace = new WorkspaceState
+        {
+            GitBranch = "feature/sidebar",
+            IsGitDirty = true
+        };
+
+        var json = JsonSerializer.Serialize(workspace, AgentMuxJson.Options);
+
+        Assert.Equal("branch: feature/sidebar", workspace.GitBranchLabel);
+        Assert.DoesNotContain("gitBranch", json, StringComparison.Ordinal);
+        Assert.DoesNotContain("gitBranchLabel", json, StringComparison.Ordinal);
+        Assert.DoesNotContain("isGitDirty", json, StringComparison.Ordinal);
+    }
+
     [Theory]
     [InlineData(SplitDirection.Right)]
     [InlineData(SplitDirection.Down)]

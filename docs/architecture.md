@@ -33,7 +33,7 @@ AgentMux.Win.App
 
 - Window contains workspaces.
 - Workspace contains surfaces.
-- Workspace switching is app-level state. `workspace.list`, `workspace.create`, and `workspace.select` expose the same active-workspace model used by the WPF sidebar. The list response returns compact metadata only: ids, titles, indexes, active state, working directory, unread count, active surface summary, active pane id, and pane counts. Selecting by zero-based index or workspace id changes `_activeWorkspaceIndex`, updates the sidebar selected item, re-renders the active surface, queues a session save, and starts the selected workspace's active terminal pane lazily.
+- Workspace switching is app-level state. `workspace.list`, `workspace.create`, and `workspace.select` expose the same active-workspace model used by the WPF sidebar. The list response returns compact metadata only: ids, titles, indexes, active state, working directory, detected git branch, unread count, active surface summary, active pane id, and pane counts. Git branch metadata is derived by walking upward from the workspace working directory and reading `.git/HEAD` or a `.git` indirection file; the app does not invoke `git`, scan ports, compute dirty state, or install live file watchers for this preview. Selecting by zero-based index or workspace id changes `_activeWorkspaceIndex`, updates the sidebar selected item, re-renders the active surface, queues a session save, and starts the selected workspace's active terminal pane lazily.
 - Surface contains a split tree.
 - Split leaves contain panes.
 - Pane focus movement is computed from the split-tree geometry in `AgentMux.Core`, so CLI/RPC and WPF shortcuts share the same target selection.

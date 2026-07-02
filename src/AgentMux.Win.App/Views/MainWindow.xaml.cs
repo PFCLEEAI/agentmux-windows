@@ -11,6 +11,7 @@ using AgentMux.Core.Models;
 using AgentMux.Core.Notifications;
 using AgentMux.Core.Persistence;
 using AgentMux.Core.Terminals;
+using AgentMux.Core.Workspaces;
 using AgentMux.Win.App.Controls;
 using AgentMux.Win.App.Input;
 using AgentMux.Win.App.Notifications;
@@ -201,6 +202,7 @@ public partial class MainWindow : Window
         if (WorkspaceList.SelectedIndex >= 0)
         {
             _activeWorkspaceIndex = WorkspaceList.SelectedIndex;
+            RefreshWorkspaceGitMetadata(ActiveWorkspace());
             RefreshWorkspaceView();
             QueueSessionSave();
         }
@@ -282,6 +284,7 @@ public partial class MainWindow : Window
     {
         EnsureDefaultWorkspace();
         _activeWorkspaceIndex = Math.Clamp(_activeWorkspaceIndex, 0, _workspaces.Count - 1);
+        RefreshAllWorkspaceGitMetadata();
         WorkspaceList.ItemsSource = _workspaces;
         WorkspaceList.SelectedIndex = _activeWorkspaceIndex;
         RefreshWorkspaceView();
@@ -300,6 +303,20 @@ public partial class MainWindow : Window
         {
             NormalizeSurface(surface);
         }
+    }
+
+    private void RefreshAllWorkspaceGitMetadata()
+    {
+        foreach (var workspace in _workspaces)
+        {
+            RefreshWorkspaceGitMetadata(workspace);
+        }
+    }
+
+    private static void RefreshWorkspaceGitMetadata(WorkspaceState workspace)
+    {
+        workspace.GitBranch = GitBranchDetector.DetectCurrentBranch(workspace.WorkingDirectory);
+        workspace.IsGitDirty = false;
     }
 
     private static void NormalizeSurface(SurfaceState surface)
@@ -561,6 +578,7 @@ public partial class MainWindow : Window
     {
         EnsureDefaultWorkspace();
         _activeWorkspaceIndex = Math.Clamp(_activeWorkspaceIndex, 0, _workspaces.Count - 1);
+        RefreshAllWorkspaceGitMetadata();
         return new
         {
             activeWorkspaceIndex = _activeWorkspaceIndex,
@@ -1415,6 +1433,8 @@ public partial class MainWindow : Window
                 ? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)
                 : cwd
         };
+        NormalizeWorkspace(workspace);
+        RefreshWorkspaceGitMetadata(workspace);
 
         Dispatcher.Invoke(() =>
         {
@@ -1468,7 +1488,9 @@ public partial class MainWindow : Window
 
         _activeWorkspaceIndex = selectedIndex;
         WorkspaceList.SelectedIndex = selectedIndex;
-        NormalizeWorkspace(ActiveWorkspace());
+        var workspace = ActiveWorkspace();
+        NormalizeWorkspace(workspace);
+        RefreshWorkspaceGitMetadata(workspace);
         ActivePane();
         QueueSessionSave();
         return true;
@@ -1757,7 +1779,8 @@ public partial class MainWindow : Window
         var surface = ActiveSurface();
         var activePane = ActivePane();
         WorkspaceTitle.Text = workspace.Title;
-        WorkspaceMeta.Text = $"{workspace.WorkingDirectory}  |  surfaces: {workspace.Surfaces.Count}  |  panes: {CountPanes(surface.Root)}  |  unread: {workspace.UnreadCount}";
+        var branchMeta = string.IsNullOrWhiteSpace(workspace.GitBranchLabel) ? "" : $"  |  {workspace.GitBranchLabel}";
+        WorkspaceMeta.Text = $"{workspace.WorkingDirectory}{branchMeta}  |  surfaces: {workspace.Surfaces.Count}  |  panes: {CountPanes(surface.Root)}  |  unread: {workspace.UnreadCount}";
         RefreshSurfaceTabs(workspace);
         var activeSessionRunning = activePane is not null
             && _ptySessions.TryGetValue(activePane.Id, out var activeSession)
@@ -2413,6 +2436,7 @@ public partial class MainWindow : Window
             index,
             isActive = index == _activeWorkspaceIndex,
             workspace.WorkingDirectory,
+            gitBranch = workspace.GitBranch,
             workspace.UnreadCount,
             surfaceCount = workspace.Surfaces.Count,
             workspace.ActiveSurfaceIndex,
@@ -2627,6 +2651,8 @@ public partial class MainWindow : Window
 
     internal string ActiveWorkspaceTitleForSmokeTest => ActiveWorkspace().Title;
 
+    internal string ActiveWorkspaceMetaForSmokeTest => WorkspaceMeta.Text;
+
     internal int SurfaceCountForSmokeTest => ActiveWorkspace().Surfaces.Count;
 
     internal int ActiveSurfaceIndexForSmokeTest => ActiveWorkspace().ActiveSurfaceIndex;
@@ -2672,6 +2698,12 @@ public partial class MainWindow : Window
     internal bool RenderedTextContainsForSmokeTest(string marker) => VisualTreeTextContains(PaneHost, marker);
 
     internal bool SurfaceTabsContainTextForSmokeTest(string marker) => VisualTreeTextContains(SurfaceTabs, marker);
+
+    internal bool WorkspaceListContainsTextForSmokeTest(string marker)
+    {
+        WorkspaceList.UpdateLayout();
+        return VisualTreeTextContains(WorkspaceList, marker);
+    }
 
     internal bool NotificationCenterContainsTextForSmokeTest(string marker) => VisualTreeTextContains(NotificationPanel, marker);
 

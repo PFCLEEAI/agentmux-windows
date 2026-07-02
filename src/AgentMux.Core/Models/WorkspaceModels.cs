@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace AgentMux.Core.Models;
 
 public sealed class WorkspaceState
@@ -5,8 +7,12 @@ public sealed class WorkspaceState
     public string Id { get; set; } = Ids.New("workspace");
     public string Title { get; set; } = "Workspace";
     public string WorkingDirectory { get; set; } = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+    [JsonIgnore]
     public string? GitBranch { get; set; }
+    [JsonIgnore]
     public bool IsGitDirty { get; set; }
+    [JsonIgnore]
+    public string? GitBranchLabel => string.IsNullOrWhiteSpace(GitBranch) ? null : $"branch: {GitBranch}";
     public int ActiveSurfaceIndex { get; set; }
     public int UnreadCount { get; set; }
     public string? LatestNotification { get; set; }
