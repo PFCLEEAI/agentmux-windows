@@ -107,7 +107,7 @@ function Add-CheckedFile {
     [bool]$Exists
   )
 
-  $script:CheckedFiles.Add([ordered]@{
+  $script:CheckedFiles.Add([pscustomobject]@{
     category = $Category
     path = $Path
     exists = $Exists
@@ -520,6 +520,11 @@ $helperEvidencePacketVerified = [bool]($missingEvidenceFiles.Count -eq 0)
 
 Add-InfoMessage "Preparing verification report."
 
+$errorsForReport = @($script:Errors.ToArray())
+$warningsForReport = @($script:Warnings.ToArray())
+$infoForReport = @($script:Info.ToArray())
+$checkedFilesForReport = @($script:CheckedFiles.ToArray())
+
 $report = [ordered]@{
   verificationVersion = 1
   checkedAtUtc = (Get-Date).ToUniversalTime().ToString("o")
@@ -532,10 +537,10 @@ $report = [ordered]@{
   evidencePath = $evidenceDir
   packagePath = Resolve-FullPath $PackagePath
   packageRoot = $packageRoot
-  errors = @($script:Errors)
-  warnings = @($script:Warnings)
-  info = @($script:Info)
-  checkedFiles = @($script:CheckedFiles)
+  errors = $errorsForReport
+  warnings = $warningsForReport
+  info = $infoForReport
+  checkedFiles = $checkedFilesForReport
   proofBoundaries = $proofBoundaries
 }
 
