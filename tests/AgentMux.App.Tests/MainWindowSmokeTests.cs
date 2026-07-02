@@ -609,6 +609,8 @@ public sealed class MainWindowSmokeTests
             Assert.Equal(System.Text.Json.JsonValueKind.Null, initialWorkspace.GetProperty("latestNotification").ValueKind);
             Assert.True(initialWorkspace.TryGetProperty("gitBranch", out _));
             Assert.Equal(System.Text.Json.JsonValueKind.Null, initialWorkspace.GetProperty("gitBranch").ValueKind);
+            Assert.True(initialWorkspace.TryGetProperty("pullRequest", out _));
+            Assert.Equal(System.Text.Json.JsonValueKind.Null, initialWorkspace.GetProperty("pullRequest").ValueKind);
             Assert.True(initialWorkspace.TryGetProperty("ports", out var initialPorts));
             Assert.Empty(initialPorts.EnumerateArray());
             Assert.False(initialWorkspace.TryGetProperty("isGitDirty", out _));
@@ -634,6 +636,7 @@ public sealed class MainWindowSmokeTests
             Assert.True(createdWorkspace.GetProperty("isActive").GetBoolean());
             Assert.Equal(gitWorkspace.WorkingDirectory, createdWorkspace.GetProperty("workingDirectory").GetString());
             Assert.Equal("feature/api-sidebar", createdWorkspace.GetProperty("gitBranch").GetString());
+            Assert.Equal(System.Text.Json.JsonValueKind.Null, createdWorkspace.GetProperty("pullRequest").ValueKind);
             Assert.Empty(createdWorkspace.GetProperty("ports").EnumerateArray());
             Assert.False(string.IsNullOrWhiteSpace(createdWorkspaceId));
 
@@ -643,6 +646,62 @@ public sealed class MainWindowSmokeTests
             Assert.Equal("API", window.ActiveWorkspaceTitleForSmokeTest);
             Assert.Contains("branch: feature/api-sidebar", window.ActiveWorkspaceMetaForSmokeTest, StringComparison.Ordinal);
             Assert.False(window.RenderedTextContainsForSmokeTest("AGENTMUX_WORKSPACE_ONE"));
+
+            var setPullRequestResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceSetPullRequest, new
+            {
+                number = 123,
+                status = "Open",
+                url = "https://github.com/example/repo/pull/123"
+            });
+            Assert.True(setPullRequestResponse.Ok, setPullRequestResponse.Error);
+            var setPullRequest = System.Text.Json.JsonSerializer.SerializeToElement(setPullRequestResponse.Result, AgentMuxJson.Options);
+            Assert.True(setPullRequest.GetProperty("updated").GetBoolean());
+            var setPullRequestWorkspace = setPullRequest.GetProperty("workspace");
+            var pullRequest = setPullRequestWorkspace.GetProperty("pullRequest");
+            Assert.Equal(123, pullRequest.GetProperty("number").GetInt32());
+            Assert.Equal("open", pullRequest.GetProperty("status").GetString());
+            Assert.Equal("https://github.com/example/repo/pull/123", pullRequest.GetProperty("url").GetString());
+            Assert.Contains("pr: #123 open", window.ActiveWorkspaceMetaForSmokeTest, StringComparison.Ordinal);
+            Assert.False(setPullRequestWorkspace.TryGetProperty("status", out _));
+
+            var missingPullRequestNumberResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceSetPullRequest, new
+            {
+                id = createdWorkspaceId
+            });
+            Assert.True(missingPullRequestNumberResponse.Ok, missingPullRequestNumberResponse.Error);
+            var missingPullRequestNumber = System.Text.Json.JsonSerializer.SerializeToElement(missingPullRequestNumberResponse.Result, AgentMuxJson.Options);
+            Assert.False(missingPullRequestNumber.GetProperty("updated").GetBoolean());
+            Assert.Equal("pull request number must be an integer between 1 and 9999999", missingPullRequestNumber.GetProperty("reason").GetString());
+
+            var invalidPullRequestNumberResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceSetPullRequest, new
+            {
+                number = "123"
+            });
+            Assert.True(invalidPullRequestNumberResponse.Ok, invalidPullRequestNumberResponse.Error);
+            var invalidPullRequestNumber = System.Text.Json.JsonSerializer.SerializeToElement(invalidPullRequestNumberResponse.Result, AgentMuxJson.Options);
+            Assert.False(invalidPullRequestNumber.GetProperty("updated").GetBoolean());
+            Assert.Equal("pull request number must be an integer between 1 and 9999999", invalidPullRequestNumber.GetProperty("reason").GetString());
+
+            var invalidPullRequestStatusResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceSetPullRequest, new
+            {
+                number = 124,
+                status = "waiting"
+            });
+            Assert.True(invalidPullRequestStatusResponse.Ok, invalidPullRequestStatusResponse.Error);
+            var invalidPullRequestStatus = System.Text.Json.JsonSerializer.SerializeToElement(invalidPullRequestStatusResponse.Result, AgentMuxJson.Options);
+            Assert.False(invalidPullRequestStatus.GetProperty("updated").GetBoolean());
+            Assert.Equal("pull request status must be one of unknown, open, draft, merged, closed", invalidPullRequestStatus.GetProperty("reason").GetString());
+
+            var invalidPullRequestUrlResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceSetPullRequest, new
+            {
+                number = 124,
+                url = "https://token@example.com/repo/pull/124"
+            });
+            Assert.True(invalidPullRequestUrlResponse.Ok, invalidPullRequestUrlResponse.Error);
+            var invalidPullRequestUrl = System.Text.Json.JsonSerializer.SerializeToElement(invalidPullRequestUrlResponse.Result, AgentMuxJson.Options);
+            Assert.False(invalidPullRequestUrl.GetProperty("updated").GetBoolean());
+            Assert.Equal("pull request url must be an absolute http or https URL without credentials", invalidPullRequestUrl.GetProperty("reason").GetString());
+            Assert.Contains("pr: #123 open", window.ActiveWorkspaceMetaForSmokeTest, StringComparison.Ordinal);
 
             var setPortsResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceSetPorts, new
             {
@@ -721,6 +780,8 @@ public sealed class MainWindowSmokeTests
             Assert.Equal(0, window.WorkspaceListSelectedIndexForSmokeTest);
             Assert.Equal("Default", window.ActiveWorkspaceTitleForSmokeTest);
             Assert.Equal(firstPaneId, window.ActivePaneIdForSmokeTest);
+            Assert.Equal(System.Text.Json.JsonValueKind.Null, selectFirst.GetProperty("workspace").GetProperty("pullRequest").ValueKind);
+            Assert.DoesNotContain("pr:", window.ActiveWorkspaceMetaForSmokeTest, StringComparison.Ordinal);
             Assert.Empty(selectFirst.GetProperty("workspace").GetProperty("ports").EnumerateArray());
             Assert.DoesNotContain("ports:", window.ActiveWorkspaceMetaForSmokeTest, StringComparison.Ordinal);
             Assert.True(window.RenderedTextContainsForSmokeTest("AGENTMUX_WORKSPACE_ONE"));
@@ -774,10 +835,14 @@ public sealed class MainWindowSmokeTests
             var selectSecond = System.Text.Json.JsonSerializer.SerializeToElement(selectSecondResponse.Result, AgentMuxJson.Options);
             Assert.True(selectSecond.GetProperty("selected").GetBoolean());
             Assert.Equal("feature/api-sidebar", selectSecond.GetProperty("workspace").GetProperty("gitBranch").GetString());
+            var selectedPullRequest = selectSecond.GetProperty("workspace").GetProperty("pullRequest");
+            Assert.Equal(123, selectedPullRequest.GetProperty("number").GetInt32());
+            Assert.Equal("open", selectedPullRequest.GetProperty("status").GetString());
             Assert.Equal(new[] { 3000, 5173 }, selectSecond.GetProperty("workspace").GetProperty("ports").EnumerateArray().Select(port => port.GetInt32()).ToArray());
             Assert.Equal(1, window.ActiveWorkspaceIndexForSmokeTest);
             Assert.Equal(1, window.WorkspaceListSelectedIndexForSmokeTest);
             Assert.Equal("API", window.ActiveWorkspaceTitleForSmokeTest);
+            Assert.Contains("pr: #123 open", window.ActiveWorkspaceMetaForSmokeTest, StringComparison.Ordinal);
             Assert.Contains("ports: 3000, 5173", window.ActiveWorkspaceMetaForSmokeTest, StringComparison.Ordinal);
             Assert.Equal(secondPaneId, window.ActivePaneIdForSmokeTest);
             Assert.True(window.RenderedTextContainsForSmokeTest("AGENTMUX_WORKSPACE_TWO"));
@@ -794,10 +859,24 @@ public sealed class MainWindowSmokeTests
             var finalCreatedWorkspace = Assert.Single(finalWorkspaces, workspace => workspace.GetProperty("id").GetString() == createdWorkspaceId);
             Assert.True(finalCreatedWorkspace.GetProperty("isActive").GetBoolean());
             Assert.Equal("feature/api-sidebar", finalCreatedWorkspace.GetProperty("gitBranch").GetString());
+            var finalPullRequest = finalCreatedWorkspace.GetProperty("pullRequest");
+            Assert.Equal(123, finalPullRequest.GetProperty("number").GetInt32());
+            Assert.Equal("open", finalPullRequest.GetProperty("status").GetString());
             Assert.Equal(new[] { 3000, 5173 }, finalCreatedWorkspace.GetProperty("ports").EnumerateArray().Select(port => port.GetInt32()).ToArray());
             Assert.False(finalCreatedWorkspace.TryGetProperty("pid", out _));
             Assert.False(finalCreatedWorkspace.TryGetProperty("process", out _));
             Assert.False(finalCreatedWorkspace.TryGetProperty("status", out _));
+
+            var clearPullRequestResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceSetPullRequest, new
+            {
+                id = createdWorkspaceId,
+                clear = true
+            });
+            Assert.True(clearPullRequestResponse.Ok, clearPullRequestResponse.Error);
+            var clearPullRequest = System.Text.Json.JsonSerializer.SerializeToElement(clearPullRequestResponse.Result, AgentMuxJson.Options);
+            Assert.True(clearPullRequest.GetProperty("updated").GetBoolean());
+            Assert.Equal(System.Text.Json.JsonValueKind.Null, clearPullRequest.GetProperty("workspace").GetProperty("pullRequest").ValueKind);
+            Assert.DoesNotContain("pr:", window.ActiveWorkspaceMetaForSmokeTest, StringComparison.Ordinal);
 
             var clearPortsResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceSetPorts, new
             {
@@ -1030,6 +1109,16 @@ public sealed class MainWindowSmokeTests
                 Assert.True(persistedPorts.Ok, persistedPorts.Error);
                 Assert.Contains("ports: 3000, 5173", source.ActiveWorkspaceMetaForSmokeTest, StringComparison.Ordinal);
 
+                var persistedPullRequest = await source.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceSetPullRequest, new
+                {
+                    id = createdWorkspaceId,
+                    number = 123,
+                    status = "draft",
+                    url = "https://github.com/example/repo/pull/123"
+                });
+                Assert.True(persistedPullRequest.Ok, persistedPullRequest.Error);
+                Assert.Contains("pr: #123 draft", source.ActiveWorkspaceMetaForSmokeTest, StringComparison.Ordinal);
+
                 var selectDefaultWorkspace = await source.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceSelect, new
                 {
                     index = 0
@@ -1077,6 +1166,7 @@ public sealed class MainWindowSmokeTests
 
                 Assert.Equal(2, restored.WorkspaceCountForSmokeTest);
                 Assert.Equal("Persisted workspace", restored.ActiveWorkspaceTitleForSmokeTest);
+                Assert.Contains("pr: #123 draft", restored.ActiveWorkspaceMetaForSmokeTest, StringComparison.Ordinal);
                 Assert.Contains("ports: 3000, 5173", restored.ActiveWorkspaceMetaForSmokeTest, StringComparison.Ordinal);
                 Assert.Equal(2, restored.SurfaceCountForSmokeTest);
                 Assert.Equal(1, restored.ActiveSurfaceIndexForSmokeTest);
@@ -1093,6 +1183,10 @@ public sealed class MainWindowSmokeTests
                 var restoredWorkspace = Assert.Single(
                     restoredWorkspaceList.GetProperty("workspaces").EnumerateArray(),
                     workspace => workspace.GetProperty("id").GetString() == createdWorkspaceId);
+                var restoredPullRequest = restoredWorkspace.GetProperty("pullRequest");
+                Assert.Equal(123, restoredPullRequest.GetProperty("number").GetInt32());
+                Assert.Equal("draft", restoredPullRequest.GetProperty("status").GetString());
+                Assert.Equal("https://github.com/example/repo/pull/123", restoredPullRequest.GetProperty("url").GetString());
                 Assert.Equal(new[] { 3000, 5173 }, restoredWorkspace.GetProperty("ports").EnumerateArray().Select(port => port.GetInt32()).ToArray());
 
                 var selectFirstSurface = await restored.HandleRpcForSmokeTestAsync(AgentMuxMethods.SurfaceSelect, new
@@ -1178,6 +1272,48 @@ public sealed class MainWindowSmokeTests
             finally
             {
                 normalizedPortsWindow.Close();
+            }
+
+            var dirtyPullRequestRoot = System.IO.Path.Combine(root, "dirty-pull-request");
+            var dirtyPullRequestStore = new SessionSnapshotStore(dirtyPullRequestRoot);
+            await dirtyPullRequestStore.SaveAsync(new SessionSnapshot
+            {
+                Workspaces =
+                [
+                    new WorkspaceState
+                    {
+                        Title = "Dirty PR",
+                        PullRequest = new WorkspacePullRequest
+                        {
+                            Number = 123,
+                            Status = "stale",
+                            Url = "https://token@example.com/repo/pull/123"
+                        }
+                    }
+                ]
+            });
+            var normalizedPullRequestWindow = new MainWindow(
+                ShortcutSettings.Default(),
+                dirtyPullRequestStore,
+                restoreSessionOnStartup: true,
+                persistSession: false);
+            try
+            {
+                await normalizedPullRequestWindow.InitializeForSmokeTestAsync();
+                var dirtyPullRequestListResponse = await normalizedPullRequestWindow.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceList);
+                Assert.True(dirtyPullRequestListResponse.Ok, dirtyPullRequestListResponse.Error);
+                var dirtyPullRequestList = System.Text.Json.JsonSerializer.SerializeToElement(dirtyPullRequestListResponse.Result, AgentMuxJson.Options);
+                var dirtyPullRequestWorkspace = dirtyPullRequestList.GetProperty("workspaces").EnumerateArray().Single();
+                var normalizedPullRequest = dirtyPullRequestWorkspace.GetProperty("pullRequest");
+                Assert.Equal(123, normalizedPullRequest.GetProperty("number").GetInt32());
+                Assert.Equal("unknown", normalizedPullRequest.GetProperty("status").GetString());
+                Assert.Equal(System.Text.Json.JsonValueKind.Null, normalizedPullRequest.GetProperty("url").ValueKind);
+                Assert.Contains("pr: #123", normalizedPullRequestWindow.ActiveWorkspaceMetaForSmokeTest, StringComparison.Ordinal);
+                Assert.DoesNotContain("token@", normalizedPullRequestWindow.ActiveWorkspaceMetaForSmokeTest, StringComparison.Ordinal);
+            }
+            finally
+            {
+                normalizedPullRequestWindow.Close();
             }
         }
         finally

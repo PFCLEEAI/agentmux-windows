@@ -746,6 +746,110 @@ public static class Program
             return new CliRequest(AgentMuxMethods.WorkspaceSetPorts, parameters);
         }
 
+        if (args[0].Equals("pr", StringComparison.OrdinalIgnoreCase)
+            || args[0].Equals("pull-request", StringComparison.OrdinalIgnoreCase)
+            || args[0].Equals("pull", StringComparison.OrdinalIgnoreCase))
+        {
+            const string usage = "Usage: agentmux workspace pr [--index <n>|--id <workspace-id>] <number>|set <number>|--number <n>|clear [--status <unknown|open|draft|merged|closed>] [--url <url>]";
+            var named = ParseNamed(args[1..]);
+            if (named.TryGetValue("index", out var indexValue) && !TryParseNonNegativeInt(indexValue, out _))
+            {
+                error = usage;
+                return null;
+            }
+
+            var hasIndex = named.ContainsKey("index");
+            var hasIdFlag = named.ContainsKey("id");
+            var hasId = named.TryGetValue("id", out var idValue)
+                && !string.IsNullOrWhiteSpace(idValue)
+                && !idValue.Equals("true", StringComparison.OrdinalIgnoreCase);
+            if (hasIdFlag && !hasId)
+            {
+                error = usage;
+                return null;
+            }
+
+            if (hasIndex && hasId)
+            {
+                error = usage;
+                return null;
+            }
+
+            var positional = ReadPositional(named);
+            var clear = positional.Any(value => value.Equals("clear", StringComparison.OrdinalIgnoreCase))
+                || (named.TryGetValue("clear", out var clearValue) && clearValue.Equals("true", StringComparison.OrdinalIgnoreCase));
+
+            var parameters = new Dictionary<string, object?>();
+            if (clear)
+            {
+                var unexpected = named.ContainsKey("number")
+                    || named.ContainsKey("status")
+                    || named.ContainsKey("url")
+                    || positional.Any(value => !value.Equals("clear", StringComparison.OrdinalIgnoreCase));
+                if (unexpected)
+                {
+                    error = usage;
+                    return null;
+                }
+
+                parameters["clear"] = true;
+            }
+            else
+            {
+                var numberTokens = positional
+                    .Where(value => !value.Equals("set", StringComparison.OrdinalIgnoreCase))
+                    .ToArray();
+                var hasNamedNumber = named.TryGetValue("number", out var parsedNumberValue);
+                var numberText = hasNamedNumber
+                    ? parsedNumberValue
+                    : numberTokens.Length == 1 ? numberTokens[0] : null;
+                if (numberText is null
+                    || (hasNamedNumber && numberTokens.Length > 0)
+                    || numberTokens.Length > 1
+                    || !TryParsePullRequestNumber(numberText, out var pullRequestNumber))
+                {
+                    error = usage;
+                    return null;
+                }
+
+                parameters["number"] = pullRequestNumber;
+                if (named.TryGetValue("status", out var statusValue))
+                {
+                    if (!TryNormalizePullRequestStatus(statusValue, out var status))
+                    {
+                        error = usage;
+                        return null;
+                    }
+
+                    parameters["status"] = status;
+                }
+
+                if (named.TryGetValue("url", out var urlValue))
+                {
+                    if (!TryNormalizePullRequestUrl(urlValue, out var url))
+                    {
+                        error = usage;
+                        return null;
+                    }
+
+                    parameters["url"] = url;
+                }
+            }
+
+            if (hasIndex)
+            {
+                parameters["index"] = int.Parse(indexValue!, CultureInfo.InvariantCulture);
+            }
+
+            if (hasId)
+            {
+                parameters["id"] = idValue;
+            }
+
+            error = "";
+            return new CliRequest(AgentMuxMethods.WorkspaceSetPullRequest, parameters);
+        }
+
         error = $"Unknown workspace command: {args[0]}";
         return null;
     }
@@ -1106,6 +1210,53 @@ public static class Program
         return true;
     }
 
+    private static bool TryParsePullRequestNumber(string? value, out int number)
+    {
+        return int.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out number)
+            && number is >= 1 and <= 9999999;
+    }
+
+    private static bool TryNormalizePullRequestStatus(string? value, out string status)
+    {
+        status = "";
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var normalized = value.Trim().ToLowerInvariant();
+        if (normalized is not ("unknown" or "open" or "draft" or "merged" or "closed"))
+        {
+            return false;
+        }
+
+        status = normalized;
+        return true;
+    }
+
+    private static bool TryNormalizePullRequestUrl(string? value, out string url)
+    {
+        url = "";
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var trimmed = value.Trim();
+        if (trimmed.Length > 2048
+            || !Uri.TryCreate(trimmed, UriKind.Absolute, out var uri)
+            || uri.Scheme is not ("http" or "https")
+            || string.IsNullOrWhiteSpace(uri.Host)
+            || !string.IsNullOrEmpty(uri.UserInfo)
+            || uri.AbsoluteUri.Length > 2048)
+        {
+            return false;
+        }
+
+        url = uri.AbsoluteUri;
+        return true;
+    }
+
     private static bool IsBrowserWaitState(string value)
     {
         return value.Equals("visible", StringComparison.OrdinalIgnoreCase)
@@ -1194,6 +1345,7 @@ public static class Program
           agentmux workspace list
           agentmux workspace create --title "API" --cwd "C:\src\api"
           agentmux workspace select --index 0
+          agentmux workspace pr 123 --status open --url https://github.com/org/repo/pull/123
           agentmux workspace ports 3000 5173
           agentmux surface list
           agentmux surface create --title "Tests"

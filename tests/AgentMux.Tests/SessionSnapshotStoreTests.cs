@@ -35,6 +35,12 @@ public sealed class SessionSnapshotStoreTests
                 new WorkspaceState
                 {
                     Title = "API",
+                    PullRequest = new WorkspacePullRequest
+                    {
+                        Number = 123,
+                        Status = "open",
+                        Url = "https://github.com/example/repo/pull/123"
+                    },
                     Ports = [3000, 5173],
                     Surfaces = [surface]
                 }
@@ -47,6 +53,11 @@ public sealed class SessionSnapshotStoreTests
         Assert.NotNull(loaded);
         Assert.Single(loaded.Workspaces);
         Assert.Equal("API", loaded.Workspaces[0].Title);
+        var pullRequest = loaded.Workspaces[0].PullRequest;
+        Assert.NotNull(pullRequest);
+        Assert.Equal(123, pullRequest.Number);
+        Assert.Equal("open", pullRequest.Status);
+        Assert.Equal("https://github.com/example/repo/pull/123", pullRequest.Url);
         Assert.Equal(new[] { 3000, 5173 }, loaded.Workspaces[0].Ports);
         Assert.Equal(paneId, loaded.Workspaces[0].Surfaces[0].ActivePaneId);
         Assert.Equal(paneId, loaded.Workspaces[0].Surfaces[0].Root.Pane?.Id);

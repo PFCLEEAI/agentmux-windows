@@ -6,6 +6,8 @@ namespace AgentMux.Tests;
 
 public sealed class CliWorkspaceCommandTests
 {
+    private const string PullRequestUsage = "Usage: agentmux workspace pr [--index <n>|--id <workspace-id>] <number>|set <number>|--number <n>|clear [--status <unknown|open|draft|merged|closed>] [--url <url>]";
+
     [Theory]
     [InlineData("list")]
     [InlineData("ls")]
@@ -151,6 +153,67 @@ public sealed class CliWorkspaceCommandTests
     }
 
     [Fact]
+    public void WorkspaceCommandParsesPullRequestByPosition()
+    {
+        var request = Program.ParseWorkspaceRequestForTests(["pr", "123"], out var error);
+
+        Assert.Equal("", error);
+        Assert.NotNull(request);
+        Assert.Equal(AgentMuxMethods.WorkspaceSetPullRequest, request.Method);
+
+        var parameters = JsonSerializer.SerializeToElement(request.Parameters, AgentMuxJson.Options);
+        Assert.Equal(123, parameters.GetProperty("number").GetInt32());
+        Assert.False(parameters.TryGetProperty("status", out _));
+        Assert.False(parameters.TryGetProperty("url", out _));
+    }
+
+    [Fact]
+    public void WorkspaceCommandParsesPullRequestSetWithMetadataAndTarget()
+    {
+        var request = Program.ParseWorkspaceRequestForTests(
+            ["pull-request", "set", "--index", "1", "123", "--status", "OPEN", "--url", "https://github.com/example/repo/pull/123"],
+            out var error);
+
+        Assert.Equal("", error);
+        Assert.NotNull(request);
+        Assert.Equal(AgentMuxMethods.WorkspaceSetPullRequest, request.Method);
+
+        var parameters = JsonSerializer.SerializeToElement(request.Parameters, AgentMuxJson.Options);
+        Assert.Equal(1, parameters.GetProperty("index").GetInt32());
+        Assert.Equal(123, parameters.GetProperty("number").GetInt32());
+        Assert.Equal("open", parameters.GetProperty("status").GetString());
+        Assert.Equal("https://github.com/example/repo/pull/123", parameters.GetProperty("url").GetString());
+    }
+
+    [Fact]
+    public void WorkspaceCommandParsesPullRequestNamedNumberWithId()
+    {
+        var request = Program.ParseWorkspaceRequestForTests(["pull", "--id", "workspace-1", "--number", "456"], out var error);
+
+        Assert.Equal("", error);
+        Assert.NotNull(request);
+        Assert.Equal(AgentMuxMethods.WorkspaceSetPullRequest, request.Method);
+
+        var parameters = JsonSerializer.SerializeToElement(request.Parameters, AgentMuxJson.Options);
+        Assert.Equal("workspace-1", parameters.GetProperty("id").GetString());
+        Assert.Equal(456, parameters.GetProperty("number").GetInt32());
+    }
+
+    [Fact]
+    public void WorkspaceCommandParsesPullRequestClearWithId()
+    {
+        var request = Program.ParseWorkspaceRequestForTests(["pr", "clear", "--id", "workspace-1"], out var error);
+
+        Assert.Equal("", error);
+        Assert.NotNull(request);
+        Assert.Equal(AgentMuxMethods.WorkspaceSetPullRequest, request.Method);
+
+        var parameters = JsonSerializer.SerializeToElement(request.Parameters, AgentMuxJson.Options);
+        Assert.Equal("workspace-1", parameters.GetProperty("id").GetString());
+        Assert.True(parameters.GetProperty("clear").GetBoolean());
+    }
+
+    [Fact]
     public void WorkspaceCommandRejectsMissingAction()
     {
         var request = Program.ParseWorkspaceRequestForTests([], out var error);
@@ -236,6 +299,76 @@ public sealed class CliWorkspaceCommandTests
 
         Assert.Null(request);
         Assert.Equal("Usage: agentmux workspace ports [--index <n>|--id <workspace-id>] <port...>|--ports <csv>|clear", error);
+    }
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("-1")]
+    [InlineData("abc")]
+    [InlineData("10000000")]
+    public void WorkspaceCommandRejectsInvalidPullRequestNumber(string number)
+    {
+        var request = Program.ParseWorkspaceRequestForTests(["pr", number], out var error);
+
+        Assert.Null(request);
+        Assert.Equal(PullRequestUsage, error);
+    }
+
+    [Fact]
+    public void WorkspaceCommandRejectsInvalidPullRequestStatus()
+    {
+        var request = Program.ParseWorkspaceRequestForTests(["pr", "123", "--status", "stale"], out var error);
+
+        Assert.Null(request);
+        Assert.Equal(PullRequestUsage, error);
+    }
+
+    [Theory]
+    [InlineData("ftp://github.com/example/repo/pull/123")]
+    [InlineData("https://token@example.com/repo/pull/123")]
+    [InlineData("not-a-url")]
+    public void WorkspaceCommandRejectsInvalidPullRequestUrl(string url)
+    {
+        var request = Program.ParseWorkspaceRequestForTests(["pr", "123", "--url", url], out var error);
+
+        Assert.Null(request);
+        Assert.Equal(PullRequestUsage, error);
+    }
+
+    [Fact]
+    public void WorkspaceCommandRejectsAmbiguousPullRequestTarget()
+    {
+        var request = Program.ParseWorkspaceRequestForTests(["pr", "--index", "0", "--id", "workspace-1", "123"], out var error);
+
+        Assert.Null(request);
+        Assert.Equal(PullRequestUsage, error);
+    }
+
+    [Fact]
+    public void WorkspaceCommandRejectsBarePullRequestIdFlag()
+    {
+        var request = Program.ParseWorkspaceRequestForTests(["pr", "--id"], out var error);
+
+        Assert.Null(request);
+        Assert.Equal(PullRequestUsage, error);
+    }
+
+    [Fact]
+    public void WorkspaceCommandRejectsAmbiguousPullRequestNumberSources()
+    {
+        var request = Program.ParseWorkspaceRequestForTests(["pr", "123", "--number", "456"], out var error);
+
+        Assert.Null(request);
+        Assert.Equal(PullRequestUsage, error);
+    }
+
+    [Fact]
+    public void WorkspaceCommandRejectsPullRequestClearWithMetadata()
+    {
+        var request = Program.ParseWorkspaceRequestForTests(["pr", "clear", "--status", "open"], out var error);
+
+        Assert.Null(request);
+        Assert.Equal(PullRequestUsage, error);
     }
 
     [Fact]

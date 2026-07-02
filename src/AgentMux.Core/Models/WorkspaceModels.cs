@@ -15,6 +15,13 @@ public sealed class WorkspaceState
     public bool IsGitDirty { get; set; }
     [JsonIgnore]
     public string? GitBranchLabel => string.IsNullOrWhiteSpace(GitBranch) ? null : $"branch: {GitBranch}";
+    public WorkspacePullRequest? PullRequest { get; set; }
+    [JsonIgnore]
+    public string? PullRequestLabel => PullRequest is { Number: > 0 } pullRequest
+        ? string.IsNullOrWhiteSpace(pullRequest.Status) || pullRequest.Status.Equals("unknown", StringComparison.OrdinalIgnoreCase)
+            ? $"pr: #{pullRequest.Number}"
+            : $"pr: #{pullRequest.Number} {pullRequest.Status}"
+        : null;
     public List<int> Ports { get; set; } = [];
     [JsonIgnore]
     public string? PortsLabel => Ports.Count == 0 ? null : $"ports: {string.Join(", ", Ports)}";
@@ -46,6 +53,13 @@ public sealed class WorkspaceState
             ? compact
             : compact[..(MaxLatestNotificationPreviewLength - 3)] + "...";
     }
+}
+
+public sealed class WorkspacePullRequest
+{
+    public int Number { get; set; }
+    public string Status { get; set; } = "unknown";
+    public string? Url { get; set; }
 }
 
 public sealed class SurfaceState

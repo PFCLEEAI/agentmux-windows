@@ -71,6 +71,31 @@ public sealed class WorkspaceModelTests
         Assert.Equal(new[] { 3000, 5173 }, loaded.Ports);
     }
 
+    [Fact]
+    public void WorkspacePullRequestRoundTripsAndLabelIsDisplayOnly()
+    {
+        var workspace = new WorkspaceState
+        {
+            PullRequest = new WorkspacePullRequest
+            {
+                Number = 123,
+                Status = "open",
+                Url = "https://github.com/example/repo/pull/123"
+            }
+        };
+
+        var json = JsonSerializer.Serialize(workspace, AgentMuxJson.Options);
+        var loaded = JsonSerializer.Deserialize<WorkspaceState>(json, AgentMuxJson.Options);
+
+        Assert.Equal("pr: #123 open", workspace.PullRequestLabel);
+        Assert.Contains("\"pullRequest\":{\"number\":123,\"status\":\"open\",\"url\":\"https://github.com/example/repo/pull/123\"}", json, StringComparison.Ordinal);
+        Assert.DoesNotContain("pullRequestLabel", json, StringComparison.Ordinal);
+        Assert.NotNull(loaded?.PullRequest);
+        Assert.Equal(123, loaded.PullRequest.Number);
+        Assert.Equal("open", loaded.PullRequest.Status);
+        Assert.Equal("https://github.com/example/repo/pull/123", loaded.PullRequest.Url);
+    }
+
     [Theory]
     [InlineData(SplitDirection.Right)]
     [InlineData(SplitDirection.Down)]

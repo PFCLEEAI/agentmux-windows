@@ -292,6 +292,7 @@ public partial class MainWindow : Window
 
     private static void NormalizeWorkspace(WorkspaceState workspace)
     {
+        workspace.PullRequest = NormalizePullRequest(workspace.PullRequest);
         workspace.Ports = NormalizePorts(workspace.Ports);
         workspace.Surfaces ??= [];
         if (workspace.Surfaces.Count == 0)
@@ -506,6 +507,7 @@ public partial class MainWindow : Window
             AgentMuxMethods.WorkspaceCreate => AgentMuxResponse.Success(request.Id, HandleWorkspaceCreate(request.Params)),
             AgentMuxMethods.WorkspaceSelect => AgentMuxResponse.Success(request.Id, HandleWorkspaceSelect(request.Params)),
             AgentMuxMethods.WorkspaceSetPorts => AgentMuxResponse.Success(request.Id, HandleWorkspaceSetPorts(request.Params)),
+            AgentMuxMethods.WorkspaceSetPullRequest => AgentMuxResponse.Success(request.Id, HandleWorkspaceSetPullRequest(request.Params)),
             AgentMuxMethods.SurfaceList => AgentMuxResponse.Success(request.Id, BuildSurfaceList()),
             AgentMuxMethods.SurfaceCreate => AgentMuxResponse.Success(request.Id, HandleSurfaceCreate(request.Params)),
             AgentMuxMethods.SurfaceSelect => AgentMuxResponse.Success(request.Id, HandleSurfaceSelect(request.Params)),
@@ -652,6 +654,38 @@ public partial class MainWindow : Window
 
         var workspace = _workspaces[selectedIndex];
         workspace.Ports = ports;
+        QueueSessionSave();
+        return new
+        {
+            updated = true,
+            workspace = BuildWorkspaceDto(workspace, selectedIndex)
+        };
+    }
+
+    private object HandleWorkspaceSetPullRequest(JsonElement? parameters)
+    {
+        if (!TryReadOptionalWorkspaceTarget(parameters, out var index, out var id, out var targetError))
+        {
+            return new { updated = false, reason = targetError };
+        }
+
+        if (!TryReadWorkspacePullRequest(parameters, out var pullRequest, out var pullRequestError))
+        {
+            return new { updated = false, reason = pullRequestError };
+        }
+
+        var selectedIndex = ResolveWorkspaceIndex(index, id);
+        if (selectedIndex < 0 || selectedIndex >= _workspaces.Count)
+        {
+            return new
+            {
+                updated = false,
+                reason = index.HasValue ? "index out of range" : "workspace not found"
+            };
+        }
+
+        var workspace = _workspaces[selectedIndex];
+        workspace.PullRequest = pullRequest;
         QueueSessionSave();
         return new
         {
@@ -1814,9 +1848,10 @@ public partial class MainWindow : Window
         var activePane = ActivePane();
         WorkspaceTitle.Text = workspace.Title;
         var branchMeta = string.IsNullOrWhiteSpace(workspace.GitBranchLabel) ? "" : $"  |  {workspace.GitBranchLabel}";
+        var pullRequestMeta = string.IsNullOrWhiteSpace(workspace.PullRequestLabel) ? "" : $"  |  {workspace.PullRequestLabel}";
         var portsMeta = string.IsNullOrWhiteSpace(workspace.PortsLabel) ? "" : $"  |  {workspace.PortsLabel}";
         var notificationMeta = string.IsNullOrWhiteSpace(workspace.LatestNotificationLabel) ? "" : $"  |  {workspace.LatestNotificationLabel}";
-        WorkspaceMeta.Text = $"{workspace.WorkingDirectory}{branchMeta}{portsMeta}{notificationMeta}  |  surfaces: {workspace.Surfaces.Count}  |  panes: {CountPanes(surface.Root)}  |  unread: {workspace.UnreadCount}";
+        WorkspaceMeta.Text = $"{workspace.WorkingDirectory}{branchMeta}{pullRequestMeta}{portsMeta}{notificationMeta}  |  surfaces: {workspace.Surfaces.Count}  |  panes: {CountPanes(surface.Root)}  |  unread: {workspace.UnreadCount}";
         RefreshSurfaceTabs(workspace);
         var activeSessionRunning = activePane is not null
             && _ptySessions.TryGetValue(activePane.Id, out var activeSession)
@@ -2473,6 +2508,7 @@ public partial class MainWindow : Window
             isActive = index == _activeWorkspaceIndex,
             workspace.WorkingDirectory,
             gitBranch = workspace.GitBranch,
+            pullRequest = BuildWorkspacePullRequestDto(workspace.PullRequest),
             ports = workspace.Ports.ToArray(),
             workspace.UnreadCount,
             latestNotification = workspace.LatestNotificationPreview,
@@ -2483,6 +2519,18 @@ public partial class MainWindow : Window
             paneCount = CountPanes(surface.Root),
             browserPaneCount = CountPaneKind(surface.Root, PaneKind.Browser)
         };
+    }
+
+    private static object? BuildWorkspacePullRequestDto(WorkspacePullRequest? pullRequest)
+    {
+        return pullRequest is null
+            ? null
+            : new
+            {
+                pullRequest.Number,
+                pullRequest.Status,
+                pullRequest.Url
+            };
     }
 
     private static object BuildSurfaceDto(WorkspaceState workspace, SurfaceState surface, int index)
@@ -3065,6 +3113,78 @@ public partial class MainWindow : Window
         return true;
     }
 
+    private static bool TryReadWorkspacePullRequest(JsonElement? parameters, out WorkspacePullRequest? pullRequest, out string error)
+    {
+        pullRequest = null;
+        error = "";
+        if (parameters is not { ValueKind: JsonValueKind.Object } element)
+        {
+            error = "pull request number is required";
+            return false;
+        }
+
+        if (element.TryGetProperty("clear", out var clearProperty)
+            && clearProperty.ValueKind == JsonValueKind.True)
+        {
+            if (element.TryGetProperty("number", out _)
+                || element.TryGetProperty("status", out _)
+                || element.TryGetProperty("url", out _))
+            {
+                error = "clear cannot include pull request metadata";
+                return false;
+            }
+
+            return true;
+        }
+
+        if (!element.TryGetProperty("number", out var numberProperty)
+            || numberProperty.ValueKind != JsonValueKind.Number
+            || !numberProperty.TryGetInt32(out var number)
+            || number is < 1 or > 9999999)
+        {
+            error = "pull request number must be an integer between 1 and 9999999";
+            return false;
+        }
+
+        var status = "unknown";
+        if (element.TryGetProperty("status", out var statusProperty))
+        {
+            if (statusProperty.ValueKind != JsonValueKind.String)
+            {
+                error = "pull request status must be one of unknown, open, draft, merged, closed";
+                return false;
+            }
+
+            var parsedStatus = NormalizePullRequestStatus(statusProperty.GetString());
+            if (parsedStatus is null)
+            {
+                error = "pull request status must be one of unknown, open, draft, merged, closed";
+                return false;
+            }
+
+            status = parsedStatus;
+        }
+
+        string? url = null;
+        if (element.TryGetProperty("url", out var urlProperty))
+        {
+            if (urlProperty.ValueKind != JsonValueKind.String
+                || !TryNormalizePullRequestUrl(urlProperty.GetString(), out url, strict: true))
+            {
+                error = "pull request url must be an absolute http or https URL without credentials";
+                return false;
+            }
+        }
+
+        pullRequest = new WorkspacePullRequest
+        {
+            Number = number,
+            Status = status,
+            Url = url
+        };
+        return true;
+    }
+
     private static bool TryReadWorkspacePorts(JsonElement? parameters, out List<int> ports, out string error)
     {
         ports = [];
@@ -3116,6 +3236,64 @@ public partial class MainWindow : Window
 
         _activeWorkspaceIndex = Math.Clamp(_activeWorkspaceIndex, 0, _workspaces.Count - 1);
         return _activeWorkspaceIndex;
+    }
+
+    private static WorkspacePullRequest? NormalizePullRequest(WorkspacePullRequest? pullRequest)
+    {
+        if (pullRequest is null || pullRequest.Number is < 1 or > 9999999)
+        {
+            return null;
+        }
+
+        var status = NormalizePullRequestStatus(pullRequest.Status) ?? "unknown";
+        TryNormalizePullRequestUrl(pullRequest.Url, out var url, strict: false);
+        return new WorkspacePullRequest
+        {
+            Number = pullRequest.Number,
+            Status = status,
+            Url = url
+        };
+    }
+
+    private static string? NormalizePullRequestStatus(string? status)
+    {
+        if (string.IsNullOrWhiteSpace(status))
+        {
+            return "unknown";
+        }
+
+        var normalized = status.Trim().ToLowerInvariant();
+        return normalized is "unknown" or "open" or "draft" or "merged" or "closed"
+            ? normalized
+            : null;
+    }
+
+    private static bool TryNormalizePullRequestUrl(string? value, out string? normalizedUrl, bool strict)
+    {
+        normalizedUrl = null;
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return !strict;
+        }
+
+        var trimmed = value.Trim();
+        if (trimmed.Length > 2048
+            || !Uri.TryCreate(trimmed, UriKind.Absolute, out var uri)
+            || uri.Scheme is not ("http" or "https")
+            || string.IsNullOrWhiteSpace(uri.Host)
+            || !string.IsNullOrEmpty(uri.UserInfo))
+        {
+            return false;
+        }
+
+        var absoluteUrl = uri.AbsoluteUri;
+        if (absoluteUrl.Length > 2048)
+        {
+            return false;
+        }
+
+        normalizedUrl = absoluteUrl;
+        return true;
     }
 
     private static List<int> NormalizePorts(IEnumerable<int>? ports)

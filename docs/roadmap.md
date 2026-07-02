@@ -17,7 +17,7 @@
 ## Sprint 2 - Workspace UI
 
 - Workspace sidebar. Implemented in WPF shell.
-- Workspace switching. Preview implemented with `workspace.list`, `workspace.create`, `workspace.select`, `workspace.set_ports`, compact workspace DTOs, index/id selection, sidebar selected-state updates, render switching, lightweight `.git/HEAD` branch metadata, explicit persisted port annotations, latest unread notification preview metadata, and hosted app-smoke coverage.
+- Workspace switching. Preview implemented with `workspace.list`, `workspace.create`, `workspace.select`, `workspace.set_pull_request`, `workspace.set_ports`, compact workspace DTOs, index/id selection, sidebar selected-state updates, render switching, lightweight `.git/HEAD` branch metadata, explicit persisted PR annotations, explicit persisted port annotations, latest unread notification preview metadata, and hosted app-smoke coverage.
 - Surface tabs. Preview implemented with WPF active-workspace tabs, `+ Surface`, `surface.list`, `surface.create`, `surface.select`, and hosted app-smoke coverage.
 - Split pane layout. Implemented as recursive WPF panes with persisted split ratios.
 - WebView2/xterm renderer bridge. Preview implemented with WPF fallback; hosted CI proves runtime text, geometry, xterm runtime input events, renderer bridge input, and synthetic DOM keydown routing into the active terminal pane's ConPTY input path, plus PNG artifacts. Physical keyboard, native focus, and IME proof remain future/manual desktop work.
