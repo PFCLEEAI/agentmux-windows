@@ -67,6 +67,7 @@ public static class AgentMuxMethods
     public const string ClosePane = "surface.close_pane";
     public const string OpenUrl = "surface.open_url";
     public const string BrowserEval = "surface.eval_js";
+    public const string BrowserText = "surface.browser_text";
     public const string BrowserClick = "surface.click_selector";
     public const string BrowserFill = "surface.fill_selector";
     public const string BrowserType = "surface.browser_type_text";

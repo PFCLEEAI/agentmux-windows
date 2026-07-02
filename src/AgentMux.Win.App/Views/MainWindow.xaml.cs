@@ -504,6 +504,7 @@ public partial class MainWindow : Window
             AgentMuxMethods.ClosePane => AgentMuxResponse.Success(request.Id, HandleClosePane()),
             AgentMuxMethods.OpenUrl => AgentMuxResponse.Success(request.Id, HandleOpenUrl(request.Params)),
             AgentMuxMethods.BrowserEval => AgentMuxResponse.Success(request.Id, await HandleBrowserEvalAsync(request.Params).ConfigureAwait(true)),
+            AgentMuxMethods.BrowserText => AgentMuxResponse.Success(request.Id, await HandleBrowserTextAsync(request.Params).ConfigureAwait(true)),
             AgentMuxMethods.BrowserClick => AgentMuxResponse.Success(request.Id, await HandleBrowserClickAsync(request.Params).ConfigureAwait(true)),
             AgentMuxMethods.BrowserFill => AgentMuxResponse.Success(request.Id, await HandleBrowserFillAsync(request.Params).ConfigureAwait(true)),
             AgentMuxMethods.BrowserType => AgentMuxResponse.Success(request.Id, await HandleBrowserTypeAsync(request.Params).ConfigureAwait(true)),
@@ -942,6 +943,42 @@ public partial class MainWindow : Window
         }
 
         return await RunBrowserScriptAsync(view => view.EvaluateScriptAsync(parsed.Script)).ConfigureAwait(true);
+    }
+
+    private async Task<object> HandleBrowserTextAsync(JsonElement? parameters)
+    {
+        var parsed = Deserialize<BrowserTextParams>(parameters);
+        if (parsed?.MaxChars is <= 0)
+        {
+            return new { ok = false, reason = "maxChars must be positive", maxChars = parsed.MaxChars };
+        }
+
+        var pane = ActivePane();
+        if (!TryGetActiveBrowserView(out var view, out var reason))
+        {
+            return new { ok = false, reason };
+        }
+
+        try
+        {
+            var resultJson = await view.ReadTextAsync(
+                parsed?.Selector,
+                parsed?.Frame,
+                parsed?.MaxChars,
+                pane?.Id).ConfigureAwait(true);
+            var result = ParseScriptJson(resultJson);
+            if (result is JsonElement { ValueKind: JsonValueKind.Object } element
+                && element.TryGetProperty("ok", out _))
+            {
+                return element.Clone();
+            }
+
+            return new { ok = true, result, paneId = pane?.Id };
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or ArgumentException or System.Runtime.InteropServices.COMException)
+        {
+            return new { ok = false, reason = ex.Message, paneId = pane?.Id };
+        }
     }
 
     private async Task<object> HandleBrowserClickAsync(JsonElement? parameters)
@@ -2282,6 +2319,7 @@ public partial class MainWindow : Window
     private static bool IsBrowserAutomationMethod(string method)
     {
         return method is AgentMuxMethods.BrowserEval
+            or AgentMuxMethods.BrowserText
             or AgentMuxMethods.BrowserClick
             or AgentMuxMethods.BrowserFill
             or AgentMuxMethods.BrowserType
@@ -2969,6 +3007,13 @@ public partial class MainWindow : Window
     private sealed class BrowserEvalParams
     {
         public string? Script { get; set; }
+    }
+
+    private sealed class BrowserTextParams
+    {
+        public string? Selector { get; set; }
+        public string? Frame { get; set; }
+        public int? MaxChars { get; set; }
     }
 
     private sealed class BrowserSelectorParams

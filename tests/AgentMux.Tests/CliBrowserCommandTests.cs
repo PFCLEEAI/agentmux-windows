@@ -44,6 +44,78 @@ public sealed class CliBrowserCommandTests
         Assert.True(Path.IsPathFullyQualified(parameters.GetProperty("path").GetString()!));
     }
 
+    [Theory]
+    [InlineData("text")]
+    [InlineData("inner-text")]
+    public void BrowserTextParsesSelectorFrameAndMaxChars(string command)
+    {
+        var request = Program.ParseBrowserRequestForTests([
+            command,
+            "--selector",
+            "main",
+            "--frame",
+            "agentmux-child-frame",
+            "--max-chars",
+            "250"
+        ], out var error);
+
+        Assert.Equal("", error);
+        Assert.NotNull(request);
+        Assert.Equal(AgentMuxMethods.BrowserText, request.Method);
+        var parameters = JsonSerializer.SerializeToElement(request.Parameters, AgentMuxJson.Options);
+        Assert.Equal("main", parameters.GetProperty("selector").GetString());
+        Assert.Equal("agentmux-child-frame", parameters.GetProperty("frame").GetString());
+        Assert.Equal(250, parameters.GetProperty("maxChars").GetInt32());
+    }
+
+    [Fact]
+    public void BrowserTextParsesDefaults()
+    {
+        var request = Program.ParseBrowserRequestForTests(["text"], out var error);
+
+        Assert.Equal("", error);
+        Assert.NotNull(request);
+        Assert.Equal(AgentMuxMethods.BrowserText, request.Method);
+        var parameters = JsonSerializer.SerializeToElement(request.Parameters, AgentMuxJson.Options);
+        Assert.Equal(JsonValueKind.Null, parameters.GetProperty("selector").ValueKind);
+        Assert.Equal(JsonValueKind.Null, parameters.GetProperty("frame").ValueKind);
+        Assert.Equal(JsonValueKind.Null, parameters.GetProperty("maxChars").ValueKind);
+    }
+
+    [Fact]
+    public void BrowserTextParsesPositionalSelector()
+    {
+        var request = Program.ParseBrowserRequestForTests(["text", "main", ".content"], out var error);
+
+        Assert.Equal("", error);
+        Assert.NotNull(request);
+        Assert.Equal(AgentMuxMethods.BrowserText, request.Method);
+        var parameters = JsonSerializer.SerializeToElement(request.Parameters, AgentMuxJson.Options);
+        Assert.Equal("main .content", parameters.GetProperty("selector").GetString());
+    }
+
+    [Fact]
+    public void BrowserTextFrameOptionRequiresValue()
+    {
+        var request = Program.ParseBrowserRequestForTests(["text", "--frame"], out var error);
+
+        Assert.Null(request);
+        Assert.Equal("Usage: agentmux browser text [--selector <css>] [--frame <name-or-id>] [--max-chars <count>]", error);
+    }
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("-1")]
+    [InlineData("abc")]
+    [InlineData("true")]
+    public void BrowserTextRejectsInvalidMaxChars(string maxChars)
+    {
+        var request = Program.ParseBrowserRequestForTests(["text", "--max-chars", maxChars], out var error);
+
+        Assert.Null(request);
+        Assert.Equal("Usage: agentmux browser text [--selector <css>] [--frame <name-or-id>] [--max-chars <count>]", error);
+    }
+
     [Fact]
     public void BrowserActionsKeepOptionalFrameTarget()
     {

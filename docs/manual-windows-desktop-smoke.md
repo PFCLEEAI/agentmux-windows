@@ -208,6 +208,7 @@ Then run:
 .\cli\agentmux.exe browser wait-for-selector h1 --timeout-ms 10000
 .\cli\agentmux.exe browser wait-load --state load --timeout-ms 10000
 .\cli\agentmux.exe browser eval "document.title"
+.\cli\agentmux.exe browser text --selector h1
 .\cli\agentmux.exe browser fill "#prompt" "agentmux desktop smoke"
 .\cli\agentmux.exe browser click "#submit"
 .\cli\agentmux.exe browser type "#prompt" " typed"
@@ -221,6 +222,7 @@ Expected:
 - The local `AgentMux Desktop Smoke` page loads without network access.
 - The wait command returns success.
 - Eval returns the visible page title.
+- Text extraction returns the visible heading.
 - Fill/click/type/press update the visible page.
 - Screenshot file exists and shows the browser content.
 

@@ -175,6 +175,33 @@ public static class Program
             return new CliRequest(AgentMuxMethods.BrowserEval, new { script });
         }
 
+        if (args[0].Equals("text", StringComparison.OrdinalIgnoreCase)
+            || args[0].Equals("inner-text", StringComparison.OrdinalIgnoreCase))
+        {
+            const string usage = "Usage: agentmux browser text [--selector <css>] [--frame <name-or-id>] [--max-chars <count>]";
+            var named = ParseNamed(args[1..]);
+            var selector = NamedOrJoined(named, "selector");
+            if (!TryReadOptionalFrame(named, usage, out var frame, out error))
+            {
+                return null;
+            }
+
+            int? maxChars = null;
+            if (named.TryGetValue("max-chars", out var maxCharsValue))
+            {
+                if (!TryParsePositiveInt(maxCharsValue, out var parsedMaxChars))
+                {
+                    error = usage;
+                    return null;
+                }
+
+                maxChars = parsedMaxChars;
+            }
+
+            error = "";
+            return new CliRequest(AgentMuxMethods.BrowserText, new { selector, frame, maxChars });
+        }
+
         if (args[0].Equals("click", StringComparison.OrdinalIgnoreCase))
         {
             var named = ParseNamed(args[1..]);
@@ -1081,6 +1108,7 @@ public static class Program
           agentmux open-url https://example.com
           agentmux browser open https://example.com
           agentmux browser eval "document.title"
+          agentmux browser text --selector "main" --max-chars 10000
           agentmux browser click "#submit"
           agentmux browser click --frame agentmux-child-frame "#submit"
           agentmux browser fill "#prompt" "write tests"

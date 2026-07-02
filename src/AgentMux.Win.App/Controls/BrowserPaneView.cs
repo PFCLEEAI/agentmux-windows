@@ -17,6 +17,8 @@ internal sealed class BrowserPaneView : Grid, IDisposable
     private const string DefaultUrl = "about:blank";
     private const int MaxNetworkEventCount = 200;
     private const int MaxResponseBodyChars = 1_000_000;
+    private const int DefaultBrowserTextChars = 10_000;
+    private const int MaxBrowserTextChars = 100_000;
     private const int MaxConsoleEventCount = 200;
     private const int MaxConsoleMessageChars = 4_096;
     private const int DefaultWaitForSelectorTimeoutMs = 5_000;
@@ -223,6 +225,65 @@ internal sealed class BrowserPaneView : Grid, IDisposable
         var result = await _webView.CoreWebView2!.ExecuteScriptAsync(script).ConfigureAwait(true);
         await WaitForNavigationAsync(allowStartDelay: true).ConfigureAwait(true);
         return result;
+    }
+
+    public async Task<string> ReadTextAsync(string? selector = null, string? frame = null, int? maxChars = null, string? paneId = null)
+    {
+        if (maxChars is <= 0)
+        {
+            return JsonSerializer.Serialize(new { ok = false, reason = "maxChars must be positive", maxChars }, AgentMuxJson.Options);
+        }
+
+        var cappedMaxChars = maxChars is > 0
+            ? Math.Min(maxChars.Value, MaxBrowserTextChars)
+            : DefaultBrowserTextChars;
+        await EnsureReadyAsync().ConfigureAwait(true);
+
+        return await _webView.CoreWebView2!.ExecuteScriptAsync($$"""
+            (() => {
+              const selector = {{JsonSerializer.Serialize(NormalizeSelector(selector))}};
+              const maxChars = {{cappedMaxChars}};
+              const requestedMaxChars = {{JsonSerializer.Serialize(maxChars)}};
+              const paneId = {{JsonSerializer.Serialize(string.IsNullOrWhiteSpace(paneId) ? null : paneId)}};
+              {{FrameScopeScript(frame)}}
+              const scope = resolveAutomationScope();
+              if (!scope.ok) {
+                return { ...scope, selector, paneId, maxChars, requestedMaxChars };
+              }
+
+              let target = null;
+              if (selector) {
+                try {
+                  target = scope.document.querySelector(selector);
+                } catch {
+                  return { ok: false, reason: "invalid selector", selector, frame: scope.frame, paneId, maxChars, requestedMaxChars };
+                }
+
+                if (!target) {
+                  return { ok: false, reason: "selector not found", selector, frame: scope.frame, paneId, maxChars, requestedMaxChars };
+                }
+              } else {
+                target = scope.document.body || scope.document.documentElement;
+              }
+
+              const rawText = typeof target?.innerText === "string"
+                ? target.innerText
+                : (target?.textContent || "");
+              const length = rawText.length;
+              const truncated = length > maxChars;
+              return {
+                ok: true,
+                text: truncated ? rawText.slice(0, maxChars) : rawText,
+                length,
+                truncated,
+                maxChars,
+                requestedMaxChars,
+                selector,
+                frame: scope.frame,
+                paneId
+              };
+            })()
+            """).ConfigureAwait(true);
     }
 
     public async Task<string> ClickAsync(string selector, string? frame = null)
@@ -2472,6 +2533,9 @@ internal sealed class BrowserPaneView : Grid, IDisposable
 
     private static string? NormalizeFrame(string? frame) =>
         string.IsNullOrWhiteSpace(frame) ? null : frame.Trim();
+
+    private static string? NormalizeSelector(string? selector) =>
+        string.IsNullOrWhiteSpace(selector) ? null : selector.Trim();
 
     private static string FrameScopeScript(string? frame)
     {
