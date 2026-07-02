@@ -110,6 +110,47 @@ public sealed class CliWorkspaceCommandTests
     }
 
     [Fact]
+    public void WorkspaceCommandParsesPortsByPosition()
+    {
+        var request = Program.ParseWorkspaceRequestForTests(["ports", "5173", "3000", "3000"], out var error);
+
+        Assert.Equal("", error);
+        Assert.NotNull(request);
+        Assert.Equal(AgentMuxMethods.WorkspaceSetPorts, request.Method);
+
+        var parameters = JsonSerializer.SerializeToElement(request.Parameters, AgentMuxJson.Options);
+        Assert.Equal(new[] { 3000, 5173 }, ReadPorts(parameters));
+    }
+
+    [Fact]
+    public void WorkspaceCommandParsesPortsCsvWithTarget()
+    {
+        var request = Program.ParseWorkspaceRequestForTests(["ports", "--index", "1", "--ports", "5173,3000"], out var error);
+
+        Assert.Equal("", error);
+        Assert.NotNull(request);
+        Assert.Equal(AgentMuxMethods.WorkspaceSetPorts, request.Method);
+
+        var parameters = JsonSerializer.SerializeToElement(request.Parameters, AgentMuxJson.Options);
+        Assert.Equal(1, parameters.GetProperty("index").GetInt32());
+        Assert.Equal(new[] { 3000, 5173 }, ReadPorts(parameters));
+    }
+
+    [Fact]
+    public void WorkspaceCommandParsesPortsClearWithId()
+    {
+        var request = Program.ParseWorkspaceRequestForTests(["ports", "clear", "--id", "workspace-1"], out var error);
+
+        Assert.Equal("", error);
+        Assert.NotNull(request);
+        Assert.Equal(AgentMuxMethods.WorkspaceSetPorts, request.Method);
+
+        var parameters = JsonSerializer.SerializeToElement(request.Parameters, AgentMuxJson.Options);
+        Assert.Equal("workspace-1", parameters.GetProperty("id").GetString());
+        Assert.Empty(ReadPorts(parameters));
+    }
+
+    [Fact]
     public void WorkspaceCommandRejectsMissingAction()
     {
         var request = Program.ParseWorkspaceRequestForTests([], out var error);
@@ -157,6 +198,46 @@ public sealed class CliWorkspaceCommandTests
         Assert.Equal("Usage: agentmux workspace select --index <n>|--id <workspace-id>", error);
     }
 
+    [Theory]
+    [InlineData("0")]
+    [InlineData("65536")]
+    [InlineData("abc")]
+    public void WorkspaceCommandRejectsInvalidPort(string port)
+    {
+        var request = Program.ParseWorkspaceRequestForTests(["ports", port], out var error);
+
+        Assert.Null(request);
+        Assert.Equal("Usage: agentmux workspace ports [--index <n>|--id <workspace-id>] <port...>|--ports <csv>|clear", error);
+    }
+
+    [Fact]
+    public void WorkspaceCommandRejectsTooManyPorts()
+    {
+        var args = new[] { "ports" }.Concat(Enumerable.Range(3000, 21).Select(port => port.ToString())).ToArray();
+        var request = Program.ParseWorkspaceRequestForTests(args, out var error);
+
+        Assert.Null(request);
+        Assert.Equal("Usage: agentmux workspace ports [--index <n>|--id <workspace-id>] <port...>|--ports <csv>|clear", error);
+    }
+
+    [Fact]
+    public void WorkspaceCommandRejectsAmbiguousPortTarget()
+    {
+        var request = Program.ParseWorkspaceRequestForTests(["ports", "--index", "0", "--id", "workspace-1", "3000"], out var error);
+
+        Assert.Null(request);
+        Assert.Equal("Usage: agentmux workspace ports [--index <n>|--id <workspace-id>] <port...>|--ports <csv>|clear", error);
+    }
+
+    [Fact]
+    public void WorkspaceCommandRejectsBarePortIdFlag()
+    {
+        var request = Program.ParseWorkspaceRequestForTests(["ports", "--id"], out var error);
+
+        Assert.Null(request);
+        Assert.Equal("Usage: agentmux workspace ports [--index <n>|--id <workspace-id>] <port...>|--ports <csv>|clear", error);
+    }
+
     [Fact]
     public void WorkspaceCommandRejectsUnknownAction()
     {
@@ -164,5 +245,10 @@ public sealed class CliWorkspaceCommandTests
 
         Assert.Null(request);
         Assert.Equal("Unknown workspace command: rename", error);
+    }
+
+    private static int[] ReadPorts(JsonElement parameters)
+    {
+        return parameters.GetProperty("ports").EnumerateArray().Select(port => port.GetInt32()).ToArray();
     }
 }

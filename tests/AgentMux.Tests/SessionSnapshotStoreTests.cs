@@ -35,6 +35,7 @@ public sealed class SessionSnapshotStoreTests
                 new WorkspaceState
                 {
                     Title = "API",
+                    Ports = [3000, 5173],
                     Surfaces = [surface]
                 }
             ]
@@ -46,6 +47,7 @@ public sealed class SessionSnapshotStoreTests
         Assert.NotNull(loaded);
         Assert.Single(loaded.Workspaces);
         Assert.Equal("API", loaded.Workspaces[0].Title);
+        Assert.Equal(new[] { 3000, 5173 }, loaded.Workspaces[0].Ports);
         Assert.Equal(paneId, loaded.Workspaces[0].Surfaces[0].ActivePaneId);
         Assert.Equal(paneId, loaded.Workspaces[0].Surfaces[0].Root.Pane?.Id);
         Assert.Equal(PaneKind.Browser, loaded.Workspaces[0].Surfaces[0].Root.Pane?.Kind);

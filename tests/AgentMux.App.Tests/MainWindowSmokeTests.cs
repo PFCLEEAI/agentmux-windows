@@ -609,7 +609,12 @@ public sealed class MainWindowSmokeTests
             Assert.Equal(System.Text.Json.JsonValueKind.Null, initialWorkspace.GetProperty("latestNotification").ValueKind);
             Assert.True(initialWorkspace.TryGetProperty("gitBranch", out _));
             Assert.Equal(System.Text.Json.JsonValueKind.Null, initialWorkspace.GetProperty("gitBranch").ValueKind);
+            Assert.True(initialWorkspace.TryGetProperty("ports", out var initialPorts));
+            Assert.Empty(initialPorts.EnumerateArray());
             Assert.False(initialWorkspace.TryGetProperty("isGitDirty", out _));
+            Assert.False(initialWorkspace.TryGetProperty("pid", out _));
+            Assert.False(initialWorkspace.TryGetProperty("process", out _));
+            Assert.False(initialWorkspace.TryGetProperty("portStatus", out _));
 
             var gitWorkspace = CreateGitWorkspace("feature/api-sidebar");
             gitRoot = gitWorkspace.Root;
@@ -629,6 +634,7 @@ public sealed class MainWindowSmokeTests
             Assert.True(createdWorkspace.GetProperty("isActive").GetBoolean());
             Assert.Equal(gitWorkspace.WorkingDirectory, createdWorkspace.GetProperty("workingDirectory").GetString());
             Assert.Equal("feature/api-sidebar", createdWorkspace.GetProperty("gitBranch").GetString());
+            Assert.Empty(createdWorkspace.GetProperty("ports").EnumerateArray());
             Assert.False(string.IsNullOrWhiteSpace(createdWorkspaceId));
 
             Assert.Equal(2, window.WorkspaceCountForSmokeTest);
@@ -637,6 +643,67 @@ public sealed class MainWindowSmokeTests
             Assert.Equal("API", window.ActiveWorkspaceTitleForSmokeTest);
             Assert.Contains("branch: feature/api-sidebar", window.ActiveWorkspaceMetaForSmokeTest, StringComparison.Ordinal);
             Assert.False(window.RenderedTextContainsForSmokeTest("AGENTMUX_WORKSPACE_ONE"));
+
+            var setPortsResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceSetPorts, new
+            {
+                ports = new[] { 5173, 3000, 3000 }
+            });
+            Assert.True(setPortsResponse.Ok, setPortsResponse.Error);
+            var setPorts = System.Text.Json.JsonSerializer.SerializeToElement(setPortsResponse.Result, AgentMuxJson.Options);
+            Assert.True(setPorts.GetProperty("updated").GetBoolean());
+            var setPortsWorkspace = setPorts.GetProperty("workspace");
+            Assert.Equal(new[] { 3000, 5173 }, setPortsWorkspace.GetProperty("ports").EnumerateArray().Select(port => port.GetInt32()).ToArray());
+            Assert.Contains("ports: 3000, 5173", window.ActiveWorkspaceMetaForSmokeTest, StringComparison.Ordinal);
+            Assert.False(setPortsWorkspace.TryGetProperty("pid", out _));
+            Assert.False(setPortsWorkspace.TryGetProperty("process", out _));
+            Assert.False(setPortsWorkspace.TryGetProperty("portStatus", out _));
+
+            var missingPortsResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceSetPorts, new
+            {
+                id = createdWorkspaceId
+            });
+            Assert.True(missingPortsResponse.Ok, missingPortsResponse.Error);
+            var missingPorts = System.Text.Json.JsonSerializer.SerializeToElement(missingPortsResponse.Result, AgentMuxJson.Options);
+            Assert.False(missingPorts.GetProperty("updated").GetBoolean());
+            Assert.Equal("ports array is required", missingPorts.GetProperty("reason").GetString());
+
+            var blankIdResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceSetPorts, new
+            {
+                id = "",
+                ports = new[] { 4000 }
+            });
+            Assert.True(blankIdResponse.Ok, blankIdResponse.Error);
+            var blankId = System.Text.Json.JsonSerializer.SerializeToElement(blankIdResponse.Result, AgentMuxJson.Options);
+            Assert.False(blankId.GetProperty("updated").GetBoolean());
+            Assert.Equal("id is required", blankId.GetProperty("reason").GetString());
+            Assert.Contains("ports: 3000, 5173", window.ActiveWorkspaceMetaForSmokeTest, StringComparison.Ordinal);
+
+            var stringPortResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceSetPorts, new
+            {
+                ports = new[] { "3000" }
+            });
+            Assert.True(stringPortResponse.Ok, stringPortResponse.Error);
+            var stringPort = System.Text.Json.JsonSerializer.SerializeToElement(stringPortResponse.Result, AgentMuxJson.Options);
+            Assert.False(stringPort.GetProperty("updated").GetBoolean());
+            Assert.Equal("ports must be integers between 1 and 65535", stringPort.GetProperty("reason").GetString());
+
+            var invalidPortResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceSetPorts, new
+            {
+                ports = new[] { 0, 65536 }
+            });
+            Assert.True(invalidPortResponse.Ok, invalidPortResponse.Error);
+            var invalidPort = System.Text.Json.JsonSerializer.SerializeToElement(invalidPortResponse.Result, AgentMuxJson.Options);
+            Assert.False(invalidPort.GetProperty("updated").GetBoolean());
+            Assert.Equal("ports must be integers between 1 and 65535", invalidPort.GetProperty("reason").GetString());
+
+            var tooManyPortsResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceSetPorts, new
+            {
+                ports = Enumerable.Range(3000, 21).ToArray()
+            });
+            Assert.True(tooManyPortsResponse.Ok, tooManyPortsResponse.Error);
+            var tooManyPorts = System.Text.Json.JsonSerializer.SerializeToElement(tooManyPortsResponse.Result, AgentMuxJson.Options);
+            Assert.False(tooManyPorts.GetProperty("updated").GetBoolean());
+            Assert.Equal("at most 20 ports are supported", tooManyPorts.GetProperty("reason").GetString());
 
             window.SetActivePaneTextForSmokeTest("AGENTMUX_WORKSPACE_TWO");
             var secondPaneId = window.ActivePaneIdForSmokeTest;
@@ -654,6 +721,8 @@ public sealed class MainWindowSmokeTests
             Assert.Equal(0, window.WorkspaceListSelectedIndexForSmokeTest);
             Assert.Equal("Default", window.ActiveWorkspaceTitleForSmokeTest);
             Assert.Equal(firstPaneId, window.ActivePaneIdForSmokeTest);
+            Assert.Empty(selectFirst.GetProperty("workspace").GetProperty("ports").EnumerateArray());
+            Assert.DoesNotContain("ports:", window.ActiveWorkspaceMetaForSmokeTest, StringComparison.Ordinal);
             Assert.True(window.RenderedTextContainsForSmokeTest("AGENTMUX_WORKSPACE_ONE"));
             Assert.False(window.RenderedTextContainsForSmokeTest("AGENTMUX_WORKSPACE_TWO"));
 
@@ -705,9 +774,11 @@ public sealed class MainWindowSmokeTests
             var selectSecond = System.Text.Json.JsonSerializer.SerializeToElement(selectSecondResponse.Result, AgentMuxJson.Options);
             Assert.True(selectSecond.GetProperty("selected").GetBoolean());
             Assert.Equal("feature/api-sidebar", selectSecond.GetProperty("workspace").GetProperty("gitBranch").GetString());
+            Assert.Equal(new[] { 3000, 5173 }, selectSecond.GetProperty("workspace").GetProperty("ports").EnumerateArray().Select(port => port.GetInt32()).ToArray());
             Assert.Equal(1, window.ActiveWorkspaceIndexForSmokeTest);
             Assert.Equal(1, window.WorkspaceListSelectedIndexForSmokeTest);
             Assert.Equal("API", window.ActiveWorkspaceTitleForSmokeTest);
+            Assert.Contains("ports: 3000, 5173", window.ActiveWorkspaceMetaForSmokeTest, StringComparison.Ordinal);
             Assert.Equal(secondPaneId, window.ActivePaneIdForSmokeTest);
             Assert.True(window.RenderedTextContainsForSmokeTest("AGENTMUX_WORKSPACE_TWO"));
             Assert.False(window.RenderedTextContainsForSmokeTest("AGENTMUX_WORKSPACE_ONE"));
@@ -720,10 +791,24 @@ public sealed class MainWindowSmokeTests
             Assert.Equal(2, finalList.GetProperty("workspaces").GetArrayLength());
             var finalWorkspaces = finalList.GetProperty("workspaces").EnumerateArray().ToArray();
             Assert.Equal(1, finalWorkspaces.Count(workspace => workspace.GetProperty("isActive").GetBoolean()));
-            Assert.Contains(finalWorkspaces, workspace =>
-                workspace.GetProperty("id").GetString() == createdWorkspaceId
-                && workspace.GetProperty("isActive").GetBoolean()
-                && workspace.GetProperty("gitBranch").GetString() == "feature/api-sidebar");
+            var finalCreatedWorkspace = Assert.Single(finalWorkspaces, workspace => workspace.GetProperty("id").GetString() == createdWorkspaceId);
+            Assert.True(finalCreatedWorkspace.GetProperty("isActive").GetBoolean());
+            Assert.Equal("feature/api-sidebar", finalCreatedWorkspace.GetProperty("gitBranch").GetString());
+            Assert.Equal(new[] { 3000, 5173 }, finalCreatedWorkspace.GetProperty("ports").EnumerateArray().Select(port => port.GetInt32()).ToArray());
+            Assert.False(finalCreatedWorkspace.TryGetProperty("pid", out _));
+            Assert.False(finalCreatedWorkspace.TryGetProperty("process", out _));
+            Assert.False(finalCreatedWorkspace.TryGetProperty("status", out _));
+
+            var clearPortsResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceSetPorts, new
+            {
+                id = createdWorkspaceId,
+                ports = Array.Empty<int>()
+            });
+            Assert.True(clearPortsResponse.Ok, clearPortsResponse.Error);
+            var clearPorts = System.Text.Json.JsonSerializer.SerializeToElement(clearPortsResponse.Result, AgentMuxJson.Options);
+            Assert.True(clearPorts.GetProperty("updated").GetBoolean());
+            Assert.Empty(clearPorts.GetProperty("workspace").GetProperty("ports").EnumerateArray());
+            Assert.DoesNotContain("ports:", window.ActiveWorkspaceMetaForSmokeTest, StringComparison.Ordinal);
         }
         finally
         {
@@ -914,6 +999,7 @@ public sealed class MainWindowSmokeTests
     {
         var root = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "agentmux-session-smoke", Guid.NewGuid().ToString("N"));
         var store = new SessionSnapshotStore(root);
+        string? createdWorkspaceId = null;
 
         try
         {
@@ -933,8 +1019,16 @@ public sealed class MainWindowSmokeTests
                 });
                 Assert.True(createdWorkspace.Ok, createdWorkspace.Error);
                 var createdWorkspaceResult = System.Text.Json.JsonSerializer.SerializeToElement(createdWorkspace.Result, AgentMuxJson.Options);
-                var createdWorkspaceId = createdWorkspaceResult.GetProperty("workspace").GetProperty("id").GetString();
+                createdWorkspaceId = createdWorkspaceResult.GetProperty("workspace").GetProperty("id").GetString();
                 Assert.False(string.IsNullOrWhiteSpace(createdWorkspaceId));
+
+                var persistedPorts = await source.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceSetPorts, new
+                {
+                    id = createdWorkspaceId,
+                    ports = new[] { 5173, 3000 }
+                });
+                Assert.True(persistedPorts.Ok, persistedPorts.Error);
+                Assert.Contains("ports: 3000, 5173", source.ActiveWorkspaceMetaForSmokeTest, StringComparison.Ordinal);
 
                 var selectDefaultWorkspace = await source.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceSelect, new
                 {
@@ -983,6 +1077,7 @@ public sealed class MainWindowSmokeTests
 
                 Assert.Equal(2, restored.WorkspaceCountForSmokeTest);
                 Assert.Equal("Persisted workspace", restored.ActiveWorkspaceTitleForSmokeTest);
+                Assert.Contains("ports: 3000, 5173", restored.ActiveWorkspaceMetaForSmokeTest, StringComparison.Ordinal);
                 Assert.Equal(2, restored.SurfaceCountForSmokeTest);
                 Assert.Equal(1, restored.ActiveSurfaceIndexForSmokeTest);
                 Assert.Equal("Persisted surface", restored.ActiveSurfaceTitleForSmokeTest);
@@ -991,6 +1086,14 @@ public sealed class MainWindowSmokeTests
                 Assert.Equal(0, restored.RenderedBrowserPaneCountForSmokeTest);
                 Assert.Equal(1, restored.RenderedTerminalPaneCountForSmokeTest);
                 Assert.True(restored.RenderedTextContainsForSmokeTest("AGENTMUX_SURFACE_SESSION_TEXT"));
+
+                var restoredWorkspaceListResponse = await restored.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceList);
+                Assert.True(restoredWorkspaceListResponse.Ok, restoredWorkspaceListResponse.Error);
+                var restoredWorkspaceList = System.Text.Json.JsonSerializer.SerializeToElement(restoredWorkspaceListResponse.Result, AgentMuxJson.Options);
+                var restoredWorkspace = Assert.Single(
+                    restoredWorkspaceList.GetProperty("workspaces").EnumerateArray(),
+                    workspace => workspace.GetProperty("id").GetString() == createdWorkspaceId);
+                Assert.Equal(new[] { 3000, 5173 }, restoredWorkspace.GetProperty("ports").EnumerateArray().Select(port => port.GetInt32()).ToArray());
 
                 var selectFirstSurface = await restored.HandleRpcForSmokeTestAsync(AgentMuxMethods.SurfaceSelect, new
                 {
@@ -1032,6 +1135,49 @@ public sealed class MainWindowSmokeTests
             finally
             {
                 fallback.Close();
+            }
+
+            var dirtyPortsRoot = System.IO.Path.Combine(root, "dirty-ports");
+            var dirtyPortsStore = new SessionSnapshotStore(dirtyPortsRoot);
+            var dirtyPorts = Enumerable.Range(4000, 25)
+                .Concat(new[] { 3000, 0, 65536, 3000 })
+                .Reverse()
+                .ToList();
+            await dirtyPortsStore.SaveAsync(new SessionSnapshot
+            {
+                Workspaces =
+                [
+                    new WorkspaceState
+                    {
+                        Title = "Dirty ports",
+                        Ports = dirtyPorts
+                    }
+                ]
+            });
+            var normalizedPortsWindow = new MainWindow(
+                ShortcutSettings.Default(),
+                dirtyPortsStore,
+                restoreSessionOnStartup: true,
+                persistSession: false);
+            try
+            {
+                await normalizedPortsWindow.InitializeForSmokeTestAsync();
+                var dirtyPortsListResponse = await normalizedPortsWindow.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceList);
+                Assert.True(dirtyPortsListResponse.Ok, dirtyPortsListResponse.Error);
+                var dirtyPortsList = System.Text.Json.JsonSerializer.SerializeToElement(dirtyPortsListResponse.Result, AgentMuxJson.Options);
+                var dirtyPortsWorkspace = dirtyPortsList.GetProperty("workspaces").EnumerateArray().Single();
+                var expectedPorts = dirtyPorts
+                    .Where(port => port is >= 1 and <= 65535)
+                    .Distinct()
+                    .OrderBy(port => port)
+                    .Take(20)
+                    .ToArray();
+                Assert.Equal(expectedPorts, dirtyPortsWorkspace.GetProperty("ports").EnumerateArray().Select(port => port.GetInt32()).ToArray());
+                Assert.Contains($"ports: {string.Join(", ", expectedPorts)}", normalizedPortsWindow.ActiveWorkspaceMetaForSmokeTest, StringComparison.Ordinal);
+            }
+            finally
+            {
+                normalizedPortsWindow.Close();
             }
         }
         finally

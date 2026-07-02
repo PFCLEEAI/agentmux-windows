@@ -15,6 +15,9 @@ public sealed class WorkspaceState
     public bool IsGitDirty { get; set; }
     [JsonIgnore]
     public string? GitBranchLabel => string.IsNullOrWhiteSpace(GitBranch) ? null : $"branch: {GitBranch}";
+    public List<int> Ports { get; set; } = [];
+    [JsonIgnore]
+    public string? PortsLabel => Ports.Count == 0 ? null : $"ports: {string.Join(", ", Ports)}";
     public int ActiveSurfaceIndex { get; set; }
     public int UnreadCount { get; set; }
     [JsonIgnore]

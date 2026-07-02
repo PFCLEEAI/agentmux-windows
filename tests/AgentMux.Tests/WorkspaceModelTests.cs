@@ -53,6 +53,24 @@ public sealed class WorkspaceModelTests
         Assert.DoesNotContain("latestNotificationLabel", json, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void WorkspacePortsRoundTripAndLabelIsDisplayOnly()
+    {
+        var workspace = new WorkspaceState
+        {
+            Ports = [3000, 5173]
+        };
+
+        var json = JsonSerializer.Serialize(workspace, AgentMuxJson.Options);
+        var loaded = JsonSerializer.Deserialize<WorkspaceState>(json, AgentMuxJson.Options);
+
+        Assert.Equal("ports: 3000, 5173", workspace.PortsLabel);
+        Assert.Contains("\"ports\":[3000,5173]", json, StringComparison.Ordinal);
+        Assert.DoesNotContain("portsLabel", json, StringComparison.Ordinal);
+        Assert.NotNull(loaded);
+        Assert.Equal(new[] { 3000, 5173 }, loaded.Ports);
+    }
+
     [Theory]
     [InlineData(SplitDirection.Right)]
     [InlineData(SplitDirection.Down)]

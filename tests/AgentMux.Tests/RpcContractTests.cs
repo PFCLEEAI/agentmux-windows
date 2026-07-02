@@ -129,6 +129,7 @@ public sealed class RpcContractTests
         Assert.Equal("workspace.list", AgentMuxMethods.WorkspaceList);
         Assert.Equal("workspace.create", AgentMuxMethods.WorkspaceCreate);
         Assert.Equal("workspace.select", AgentMuxMethods.WorkspaceSelect);
+        Assert.Equal("workspace.set_ports", AgentMuxMethods.WorkspaceSetPorts);
     }
 
     [Fact]

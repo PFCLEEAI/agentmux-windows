@@ -1,5 +1,6 @@
-using System.IO.Pipes;
+using System.Globalization;
 using System.IO;
+using System.IO.Pipes;
 using System.Text.Json;
 using AgentMux.Core.Ipc;
 using AgentMux.Core.Models;
@@ -686,6 +687,65 @@ public static class Program
             return new CliRequest(AgentMuxMethods.WorkspaceSelect, new { id = idValue });
         }
 
+        if (args[0].Equals("ports", StringComparison.OrdinalIgnoreCase)
+            || args[0].Equals("port", StringComparison.OrdinalIgnoreCase))
+        {
+            const string usage = "Usage: agentmux workspace ports [--index <n>|--id <workspace-id>] <port...>|--ports <csv>|clear";
+            var named = ParseNamed(args[1..]);
+            if (named.TryGetValue("index", out var indexValue) && !TryParseNonNegativeInt(indexValue, out _))
+            {
+                error = usage;
+                return null;
+            }
+
+            var hasIndex = named.ContainsKey("index");
+            var hasIdFlag = named.ContainsKey("id");
+            var hasId = named.TryGetValue("id", out var idValue)
+                && !string.IsNullOrWhiteSpace(idValue)
+                && !idValue.Equals("true", StringComparison.OrdinalIgnoreCase);
+            if (hasIdFlag && !hasId)
+            {
+                error = usage;
+                return null;
+            }
+
+            if (hasIndex && hasId)
+            {
+                error = usage;
+                return null;
+            }
+
+            var positional = ReadPositional(named);
+            var clear = positional.Any(value => value.Equals("clear", StringComparison.OrdinalIgnoreCase))
+                || (named.TryGetValue("clear", out var clearValue) && clearValue.Equals("true", StringComparison.OrdinalIgnoreCase));
+            var portText = named.TryGetValue("ports", out var portsValue)
+                ? portsValue
+                : string.Join(',', positional.Where(value => !value.Equals("clear", StringComparison.OrdinalIgnoreCase)));
+            int[] ports = [];
+            if (!clear && !TryParsePortList(portText, out ports))
+            {
+                error = usage;
+                return null;
+            }
+
+            var parameters = new Dictionary<string, object?>
+            {
+                ["ports"] = clear ? Array.Empty<int>() : ports
+            };
+            if (hasIndex)
+            {
+                parameters["index"] = int.Parse(indexValue!, CultureInfo.InvariantCulture);
+            }
+
+            if (hasId)
+            {
+                parameters["id"] = idValue;
+            }
+
+            error = "";
+            return new CliRequest(AgentMuxMethods.WorkspaceSetPorts, parameters);
+        }
+
         error = $"Unknown workspace command: {args[0]}";
         return null;
     }
@@ -1018,6 +1078,34 @@ public static class Program
         return int.TryParse(value, out number) && number >= 0;
     }
 
+    private static bool TryParsePortList(string? value, out int[] ports)
+    {
+        ports = [];
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var parsed = new SortedSet<int>();
+        foreach (var token in value.Split([',', ';', ' '], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (!int.TryParse(token, out var port) || port is < 1 or > 65535)
+            {
+                return false;
+            }
+
+            parsed.Add(port);
+        }
+
+        if (parsed.Count == 0 || parsed.Count > 20)
+        {
+            return false;
+        }
+
+        ports = parsed.ToArray();
+        return true;
+    }
+
     private static bool IsBrowserWaitState(string value)
     {
         return value.Equals("visible", StringComparison.OrdinalIgnoreCase)
@@ -1061,6 +1149,17 @@ public static class Program
         return result;
     }
 
+    private static string[] ReadPositional(Dictionary<string, string> named)
+    {
+        var values = new List<string>();
+        for (var index = 0; named.TryGetValue($"_arg{index}", out var value); index++)
+        {
+            values.Add(value);
+        }
+
+        return values.ToArray();
+    }
+
     private static void PrintResponse(AgentMuxResponse response)
     {
         if (!response.Ok)
@@ -1095,6 +1194,7 @@ public static class Program
           agentmux workspace list
           agentmux workspace create --title "API" --cwd "C:\src\api"
           agentmux workspace select --index 0
+          agentmux workspace ports 3000 5173
           agentmux surface list
           agentmux surface create --title "Tests"
           agentmux surface select --index 0

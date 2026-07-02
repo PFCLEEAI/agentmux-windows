@@ -292,6 +292,7 @@ public partial class MainWindow : Window
 
     private static void NormalizeWorkspace(WorkspaceState workspace)
     {
+        workspace.Ports = NormalizePorts(workspace.Ports);
         workspace.Surfaces ??= [];
         if (workspace.Surfaces.Count == 0)
         {
@@ -504,6 +505,7 @@ public partial class MainWindow : Window
             AgentMuxMethods.WorkspaceList => AgentMuxResponse.Success(request.Id, BuildWorkspaceList()),
             AgentMuxMethods.WorkspaceCreate => AgentMuxResponse.Success(request.Id, HandleWorkspaceCreate(request.Params)),
             AgentMuxMethods.WorkspaceSelect => AgentMuxResponse.Success(request.Id, HandleWorkspaceSelect(request.Params)),
+            AgentMuxMethods.WorkspaceSetPorts => AgentMuxResponse.Success(request.Id, HandleWorkspaceSetPorts(request.Params)),
             AgentMuxMethods.SurfaceList => AgentMuxResponse.Success(request.Id, BuildSurfaceList()),
             AgentMuxMethods.SurfaceCreate => AgentMuxResponse.Success(request.Id, HandleSurfaceCreate(request.Params)),
             AgentMuxMethods.SurfaceSelect => AgentMuxResponse.Success(request.Id, HandleSurfaceSelect(request.Params)),
@@ -623,6 +625,38 @@ public partial class MainWindow : Window
         {
             selected = true,
             workspace = BuildWorkspaceDto(workspace, _activeWorkspaceIndex)
+        };
+    }
+
+    private object HandleWorkspaceSetPorts(JsonElement? parameters)
+    {
+        if (!TryReadOptionalWorkspaceTarget(parameters, out var index, out var id, out var targetError))
+        {
+            return new { updated = false, reason = targetError };
+        }
+
+        if (!TryReadWorkspacePorts(parameters, out var ports, out var portError))
+        {
+            return new { updated = false, reason = portError };
+        }
+
+        var selectedIndex = ResolveWorkspaceIndex(index, id);
+        if (selectedIndex < 0 || selectedIndex >= _workspaces.Count)
+        {
+            return new
+            {
+                updated = false,
+                reason = index.HasValue ? "index out of range" : "workspace not found"
+            };
+        }
+
+        var workspace = _workspaces[selectedIndex];
+        workspace.Ports = ports;
+        QueueSessionSave();
+        return new
+        {
+            updated = true,
+            workspace = BuildWorkspaceDto(workspace, selectedIndex)
         };
     }
 
@@ -1780,8 +1814,9 @@ public partial class MainWindow : Window
         var activePane = ActivePane();
         WorkspaceTitle.Text = workspace.Title;
         var branchMeta = string.IsNullOrWhiteSpace(workspace.GitBranchLabel) ? "" : $"  |  {workspace.GitBranchLabel}";
+        var portsMeta = string.IsNullOrWhiteSpace(workspace.PortsLabel) ? "" : $"  |  {workspace.PortsLabel}";
         var notificationMeta = string.IsNullOrWhiteSpace(workspace.LatestNotificationLabel) ? "" : $"  |  {workspace.LatestNotificationLabel}";
-        WorkspaceMeta.Text = $"{workspace.WorkingDirectory}{branchMeta}{notificationMeta}  |  surfaces: {workspace.Surfaces.Count}  |  panes: {CountPanes(surface.Root)}  |  unread: {workspace.UnreadCount}";
+        WorkspaceMeta.Text = $"{workspace.WorkingDirectory}{branchMeta}{portsMeta}{notificationMeta}  |  surfaces: {workspace.Surfaces.Count}  |  panes: {CountPanes(surface.Root)}  |  unread: {workspace.UnreadCount}";
         RefreshSurfaceTabs(workspace);
         var activeSessionRunning = activePane is not null
             && _ptySessions.TryGetValue(activePane.Id, out var activeSession)
@@ -2438,6 +2473,7 @@ public partial class MainWindow : Window
             isActive = index == _activeWorkspaceIndex,
             workspace.WorkingDirectory,
             gitBranch = workspace.GitBranch,
+            ports = workspace.Ports.ToArray(),
             workspace.UnreadCount,
             latestNotification = workspace.LatestNotificationPreview,
             surfaceCount = workspace.Surfaces.Count,
@@ -2926,8 +2962,14 @@ public partial class MainWindow : Window
             return false;
         }
 
-        var hasId = element.TryGetProperty("id", out var idProperty)
-            && TryReadNonEmptyString(idProperty, out id);
+        var hasIdProperty = element.TryGetProperty("id", out var idProperty);
+        var hasId = hasIdProperty && TryReadNonEmptyString(idProperty, out id);
+        if (hasIdProperty && !hasId)
+        {
+            error = "id is required";
+            return false;
+        }
+
         if (hasIndex && hasId)
         {
             error = "provide index or id, not both";
@@ -2963,8 +3005,14 @@ public partial class MainWindow : Window
             return false;
         }
 
-        var hasId = element.TryGetProperty("id", out var idProperty)
-            && TryReadNonEmptyString(idProperty, out id);
+        var hasIdProperty = element.TryGetProperty("id", out var idProperty);
+        var hasId = hasIdProperty && TryReadNonEmptyString(idProperty, out id);
+        if (hasIdProperty && !hasId)
+        {
+            error = "id is required";
+            return false;
+        }
+
         if (hasIndex && hasId)
         {
             error = "provide index or id, not both";
@@ -2979,6 +3027,110 @@ public partial class MainWindow : Window
 
         index = hasIndex ? parsedIndex : null;
         return true;
+    }
+
+    private static bool TryReadOptionalWorkspaceTarget(JsonElement? parameters, out int? index, out string? id, out string error)
+    {
+        index = null;
+        id = null;
+        error = "";
+        if (parameters is not { ValueKind: JsonValueKind.Object } element)
+        {
+            return true;
+        }
+
+        var parsedIndex = 0;
+        var hasIndex = element.TryGetProperty("index", out var indexProperty);
+        if (hasIndex && !TryReadNonNegativeInt(indexProperty, out parsedIndex))
+        {
+            error = "index must be a non-negative integer";
+            return false;
+        }
+
+        var hasIdProperty = element.TryGetProperty("id", out var idProperty);
+        var hasId = hasIdProperty && TryReadNonEmptyString(idProperty, out id);
+        if (hasIdProperty && !hasId)
+        {
+            error = "id is required";
+            return false;
+        }
+
+        if (hasIndex && hasId)
+        {
+            error = "provide index or id, not both";
+            return false;
+        }
+
+        index = hasIndex ? parsedIndex : null;
+        return true;
+    }
+
+    private static bool TryReadWorkspacePorts(JsonElement? parameters, out List<int> ports, out string error)
+    {
+        ports = [];
+        error = "";
+        if (parameters is not { ValueKind: JsonValueKind.Object } element
+            || !element.TryGetProperty("ports", out var portsProperty)
+            || portsProperty.ValueKind != JsonValueKind.Array)
+        {
+            error = "ports array is required";
+            return false;
+        }
+
+        var values = new SortedSet<int>();
+        foreach (var portProperty in portsProperty.EnumerateArray())
+        {
+            if (portProperty.ValueKind != JsonValueKind.Number
+                || !portProperty.TryGetInt32(out var port)
+                || port is < 1 or > 65535)
+            {
+                error = "ports must be integers between 1 and 65535";
+                return false;
+            }
+
+            values.Add(port);
+        }
+
+        if (values.Count > 20)
+        {
+            error = "at most 20 ports are supported";
+            return false;
+        }
+
+        ports = values.ToList();
+        return true;
+    }
+
+    private int ResolveWorkspaceIndex(int? index, string? id)
+    {
+        EnsureDefaultWorkspace();
+        if (index.HasValue)
+        {
+            return index.Value;
+        }
+
+        if (!string.IsNullOrWhiteSpace(id))
+        {
+            return _workspaces.ToList().FindIndex(workspace => string.Equals(workspace.Id, id, StringComparison.Ordinal));
+        }
+
+        _activeWorkspaceIndex = Math.Clamp(_activeWorkspaceIndex, 0, _workspaces.Count - 1);
+        return _activeWorkspaceIndex;
+    }
+
+    private static List<int> NormalizePorts(IEnumerable<int>? ports)
+    {
+        if (ports is null)
+        {
+            return [];
+        }
+
+        return ports
+            .Where(port => port is >= 1 and <= 65535)
+            .Distinct()
+            .OrderBy(port => port)
+            .Take(20)
+            .ToList();
     }
 
     private static bool TryReadNonNegativeInt(JsonElement property, out int value)
