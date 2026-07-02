@@ -1457,6 +1457,12 @@ public sealed class MainWindowSmokeTests
             Assert.False(findOnTerminal.GetProperty("ok").GetBoolean());
             Assert.Equal("active pane is not a browser", findOnTerminal.GetProperty("reason").GetString());
 
+            var snapshotOnTerminalResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserSnapshot);
+            Assert.True(snapshotOnTerminalResponse.Ok, snapshotOnTerminalResponse.Error);
+            var snapshotOnTerminal = System.Text.Json.JsonSerializer.SerializeToElement(snapshotOnTerminalResponse.Result, AgentMuxJson.Options);
+            Assert.False(snapshotOnTerminal.GetProperty("ok").GetBoolean());
+            Assert.Equal("active pane is not a browser", snapshotOnTerminal.GetProperty("reason").GetString());
+
             var selectOnTerminalResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserSelect, new
             {
                 selector = "select",
@@ -2333,6 +2339,130 @@ public sealed class MainWindowSmokeTests
             }).ConfigureAwait(true));
             Assert.Equal("invalid selector", findInvalidSelector.GetProperty("reason").GetString());
 
+            var browserSnapshot = AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserSnapshot, new
+            {
+                maxDepth = 4
+            }).ConfigureAwait(true));
+            Assert.Equal("snapshot", browserSnapshot.GetProperty("kind").GetString());
+            Assert.False(browserSnapshot.GetProperty("interactive").GetBoolean());
+            Assert.False(browserSnapshot.GetProperty("compact").GetBoolean());
+            Assert.Equal(4, browserSnapshot.GetProperty("maxDepth").GetInt32());
+            Assert.True(browserSnapshot.GetProperty("returned").GetInt32() > 0, browserSnapshot.ToString());
+            Assert.Contains("Run search", browserSnapshot.GetProperty("text").GetString(), StringComparison.Ordinal);
+            Assert.Contains(browserSnapshot.GetProperty("nodes").EnumerateArray(), node =>
+                node.GetProperty("role").GetString() == "button"
+                && node.GetProperty("name").GetString() == "Run search");
+
+            var cliDefaultShapeSnapshot = AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserSnapshot, new
+            {
+                interactive = false,
+                cursor = false,
+                compact = false,
+                maxDepth = (int?)null,
+                selector = (string?)null
+            }).ConfigureAwait(true));
+            Assert.Equal(3, cliDefaultShapeSnapshot.GetProperty("maxDepth").GetInt32());
+            Assert.Equal(System.Text.Json.JsonValueKind.Null, cliDefaultShapeSnapshot.GetProperty("requestedMaxDepth").ValueKind);
+
+            var selectorSnapshot = AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserSnapshot, new
+            {
+                selector = "#rpc-html",
+                compact = true,
+                maxDepth = 1
+            }).ConfigureAwait(true));
+            Assert.Equal("#rpc-html", selectorSnapshot.GetProperty("selector").GetString());
+            Assert.True(selectorSnapshot.GetProperty("compact").GetBoolean());
+            Assert.Equal(1, selectorSnapshot.GetProperty("maxDepth").GetInt32());
+            Assert.Contains("agentmux get html smoke", selectorSnapshot.GetProperty("text").GetString(), StringComparison.Ordinal);
+
+            AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserFocus, new
+            {
+                selector = "#rpc-name"
+            }).ConfigureAwait(true));
+            var interactiveSnapshot = AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserSnapshot, new
+            {
+                interactive = true,
+                cursor = true,
+                compact = true,
+                maxDepth = 4
+            }).ConfigureAwait(true));
+            Assert.True(interactiveSnapshot.GetProperty("interactive").GetBoolean());
+            Assert.True(interactiveSnapshot.GetProperty("cursor").GetBoolean());
+            Assert.Contains("Run search", interactiveSnapshot.GetProperty("text").GetString(), StringComparison.Ordinal);
+            Assert.DoesNotContain("agentmux browser text smoke", interactiveSnapshot.GetProperty("text").GetString(), StringComparison.Ordinal);
+            Assert.Contains(interactiveSnapshot.GetProperty("nodes").EnumerateArray(), node =>
+                node.GetProperty("id").GetString() == "rpc-name"
+                && node.GetProperty("focused").GetBoolean());
+
+            var longSnapshotId = "snapshot-" + new string('a', 360);
+            var longSnapshotTestId = "snapshot-testid-" + new string('b', 360);
+            AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserEval, new
+            {
+                script = $$"""
+                    (() => {
+                        const marker = document.createElement("button");
+                        marker.id = {{System.Text.Json.JsonSerializer.Serialize(longSnapshotId)}};
+                        marker.setAttribute("data-testid", {{System.Text.Json.JsonSerializer.Serialize(longSnapshotTestId)}});
+                        marker.textContent = "long snapshot metadata";
+                        document.body.appendChild(marker);
+                        return true;
+                    })()
+                    """
+            }).ConfigureAwait(true));
+            var cappedSnapshot = AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserSnapshot, new
+            {
+                selector = "#" + longSnapshotId
+            }).ConfigureAwait(true));
+            var cappedSnapshotNode = Assert.Single(cappedSnapshot.GetProperty("nodes").EnumerateArray());
+            Assert.Equal(300, cappedSnapshotNode.GetProperty("id").GetString()!.Length);
+            Assert.Equal(300, cappedSnapshotNode.GetProperty("testId").GetString()!.Length);
+            Assert.Equal(300, cappedSnapshotNode.GetProperty("selector").GetString()!.Length);
+
+            var snapshotInvalidSelector = AssertRpcNotOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserSnapshot, new
+            {
+                selector = "["
+            }).ConfigureAwait(true));
+            Assert.Equal("invalid selector", snapshotInvalidSelector.GetProperty("reason").GetString());
+
+            var snapshotMissingSelector = AssertRpcNotOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserSnapshot, new
+            {
+                selector = "#missing-browser-snapshot"
+            }).ConfigureAwait(true));
+            Assert.Equal("selector not found", snapshotMissingSelector.GetProperty("reason").GetString());
+
+            var snapshotMaxDepthAlias = AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserSnapshot, new
+            {
+                max_depth = 2
+            }).ConfigureAwait(true));
+            Assert.Equal(2, snapshotMaxDepthAlias.GetProperty("maxDepth").GetInt32());
+
+            var snapshotMalformedParams = AssertRpcNotOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserSnapshot, new[] { "bad" }).ConfigureAwait(true));
+            Assert.Equal("parameters must be an object", snapshotMalformedParams.GetProperty("reason").GetString());
+
+            var snapshotFrameUnsupported = AssertRpcNotOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserSnapshot, new
+            {
+                frame = "agentmux-child-frame"
+            }).ConfigureAwait(true));
+            Assert.Equal("unsupported parameter: frame", snapshotFrameUnsupported.GetProperty("reason").GetString());
+
+            var snapshotAfterUnsupported = AssertRpcNotOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserSnapshot, new
+            {
+                snapshot_after = true
+            }).ConfigureAwait(true));
+            Assert.Equal("unsupported parameter: snapshot_after", snapshotAfterUnsupported.GetProperty("reason").GetString());
+
+            var snapshotSurfaceUnsupported = AssertRpcNotOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserSnapshot, new
+            {
+                surface_id = "surface:1"
+            }).ConfigureAwait(true));
+            Assert.Equal("unsupported parameter: surface_id", snapshotSurfaceUnsupported.GetProperty("reason").GetString());
+
+            var snapshotBoolUnsupported = AssertRpcNotOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserSnapshot, new
+            {
+                compact = "true"
+            }).ConfigureAwait(true));
+            Assert.Equal("compact must be a boolean", snapshotBoolUnsupported.GetProperty("reason").GetString());
+
             var selectCountry = AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserSelect, new
             {
                 selector = "#rpc-country",
@@ -2476,6 +2606,7 @@ public sealed class MainWindowSmokeTests
             var browserIsSecretToken = $"agentmux-browser-is-{Guid.NewGuid():N}";
             var browserFindSecretToken = $"agentmux-browser-find-{Guid.NewGuid():N}";
             var browserSelectSecretToken = $"agentmux-browser-select-{Guid.NewGuid():N}";
+            var browserSnapshotSecretToken = $"agentmux-browser-snapshot-{Guid.NewGuid():N}";
             AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserEval, new
             {
                 script = $$"""
@@ -2493,6 +2624,10 @@ public sealed class MainWindowSmokeTests
                         findMarker.setAttribute("data-testid", {{System.Text.Json.JsonSerializer.Serialize(browserFindSecretToken)}});
                         findMarker.textContent = "find";
                         document.body.appendChild(findMarker);
+                        const snapshotMarker = document.createElement("div");
+                        snapshotMarker.id = "rpc-secret-snapshot";
+                        snapshotMarker.textContent = {{System.Text.Json.JsonSerializer.Serialize(browserSnapshotSecretToken)}};
+                        document.body.appendChild(snapshotMarker);
                         const selectMarker = document.createElement("select");
                         selectMarker.id = "rpc-secret-select";
                         selectMarker.innerHTML = `<option value="">Choose</option><option value="{{browserSelectSecretToken}}">secret</option>`;
@@ -2521,6 +2656,12 @@ public sealed class MainWindowSmokeTests
                 value = browserSelectSecretToken
             }));
             Assert.Equal(browserSelectSecretToken, tokenSelected.GetProperty("value").GetString());
+
+            var tokenSnapshot = AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserSnapshot, new
+            {
+                selector = "#rpc-secret-snapshot"
+            }));
+            Assert.Contains(browserSnapshotSecretToken, tokenSnapshot.GetProperty("text").GetString(), StringComparison.Ordinal);
 
             var topDocumentText = AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserText, new
             {
@@ -2935,6 +3076,7 @@ public sealed class MainWindowSmokeTests
             Assert.DoesNotContain(browserIsSecretToken, waitSnapshotText, StringComparison.Ordinal);
             Assert.DoesNotContain(browserFindSecretToken, waitSnapshotText, StringComparison.Ordinal);
             Assert.DoesNotContain(browserSelectSecretToken, waitSnapshotText, StringComparison.Ordinal);
+            Assert.DoesNotContain(browserSnapshotSecretToken, waitSnapshotText, StringComparison.Ordinal);
 
             var missingWait = AssertRpcNotOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserWaitForSelector, new
             {

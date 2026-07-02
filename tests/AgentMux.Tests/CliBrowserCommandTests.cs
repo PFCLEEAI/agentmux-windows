@@ -710,6 +710,66 @@ public sealed class CliBrowserCommandTests
     }
 
     [Fact]
+    public void BrowserSnapshotParsesOptions()
+    {
+        var request = Program.ParseBrowserRequestForTests([
+            "snapshot",
+            "--interactive",
+            "--cursor",
+            "false",
+            "--compact",
+            "--max-depth",
+            "3",
+            "--selector",
+            "main"
+        ], out var error);
+
+        Assert.Equal("", error);
+        Assert.NotNull(request);
+        Assert.Equal(AgentMuxMethods.BrowserSnapshot, request.Method);
+        var parameters = JsonSerializer.SerializeToElement(request.Parameters, AgentMuxJson.Options);
+        Assert.True(parameters.GetProperty("interactive").GetBoolean());
+        Assert.False(parameters.GetProperty("cursor").GetBoolean());
+        Assert.True(parameters.GetProperty("compact").GetBoolean());
+        Assert.Equal(3, parameters.GetProperty("maxDepth").GetInt32());
+        Assert.Equal("main", parameters.GetProperty("selector").GetString());
+    }
+
+    [Fact]
+    public void BrowserSnapshotDefaultsAreExplicit()
+    {
+        var request = Program.ParseBrowserRequestForTests(["snapshot"], out var error);
+
+        Assert.Equal("", error);
+        Assert.NotNull(request);
+        Assert.Equal(AgentMuxMethods.BrowserSnapshot, request.Method);
+        var parameters = JsonSerializer.SerializeToElement(request.Parameters, AgentMuxJson.Options);
+        Assert.False(parameters.GetProperty("interactive").GetBoolean());
+        Assert.False(parameters.GetProperty("cursor").GetBoolean());
+        Assert.False(parameters.GetProperty("compact").GetBoolean());
+        Assert.Equal(JsonValueKind.Null, parameters.GetProperty("maxDepth").ValueKind);
+        Assert.Equal(JsonValueKind.Null, parameters.GetProperty("selector").ValueKind);
+    }
+
+    [Theory]
+    [InlineData("snapshot body")]
+    [InlineData("snapshot --selector")]
+    [InlineData("snapshot --max-depth")]
+    [InlineData("snapshot --max-depth 0")]
+    [InlineData("snapshot --interactive maybe")]
+    [InlineData("snapshot --surface surface:1")]
+    [InlineData("snapshot --frame agentmux-child-frame")]
+    [InlineData("snapshot --snapshot-after")]
+    public void BrowserSnapshotRejectsInvalidShapes(string commandLine)
+    {
+        var args = commandLine.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        var request = Program.ParseBrowserRequestForTests(args, out var error);
+
+        Assert.Null(request);
+        Assert.Equal("Usage: agentmux browser snapshot [--interactive] [--cursor] [--compact] [--max-depth <count>] [--selector <css>]", error);
+    }
+
+    [Fact]
     public void BrowserFrameOptionRequiresValue()
     {
         var request = Program.ParseBrowserRequestForTests(["click", "#submit", "--frame"], out var error);

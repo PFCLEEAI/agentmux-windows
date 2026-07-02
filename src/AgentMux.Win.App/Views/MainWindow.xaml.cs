@@ -575,6 +575,7 @@ public partial class MainWindow : Window
             AgentMuxMethods.BrowserFindFirst => AgentMuxResponse.Success(request.Id, await HandleBrowserFindAsync(request.Params, "first").ConfigureAwait(true)),
             AgentMuxMethods.BrowserFindLast => AgentMuxResponse.Success(request.Id, await HandleBrowserFindAsync(request.Params, "last").ConfigureAwait(true)),
             AgentMuxMethods.BrowserFindNth => AgentMuxResponse.Success(request.Id, await HandleBrowserFindAsync(request.Params, "nth").ConfigureAwait(true)),
+            AgentMuxMethods.BrowserSnapshot => AgentMuxResponse.Success(request.Id, await HandleBrowserSnapshotAsync(request.Params).ConfigureAwait(true)),
             AgentMuxMethods.BrowserSelect => AgentMuxResponse.Success(request.Id, await HandleBrowserSelectAsync(request.Params).ConfigureAwait(true)),
             AgentMuxMethods.BrowserFill => AgentMuxResponse.Success(request.Id, await HandleBrowserFillAsync(request.Params).ConfigureAwait(true)),
             AgentMuxMethods.BrowserType => AgentMuxResponse.Success(request.Id, await HandleBrowserTypeAsync(request.Params).ConfigureAwait(true)),
@@ -1604,6 +1605,138 @@ public partial class MainWindow : Window
         }
 
         return await RunBrowserScriptAsync(view => view.SelectAsync(parsed.Selector!, parsed.Value!, parsed.Frame)).ConfigureAwait(true);
+    }
+
+    private async Task<object> HandleBrowserSnapshotAsync(JsonElement? parameters)
+    {
+        if (!TryReadBrowserSnapshotParams(parameters, out var parsed, out var reason))
+        {
+            return new { ok = false, reason };
+        }
+
+        return await RunBrowserScriptAsync(view => view.SnapshotAsync(
+            parsed.Selector,
+            parsed.Interactive,
+            parsed.Cursor,
+            parsed.Compact,
+            parsed.MaxDepth)).ConfigureAwait(true);
+    }
+
+    private static bool TryReadBrowserSnapshotParams(JsonElement? parameters, out BrowserSnapshotParams parsed, out string reason)
+    {
+        parsed = new BrowserSnapshotParams();
+        reason = "";
+        if (parameters is null or { ValueKind: JsonValueKind.Null or JsonValueKind.Undefined })
+        {
+            return true;
+        }
+
+        if (parameters is not { ValueKind: JsonValueKind.Object } element)
+        {
+            reason = "parameters must be an object";
+            return false;
+        }
+
+        foreach (var property in element.EnumerateObject())
+        {
+            if (property.Name.Equals("interactive", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!TryReadBoolProperty(property.Value, out var interactive))
+                {
+                    reason = "interactive must be a boolean";
+                    return false;
+                }
+
+                parsed.Interactive = interactive;
+                continue;
+            }
+
+            if (property.Name.Equals("cursor", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!TryReadBoolProperty(property.Value, out var cursor))
+                {
+                    reason = "cursor must be a boolean";
+                    return false;
+                }
+
+                parsed.Cursor = cursor;
+                continue;
+            }
+
+            if (property.Name.Equals("compact", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!TryReadBoolProperty(property.Value, out var compact))
+                {
+                    reason = "compact must be a boolean";
+                    return false;
+                }
+
+                parsed.Compact = compact;
+                continue;
+            }
+
+            if (property.Name.Equals("selector", StringComparison.OrdinalIgnoreCase))
+            {
+                if (property.Value.ValueKind == JsonValueKind.Null)
+                {
+                    parsed.Selector = null;
+                    continue;
+                }
+
+                if (property.Value.ValueKind != JsonValueKind.String)
+                {
+                    reason = "selector must be a string";
+                    return false;
+                }
+
+                parsed.Selector = property.Value.GetString();
+                continue;
+            }
+
+            if (property.Name.Equals("maxDepth", StringComparison.OrdinalIgnoreCase)
+                || property.Name.Equals("max_depth", StringComparison.OrdinalIgnoreCase))
+            {
+                if (property.Value.ValueKind == JsonValueKind.Null)
+                {
+                    parsed.MaxDepth = null;
+                    continue;
+                }
+
+                if (!TryReadPositiveIntProperty(property.Value, out var maxDepth))
+                {
+                    reason = "maxDepth must be positive";
+                    return false;
+                }
+
+                parsed.MaxDepth = maxDepth;
+                continue;
+            }
+
+            reason = $"unsupported parameter: {property.Name}";
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool TryReadBoolProperty(JsonElement property, out bool value)
+    {
+        value = false;
+        if (property.ValueKind == JsonValueKind.True)
+        {
+            value = true;
+            return true;
+        }
+
+        return property.ValueKind == JsonValueKind.False;
+    }
+
+    private static bool TryReadPositiveIntProperty(JsonElement property, out int value)
+    {
+        value = 0;
+        return property.ValueKind == JsonValueKind.Number
+            && property.TryGetInt32(out value)
+            && value > 0;
     }
 
     private static bool TryReadBrowserSelectParams(JsonElement? parameters, out BrowserSelectParams parsed, out string reason)
@@ -3182,6 +3315,7 @@ public partial class MainWindow : Window
             or AgentMuxMethods.BrowserFindFirst
             or AgentMuxMethods.BrowserFindLast
             or AgentMuxMethods.BrowserFindNth
+            or AgentMuxMethods.BrowserSnapshot
             or AgentMuxMethods.BrowserSelect
             or AgentMuxMethods.BrowserFill
             or AgentMuxMethods.BrowserType
@@ -4520,6 +4654,15 @@ public partial class MainWindow : Window
         public string? Selector { get; set; }
         public string? Value { get; set; }
         public string? Frame { get; set; }
+    }
+
+    private sealed class BrowserSnapshotParams
+    {
+        public string? Selector { get; set; }
+        public bool Interactive { get; set; }
+        public bool Cursor { get; set; }
+        public bool Compact { get; set; }
+        public int? MaxDepth { get; set; }
     }
 
     private sealed class BrowserFillParams

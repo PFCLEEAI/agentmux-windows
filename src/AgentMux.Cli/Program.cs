@@ -322,6 +322,11 @@ public static class Program
             return ParseBrowserFindRequest(args[1..], out error);
         }
 
+        if (args[0].Equals("snapshot", StringComparison.OrdinalIgnoreCase))
+        {
+            return ParseBrowserSnapshotRequest(args[1..], out error);
+        }
+
         if (args[0].Equals("select", StringComparison.OrdinalIgnoreCase))
         {
             return ParseBrowserSelectRequest(args[1..], out error);
@@ -1126,6 +1131,48 @@ public static class Program
 
         error = "";
         return new CliRequest(AgentMuxMethods.BrowserSelect, new { selector, value, frame });
+    }
+
+    private static CliRequest? ParseBrowserSnapshotRequest(string[] args, out string error)
+    {
+        const string usage = "Usage: agentmux browser snapshot [--interactive] [--cursor] [--compact] [--max-depth <count>] [--selector <css>]";
+        if (!NamedOptionsHaveExplicitValues(args, ["selector", "max-depth"]))
+        {
+            error = usage;
+            return null;
+        }
+
+        var named = ParseNamedWithBooleanFlags(args, ["interactive", "cursor", "compact"]);
+        if (!NamedKeysAreAllowed(named, ["interactive", "cursor", "compact", "max-depth", "selector"])
+            || ReadPositional(named).Length != 0)
+        {
+            error = usage;
+            return null;
+        }
+
+        if (!TryReadOptionalBoolFlag(named, "interactive", usage, out var interactive, out error)
+            || !TryReadOptionalBoolFlag(named, "cursor", usage, out var cursor, out error)
+            || !TryReadOptionalBoolFlag(named, "compact", usage, out var compact, out error))
+        {
+            return null;
+        }
+
+        int? maxDepth = null;
+        if (named.TryGetValue("max-depth", out var maxDepthValue))
+        {
+            if (!TryParsePositiveInt(maxDepthValue, out var parsedMaxDepth))
+            {
+                error = usage;
+                return null;
+            }
+
+            maxDepth = parsedMaxDepth;
+        }
+
+        named.TryGetValue("selector", out var selector);
+
+        error = "";
+        return new CliRequest(AgentMuxMethods.BrowserSnapshot, new { interactive, cursor, compact, maxDepth, selector });
     }
 
     private static string BrowserFindUsage(string kind) => kind switch
@@ -2506,6 +2553,8 @@ public static class Program
           agentmux browser find placeholder "Search"
           agentmux browser find testid login-submit
           agentmux browser find nth ".item" 0
+          agentmux browser snapshot --interactive --compact --max-depth 3
+          agentmux browser snapshot --selector main --cursor
           agentmux browser select "#country" US
           agentmux browser select --frame agentmux-child-frame "#country" FR
           agentmux browser fill "#prompt" "write tests"

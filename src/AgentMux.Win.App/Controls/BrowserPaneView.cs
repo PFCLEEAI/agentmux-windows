@@ -498,6 +498,380 @@ internal sealed class BrowserPaneView : Grid, IDisposable
             """).ConfigureAwait(true);
     }
 
+    public async Task<string> SnapshotAsync(
+        string? selector = null,
+        bool interactive = false,
+        bool cursor = false,
+        bool compact = false,
+        int? maxDepth = null)
+    {
+        var normalizedSelector = NormalizeSelector(selector);
+        var requestedMaxDepth = maxDepth;
+        var normalizedMaxDepth = Math.Clamp(maxDepth ?? 3, 1, 12);
+
+        await EnsureReadyAsync().ConfigureAwait(true);
+        try
+        {
+            return await _webView.CoreWebView2!.ExecuteScriptAsync($$"""
+                (() => {
+                  const selector = {{JsonSerializer.Serialize(normalizedSelector)}};
+                  const interactive = {{JsonSerializer.Serialize(interactive)}};
+                  const cursor = {{JsonSerializer.Serialize(cursor)}};
+                  const compact = {{JsonSerializer.Serialize(compact)}};
+                  const maxDepth = {{normalizedMaxDepth}};
+                  const requestedMaxDepth = {{JsonSerializer.Serialize(requestedMaxDepth)}};
+                  const maxNodes = 200;
+                  const maxVisited = 2000;
+                  const maxFieldChars = 300;
+                  {{FrameScopeScript(null, scrollFrameIntoView: false)}}
+
+                  const scope = resolveAutomationScope();
+                  const baseResult = () => ({
+                    kind: "snapshot",
+                    selector,
+                    frame: scope?.frame ?? null,
+                    interactive,
+                    cursor,
+                    compact,
+                    maxDepth,
+                    requestedMaxDepth,
+                    maxNodes
+                  });
+
+                  if (!scope.ok) {
+                    return { ...scope, ...baseResult() };
+                  }
+
+                  const normalize = value => String(value ?? "").replace(/\s+/g, " ").trim();
+                  const cap = value => {
+                    const normalized = normalize(value);
+                    return normalized.length > maxFieldChars ? normalized.slice(0, maxFieldChars) : normalized;
+                  };
+                  const capOrNull = value => {
+                    const capped = cap(value);
+                    return capped ? capped : null;
+                  };
+                  const visibleText = element => typeof element?.innerText === "string"
+                    ? element.innerText
+                    : (element?.textContent || "");
+                  const cssIdentifier = input => {
+                    const raw = String(input ?? "");
+                    if (scope.window.CSS && typeof scope.window.CSS.escape === "function") {
+                      return scope.window.CSS.escape(raw);
+                    }
+
+                    return raw.replace(/[^a-zA-Z0-9_-]/g, "\\$&");
+                  };
+                  const cssString = input => String(input ?? "")
+                    .replace(/\\/g, "\\\\")
+                    .replace(/"/g, "\\\"")
+                    .replace(/\r/g, "\\D ")
+                    .replace(/\n/g, "\\A ");
+                  const idText = (documentRef, id) => {
+                    const element = documentRef.getElementById(id);
+                    return element ? visibleText(element) : "";
+                  };
+                  const labelText = element => {
+                    const labels = element?.labels ? Array.from(element.labels) : [];
+                    if (labels.length > 0) {
+                      return normalize(labels.map(label => visibleText(label)).join(" "));
+                    }
+
+                    const id = element?.getAttribute?.("id");
+                    if (id) {
+                      const label = element.ownerDocument.querySelector(`label[for="${cssString(id)}"]`);
+                      if (label) {
+                        return normalize(visibleText(label));
+                      }
+                    }
+
+                    const wrappingLabel = element?.closest?.("label");
+                    return wrappingLabel ? normalize(visibleText(wrappingLabel)) : "";
+                  };
+                  const accessibleName = element => {
+                    const ariaLabel = element.getAttribute?.("aria-label");
+                    if (ariaLabel) {
+                      return normalize(ariaLabel);
+                    }
+
+                    const labelledBy = element.getAttribute?.("aria-labelledby");
+                    if (labelledBy) {
+                      const labelledText = labelledBy
+                        .split(/\s+/)
+                        .map(id => idText(element.ownerDocument, id))
+                        .join(" ");
+                      if (normalize(labelledText)) {
+                        return normalize(labelledText);
+                      }
+                    }
+
+                    const label = labelText(element);
+                    if (label) {
+                      return label;
+                    }
+
+                    const alt = element.getAttribute?.("alt");
+                    if (alt) {
+                      return normalize(alt);
+                    }
+
+                    const title = element.getAttribute?.("title");
+                    if (title) {
+                      return normalize(title);
+                    }
+
+                    const placeholder = element.getAttribute?.("placeholder");
+                    if (placeholder) {
+                      return normalize(placeholder);
+                    }
+
+                    const tag = String(element.tagName || "").toLowerCase();
+                    const type = String(element.getAttribute?.("type") || "").toLowerCase();
+                    if (tag === "input" && ["button", "submit", "reset"].includes(type) && "value" in element) {
+                      return normalize(element.value);
+                    }
+
+                    return normalize(visibleText(element));
+                  };
+                  const roleOf = element => {
+                    const explicitRole = element.getAttribute?.("role");
+                    if (explicitRole) {
+                      return explicitRole.split(/\s+/)[0].toLowerCase();
+                    }
+
+                    const tag = String(element.tagName || "").toLowerCase();
+                    const type = String(element.getAttribute?.("type") || "").toLowerCase();
+                    if (tag === "button") return "button";
+                    if (tag === "a" && element.hasAttribute("href")) return "link";
+                    if (tag === "textarea") return "textbox";
+                    if (tag === "select") return "combobox";
+                    if (tag === "img") return "img";
+                    if (/^h[1-6]$/.test(tag)) return "heading";
+                    if (tag === "nav") return "navigation";
+                    if (tag === "main") return "main";
+                    if (tag === "header") return "banner";
+                    if (tag === "footer") return "contentinfo";
+                    if (tag === "form") return "form";
+                    if (tag === "section") return "region";
+                    if (tag === "input") {
+                      if (type === "checkbox") return "checkbox";
+                      if (type === "radio") return "radio";
+                      if (type === "range") return "slider";
+                      if (type === "number") return "spinbutton";
+                      if (["button", "submit", "reset"].includes(type)) return "button";
+                      return "textbox";
+                    }
+
+                    return "";
+                  };
+                  const bestSelector = element => {
+                    const id = element.getAttribute?.("id");
+                    if (id) {
+                      return `#${cssIdentifier(id)}`;
+                    }
+
+                    const testId = element.getAttribute?.("data-testid");
+                    if (testId) {
+                      return `[data-testid="${cssString(testId)}"]`;
+                    }
+
+                    const nameAttr = element.getAttribute?.("name");
+                    if (nameAttr) {
+                      return `${String(element.tagName || "element").toLowerCase()}[name="${cssString(nameAttr)}"]`;
+                    }
+
+                    return String(element.tagName || "element").toLowerCase();
+                  };
+                  const isIgnoredTag = element => {
+                    const tag = String(element.tagName || "").toLowerCase();
+                    return ["script", "style", "template", "meta", "link", "noscript"].includes(tag);
+                  };
+                  const isVisible = element => {
+                    if (!element || element.nodeType !== Node.ELEMENT_NODE) {
+                      return false;
+                    }
+
+                    if (element.hidden || element.getAttribute?.("aria-hidden") === "true") {
+                      return false;
+                    }
+
+                    const style = scope.window.getComputedStyle(element);
+                    if (style.display === "none" || style.visibility === "hidden") {
+                      return false;
+                    }
+
+                    const rects = element.getClientRects();
+                    return rects.length > 0 || element === scope.document.body || element === scope.document.documentElement;
+                  };
+                  const isInteractive = element => {
+                    const tag = String(element.tagName || "").toLowerCase();
+                    return ["a", "button", "input", "select", "textarea", "summary", "details"].includes(tag)
+                      || element.isContentEditable
+                      || element.hasAttribute?.("role")
+                      || element.hasAttribute?.("tabindex")
+                      || typeof element.onclick === "function";
+                  };
+                  const checkedOf = element => {
+                    if ("checked" in element) {
+                      return !!element.checked;
+                    }
+
+                    const ariaChecked = element.getAttribute?.("aria-checked");
+                    return ariaChecked === null ? null : ariaChecked === "true";
+                  };
+                  const disabledOf = element => {
+                    const disabledByPseudo = typeof element.matches === "function" && element.matches(":disabled");
+                    return !!(disabledByPseudo || element.disabled === true || element.getAttribute?.("aria-disabled") === "true");
+                  };
+                  const hrefOf = element => {
+                    const tag = String(element.tagName || "").toLowerCase();
+                    if (tag === "a" && element.href) {
+                      return element.href;
+                    }
+
+                    return "";
+                  };
+                  const describe = (element, depth) => {
+                    const role = roleOf(element);
+                    const checked = checkedOf(element);
+                    const active = scope.document.activeElement;
+                    const hovered = typeof element.matches === "function" && element.matches(":hover");
+                    return {
+                      depth,
+                      tagName: String(element.tagName || "").toLowerCase(),
+                      role: role || null,
+                      name: cap(accessibleName(element)),
+                      text: cap(visibleText(element)),
+                      id: capOrNull(element.getAttribute?.("id")),
+                      testId: capOrNull(element.getAttribute?.("data-testid")),
+                      selector: cap(bestSelector(element)),
+                      focused: cursor ? (active === element || element.contains(active)) : false,
+                      hovered: cursor ? hovered : false,
+                      disabled: disabledOf(element),
+                      checked,
+                      href: cap(hrefOf(element))
+                    };
+                  };
+                  const hasUsefulText = element => {
+                    const text = normalize(visibleText(element));
+                    if (!text) {
+                      return false;
+                    }
+
+                    return !Array.from(element.children || []).some(child => normalize(visibleText(child)) === text);
+                  };
+                  const shouldInclude = (element, depth, root) => {
+                    if (isIgnoredTag(element) || !isVisible(element)) {
+                      return false;
+                    }
+
+                    if (interactive) {
+                      return isInteractive(element);
+                    }
+
+                    if (element === root) {
+                      return true;
+                    }
+
+                    const role = roleOf(element);
+                    return !!(role
+                      || element.getAttribute?.("id")
+                      || element.getAttribute?.("data-testid")
+                      || isInteractive(element)
+                      || hasUsefulText(element));
+                  };
+                  const quote = value => String(value || "").replace(/"/g, "\\\"");
+                  const lineFor = node => {
+                    const indent = "  ".repeat(node.depth);
+                    const label = node.role || node.tagName || "element";
+                    if (compact) {
+                      const name = node.name ? ` "${quote(node.name)}"` : "";
+                      const id = node.id ? ` #${node.id}` : "";
+                      const state = node.focused ? " focused" : node.disabled ? " disabled" : "";
+                      return `${indent}${label}${name}${id}${state}`;
+                    }
+
+                    const parts = [label];
+                    if (node.name) parts.push(`name="${quote(node.name)}"`);
+                    if (node.text && node.text !== node.name) parts.push(`text="${quote(node.text)}"`);
+                    if (node.id) parts.push(`id="${quote(node.id)}"`);
+                    if (node.testId) parts.push(`testid="${quote(node.testId)}"`);
+                    if (node.href) parts.push(`href="${quote(node.href)}"`);
+                    if (node.checked !== null) parts.push(`checked=${node.checked}`);
+                    if (node.disabled) parts.push("disabled");
+                    if (node.focused) parts.push("focused");
+                    if (node.hovered) parts.push("hovered");
+                    return indent + parts.join(" ");
+                  };
+
+                  let root = scope.document.body || scope.document.documentElement;
+                  if (selector) {
+                    try {
+                      root = scope.document.querySelector(selector);
+                    } catch {
+                      return { ok: false, ...baseResult(), reason: "invalid selector" };
+                    }
+
+                    if (!root) {
+                      return { ok: false, ...baseResult(), reason: "selector not found" };
+                    }
+                  }
+
+                  const nodes = [];
+                  let nodeCount = 0;
+                  let visited = 0;
+                  let truncated = false;
+                  const walk = (element, depth) => {
+                    if (!element || visited >= maxVisited) {
+                      truncated = true;
+                      return;
+                    }
+
+                    visited += 1;
+                    if (depth > maxDepth) {
+                      truncated = true;
+                      return;
+                    }
+
+                    if (shouldInclude(element, depth, root)) {
+                      nodeCount += 1;
+                      if (nodes.length < maxNodes) {
+                        nodes.push(describe(element, depth));
+                      } else {
+                        truncated = true;
+                      }
+                    }
+
+                    for (const child of Array.from(element.children || [])) {
+                      walk(child, depth + 1);
+                      if (visited >= maxVisited) {
+                        truncated = true;
+                        break;
+                      }
+                    }
+                  };
+
+                  walk(root, 0);
+                  const lines = nodes.map(lineFor);
+                  return {
+                    ok: true,
+                    ...baseResult(),
+                    nodeCount,
+                    returned: nodes.length,
+                    visited,
+                    truncated,
+                    text: lines.join("\n"),
+                    nodes
+                  };
+                })()
+                """).ConfigureAwait(true);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or System.Runtime.InteropServices.COMException)
+        {
+            return """{"ok":false,"reason":"document unavailable"}""";
+        }
+    }
+
     public async Task<string> ClickAsync(string selector, string? frame = null)
     {
         if (string.IsNullOrWhiteSpace(selector))
