@@ -1412,6 +1412,12 @@ public sealed class MainWindowSmokeTests
             Assert.False(textOnTerminal.GetProperty("ok").GetBoolean());
             Assert.Equal("active pane is not a browser", textOnTerminal.GetProperty("reason").GetString());
 
+            var urlOnTerminalResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserGetUrl);
+            Assert.True(urlOnTerminalResponse.Ok, urlOnTerminalResponse.Error);
+            var urlOnTerminal = System.Text.Json.JsonSerializer.SerializeToElement(urlOnTerminalResponse.Result, AgentMuxJson.Options);
+            Assert.False(urlOnTerminal.GetProperty("ok").GetBoolean());
+            Assert.Equal("active pane is not a browser", urlOnTerminal.GetProperty("reason").GetString());
+
             window.OpenBrowserInActivePaneForSmokeTest("about:blank");
             Assert.Equal(PaneKind.Browser, window.ActivePaneKindForSmokeTest);
             var browserPaneId = window.ActivePaneIdForSmokeTest;
@@ -1855,6 +1861,64 @@ public sealed class MainWindowSmokeTests
                 var waitLoadSnapshotText = await System.IO.File.ReadAllTextAsync(store.FilePath).ConfigureAwait(true);
                 Assert.DoesNotContain(waitLoadSecretToken, waitLoadSnapshotText, StringComparison.Ordinal);
             }
+
+            var navigationPageA = System.IO.Path.Combine(root, "browser-navigation-a.html");
+            var navigationPageB = System.IO.Path.Combine(root, "browser-navigation-b.html");
+            await System.IO.File.WriteAllTextAsync(
+                navigationPageA,
+                "<!doctype html><html><head><title>AgentMux nav A</title></head><body><h1>agentmux browser navigation A</h1></body></html>").ConfigureAwait(true);
+            await System.IO.File.WriteAllTextAsync(
+                navigationPageB,
+                "<!doctype html><html><head><title>AgentMux nav B</title></head><body><h1>agentmux browser navigation B</h1></body></html>").ConfigureAwait(true);
+            var navigationUrlA = new Uri(navigationPageA).AbsoluteUri;
+            var navigationUrlB = new Uri(navigationPageB).AbsoluteUri;
+
+            var openNavigationA = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.OpenUrl, new { url = navigationUrlA }).ConfigureAwait(true);
+            Assert.True(openNavigationA.Ok, openNavigationA.Error);
+            var openNavigationAResult = System.Text.Json.JsonSerializer.SerializeToElement(openNavigationA.Result, AgentMuxJson.Options);
+            Assert.True(openNavigationAResult.GetProperty("opened").GetBoolean(), openNavigationAResult.ToString());
+            Assert.Equal(navigationUrlA, openNavigationAResult.GetProperty("url").GetString());
+            AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserWaitForLoad, new
+            {
+                state = "load",
+                timeoutMs = 5000
+            }).ConfigureAwait(true));
+            var openNavigationB = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.OpenUrl, new { url = navigationUrlB }).ConfigureAwait(true);
+            Assert.True(openNavigationB.Ok, openNavigationB.Error);
+            var openNavigationBResult = System.Text.Json.JsonSerializer.SerializeToElement(openNavigationB.Result, AgentMuxJson.Options);
+            Assert.True(openNavigationBResult.GetProperty("opened").GetBoolean(), openNavigationBResult.ToString());
+            Assert.Equal(navigationUrlB, openNavigationBResult.GetProperty("url").GetString());
+            AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserWaitForLoad, new
+            {
+                state = "load",
+                timeoutMs = 5000
+            }).ConfigureAwait(true));
+
+            var currentUrlBeforeBack = AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserGetUrl).ConfigureAwait(true));
+            Assert.Equal(navigationUrlB, currentUrlBeforeBack.GetProperty("url").GetString());
+            Assert.True(currentUrlBeforeBack.GetProperty("canGoBack").GetBoolean(), currentUrlBeforeBack.ToString());
+
+            var backResult = AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserBack).ConfigureAwait(true));
+            Assert.Equal(navigationUrlA, backResult.GetProperty("url").GetString());
+            Assert.True(backResult.GetProperty("canGoForward").GetBoolean(), backResult.ToString());
+            var backText = AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserText, new
+            {
+                selector = "h1"
+            }).ConfigureAwait(true));
+            Assert.Equal("agentmux browser navigation A", backText.GetProperty("text").GetString());
+
+            var forwardResult = AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserForward).ConfigureAwait(true));
+            Assert.Equal(navigationUrlB, forwardResult.GetProperty("url").GetString());
+            var forwardText = AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserText, new
+            {
+                selector = "h1"
+            }).ConfigureAwait(true));
+            Assert.Equal("agentmux browser navigation B", forwardText.GetProperty("text").GetString());
+
+            var reloadResult = AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserReload).ConfigureAwait(true));
+            Assert.Equal(navigationUrlB, reloadResult.GetProperty("url").GetString());
+            var currentUrlAfterReload = AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserGetUrl).ConfigureAwait(true));
+            Assert.Equal(navigationUrlB, currentUrlAfterReload.GetProperty("url").GetString());
 
             var setup = await WaitForRpcOkAsync(window, AgentMuxMethods.BrowserEval, new
             {

@@ -258,6 +258,55 @@ public static class Program
             return new CliRequest(AgentMuxMethods.OpenUrl, ParseOpenUrl(args[1..]));
         }
 
+        if (args[0].Equals("back", StringComparison.OrdinalIgnoreCase))
+        {
+            if (args.Length != 1)
+            {
+                error = "Usage: agentmux browser back";
+                return null;
+            }
+
+            error = "";
+            return new CliRequest(AgentMuxMethods.BrowserBack, new { });
+        }
+
+        if (args[0].Equals("forward", StringComparison.OrdinalIgnoreCase))
+        {
+            if (args.Length != 1)
+            {
+                error = "Usage: agentmux browser forward";
+                return null;
+            }
+
+            error = "";
+            return new CliRequest(AgentMuxMethods.BrowserForward, new { });
+        }
+
+        if (args[0].Equals("reload", StringComparison.OrdinalIgnoreCase))
+        {
+            if (args.Length != 1)
+            {
+                error = "Usage: agentmux browser reload";
+                return null;
+            }
+
+            error = "";
+            return new CliRequest(AgentMuxMethods.BrowserReload, new { });
+        }
+
+        if (args[0].Equals("url", StringComparison.OrdinalIgnoreCase)
+            || args[0].Equals("get-url", StringComparison.OrdinalIgnoreCase))
+        {
+            if (args.Length != 1)
+            {
+                error = "Usage: agentmux browser url";
+                return null;
+            }
+
+            error = "";
+            return new CliRequest(AgentMuxMethods.BrowserGetUrl, new { });
+        }
+
         if (args[0].Equals("eval", StringComparison.OrdinalIgnoreCase))
         {
             var named = ParseNamed(args[1..]);
@@ -1870,6 +1919,11 @@ public static class Program
           agentmux pane resize --cols 100 --rows 30
           agentmux open-url https://example.com
           agentmux browser open https://example.com
+          agentmux browser back
+          agentmux browser forward
+          agentmux browser reload
+          agentmux browser url
+          agentmux browser get-url
           agentmux browser eval "document.title"
           agentmux browser text --selector "main" --max-chars 10000
           agentmux browser click "#submit"

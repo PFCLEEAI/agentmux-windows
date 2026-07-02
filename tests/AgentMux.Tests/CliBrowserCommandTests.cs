@@ -45,6 +45,35 @@ public sealed class CliBrowserCommandTests
     }
 
     [Theory]
+    [InlineData("back", AgentMuxMethods.BrowserBack)]
+    [InlineData("forward", AgentMuxMethods.BrowserForward)]
+    [InlineData("reload", AgentMuxMethods.BrowserReload)]
+    [InlineData("url", AgentMuxMethods.BrowserGetUrl)]
+    [InlineData("get-url", AgentMuxMethods.BrowserGetUrl)]
+    public void BrowserNavigationParsesNoArgumentCommands(string command, string method)
+    {
+        var request = Program.ParseBrowserRequestForTests([command], out var error);
+
+        Assert.Equal("", error);
+        Assert.NotNull(request);
+        Assert.Equal(method, request.Method);
+    }
+
+    [Theory]
+    [InlineData("back", "Usage: agentmux browser back")]
+    [InlineData("forward", "Usage: agentmux browser forward")]
+    [InlineData("reload", "Usage: agentmux browser reload")]
+    [InlineData("url", "Usage: agentmux browser url")]
+    [InlineData("get-url", "Usage: agentmux browser url")]
+    public void BrowserNavigationRejectsExtraArguments(string command, string usage)
+    {
+        var request = Program.ParseBrowserRequestForTests([command, "--surface", "surface:1"], out var error);
+
+        Assert.Null(request);
+        Assert.Equal(usage, error);
+    }
+
+    [Theory]
     [InlineData("text")]
     [InlineData("inner-text")]
     public void BrowserTextParsesSelectorFrameAndMaxChars(string command)

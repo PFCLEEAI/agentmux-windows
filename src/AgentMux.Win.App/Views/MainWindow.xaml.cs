@@ -547,6 +547,10 @@ public partial class MainWindow : Window
             AgentMuxMethods.ToggleZoom => AgentMuxResponse.Success(request.Id, HandleToggleZoom()),
             AgentMuxMethods.ClosePane => AgentMuxResponse.Success(request.Id, HandleClosePane()),
             AgentMuxMethods.OpenUrl => AgentMuxResponse.Success(request.Id, HandleOpenUrl(request.Params)),
+            AgentMuxMethods.BrowserBack => AgentMuxResponse.Success(request.Id, await HandleBrowserBackAsync().ConfigureAwait(true)),
+            AgentMuxMethods.BrowserForward => AgentMuxResponse.Success(request.Id, await HandleBrowserForwardAsync().ConfigureAwait(true)),
+            AgentMuxMethods.BrowserReload => AgentMuxResponse.Success(request.Id, await HandleBrowserReloadAsync().ConfigureAwait(true)),
+            AgentMuxMethods.BrowserGetUrl => AgentMuxResponse.Success(request.Id, await HandleBrowserGetUrlAsync().ConfigureAwait(true)),
             AgentMuxMethods.BrowserEval => AgentMuxResponse.Success(request.Id, await HandleBrowserEvalAsync(request.Params).ConfigureAwait(true)),
             AgentMuxMethods.BrowserText => AgentMuxResponse.Success(request.Id, await HandleBrowserTextAsync(request.Params).ConfigureAwait(true)),
             AgentMuxMethods.BrowserClick => AgentMuxResponse.Success(request.Id, await HandleBrowserClickAsync(request.Params).ConfigureAwait(true)),
@@ -1369,6 +1373,26 @@ public partial class MainWindow : Window
 
         var url = OpenBrowserInPane(pane, parsed?.Url);
         return new { opened = true, paneId = pane.Id, url };
+    }
+
+    private async Task<object> HandleBrowserBackAsync()
+    {
+        return await RunBrowserNavigationAsync(view => view.GoBackAsync()).ConfigureAwait(true);
+    }
+
+    private async Task<object> HandleBrowserForwardAsync()
+    {
+        return await RunBrowserNavigationAsync(view => view.GoForwardAsync()).ConfigureAwait(true);
+    }
+
+    private async Task<object> HandleBrowserReloadAsync()
+    {
+        return await RunBrowserNavigationAsync(view => view.ReloadAsync()).ConfigureAwait(true);
+    }
+
+    private async Task<object> HandleBrowserGetUrlAsync()
+    {
+        return await RunBrowserNavigationAsync(view => view.GetCurrentUrlAsync()).ConfigureAwait(true);
     }
 
     private async Task<object> HandleBrowserEvalAsync(JsonElement? parameters)
@@ -2776,6 +2800,66 @@ public partial class MainWindow : Window
         return normalizedUrl;
     }
 
+    private async Task<object> RunBrowserNavigationAsync(Func<BrowserPaneView, Task<string>> action)
+    {
+        var pane = ActivePane();
+        if (!TryGetActiveBrowserView(out var view, out var reason))
+        {
+            return new { ok = false, reason };
+        }
+
+        try
+        {
+            var resultJson = await action(view).ConfigureAwait(true);
+            var result = ParseScriptJson(resultJson);
+            if (result is JsonElement { ValueKind: JsonValueKind.Object } element)
+            {
+                if (element.TryGetProperty("url", out var urlElement)
+                    && urlElement.ValueKind == JsonValueKind.String)
+                {
+                    SyncActiveBrowserPaneUrl(pane, urlElement.GetString());
+                }
+
+                if (element.TryGetProperty("ok", out _))
+                {
+                    return element.Clone();
+                }
+            }
+
+            return new { ok = true, result, paneId = pane?.Id };
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or ArgumentException or System.Runtime.InteropServices.COMException)
+        {
+            return new { ok = false, reason = ex.Message, paneId = pane?.Id };
+        }
+    }
+
+    private void SyncActiveBrowserPaneUrl(PaneState? pane, string? url)
+    {
+        if (pane?.Kind != PaneKind.Browser || string.IsNullOrWhiteSpace(url))
+        {
+            return;
+        }
+
+        if (!TryNormalizeAbsoluteBrowserUrl(url.Trim(), out var normalizedUrl))
+        {
+            return;
+        }
+
+        var title = BrowserTitle(normalizedUrl);
+        if (string.Equals(pane.Url, normalizedUrl, StringComparison.Ordinal)
+            && string.Equals(pane.Title, title, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        pane.Url = normalizedUrl;
+        pane.Title = title;
+        UpdateBrowserView(pane);
+        QueueSessionSave();
+        RefreshWorkspaceView();
+    }
+
     private async Task<object> RunBrowserScriptAsync(Func<BrowserPaneView, Task<string>> action)
     {
         if (!TryGetActiveBrowserView(out var view, out var reason))
@@ -2836,7 +2920,11 @@ public partial class MainWindow : Window
 
     private static bool IsBrowserAutomationMethod(string method)
     {
-        return method is AgentMuxMethods.BrowserEval
+        return method is AgentMuxMethods.BrowserBack
+            or AgentMuxMethods.BrowserForward
+            or AgentMuxMethods.BrowserReload
+            or AgentMuxMethods.BrowserGetUrl
+            or AgentMuxMethods.BrowserEval
             or AgentMuxMethods.BrowserText
             or AgentMuxMethods.BrowserClick
             or AgentMuxMethods.BrowserFill

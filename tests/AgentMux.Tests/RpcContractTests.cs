@@ -90,6 +90,10 @@ public sealed class RpcContractTests
     [Fact]
     public void BrowserAutomationMethodsAreStable()
     {
+        Assert.Equal("browser.back", AgentMuxMethods.BrowserBack);
+        Assert.Equal("browser.forward", AgentMuxMethods.BrowserForward);
+        Assert.Equal("browser.reload", AgentMuxMethods.BrowserReload);
+        Assert.Equal("browser.url.get", AgentMuxMethods.BrowserGetUrl);
         Assert.Equal("surface.eval_js", AgentMuxMethods.BrowserEval);
         Assert.Equal("surface.browser_text", AgentMuxMethods.BrowserText);
         Assert.Equal("surface.click_selector", AgentMuxMethods.BrowserClick);

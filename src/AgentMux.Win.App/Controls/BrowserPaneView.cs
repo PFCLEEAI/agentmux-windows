@@ -227,6 +227,48 @@ internal sealed class BrowserPaneView : Grid, IDisposable
         return result;
     }
 
+    public async Task<string> GoBackAsync()
+    {
+        await EnsureReadyAsync().ConfigureAwait(true);
+        var core = _webView.CoreWebView2!;
+        if (!core.CanGoBack)
+        {
+            return SerializeNavigationResult(false, "cannot go back");
+        }
+
+        core.GoBack();
+        await WaitForNavigationAsync(allowStartDelay: true).ConfigureAwait(true);
+        return SerializeNavigationResult(true);
+    }
+
+    public async Task<string> GoForwardAsync()
+    {
+        await EnsureReadyAsync().ConfigureAwait(true);
+        var core = _webView.CoreWebView2!;
+        if (!core.CanGoForward)
+        {
+            return SerializeNavigationResult(false, "cannot go forward");
+        }
+
+        core.GoForward();
+        await WaitForNavigationAsync(allowStartDelay: true).ConfigureAwait(true);
+        return SerializeNavigationResult(true);
+    }
+
+    public async Task<string> ReloadAsync()
+    {
+        await EnsureReadyAsync().ConfigureAwait(true);
+        _webView.CoreWebView2!.Reload();
+        await WaitForNavigationAsync(allowStartDelay: true).ConfigureAwait(true);
+        return SerializeNavigationResult(true);
+    }
+
+    public async Task<string> GetCurrentUrlAsync()
+    {
+        await EnsureReadyAsync().ConfigureAwait(true);
+        return SerializeNavigationResult(true);
+    }
+
     public async Task<string> ReadTextAsync(string? selector = null, string? frame = null, int? maxChars = null, string? paneId = null)
     {
         if (maxChars is <= 0)
@@ -1352,6 +1394,8 @@ internal sealed class BrowserPaneView : Grid, IDisposable
                 _pendingNavigationId = null;
                 _navigationCompletion?.TrySetResult();
             }
+
+            SyncCurrentUrlFromWebView();
         };
         _webViewEventsWired = true;
     }
@@ -2219,6 +2263,44 @@ internal sealed class BrowserPaneView : Grid, IDisposable
         _navigationCompletion?.TrySetResult();
         _webView.Visibility = Visibility.Collapsed;
         _fallback.Visibility = Visibility.Visible;
+    }
+
+    private string SerializeNavigationResult(bool ok, string? reason = null)
+    {
+        var core = _webView.CoreWebView2;
+        return JsonSerializer.Serialize(new
+        {
+            ok,
+            reason,
+            url = SyncCurrentUrlFromWebView(),
+            canGoBack = core?.CanGoBack ?? false,
+            canGoForward = core?.CanGoForward ?? false
+        }, AgentMuxJson.Options);
+    }
+
+    private string SyncCurrentUrlFromWebView()
+    {
+        var currentUrl = CurrentWebViewUrl();
+        if (!string.IsNullOrWhiteSpace(currentUrl)
+            && !string.Equals(_url, currentUrl, StringComparison.Ordinal))
+        {
+            _url = currentUrl;
+            _addressBox.Text = _url;
+            _fallback.Text = FallbackText(_url);
+        }
+
+        return _url;
+    }
+
+    private string CurrentWebViewUrl()
+    {
+        var coreSource = _webView.CoreWebView2?.Source;
+        if (!string.IsNullOrWhiteSpace(coreSource))
+        {
+            return coreSource;
+        }
+
+        return _webView.Source?.AbsoluteUri ?? _url;
     }
 
     private static string FallbackText(string url) => $"Browser pane: {url}";
