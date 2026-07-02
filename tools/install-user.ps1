@@ -78,7 +78,8 @@ function Assert-RequiredPackageFiles {
     "EVIDENCE.json",
     "SHA256SUMS.txt",
     "tools\install-user.ps1",
-    "tools\manual-desktop-smoke.ps1"
+    "tools\manual-desktop-smoke.ps1",
+    "tools\verify-manual-desktop-evidence.ps1"
   )) {
     if (-not (Test-Path -LiteralPath (Join-Path $Root $requiredFile) -PathType Leaf)) {
       throw "Required package file missing: $requiredFile"

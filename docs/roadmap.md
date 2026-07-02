@@ -68,6 +68,7 @@
 - Package provenance, checksums, and packaged CLI smoke. Implemented in CI.
 - Package evidence manifest. Implemented as `EVIDENCE.json` with hosted-gate names, smoke artifact names, checksum coverage, proof boundaries, and the still-required manual desktop gate.
 - Packaged manual desktop-smoke runbook/helper. Implemented so testers can run the proof packet from an extracted package.
+- Manual desktop evidence verifier. Implemented as `tools\verify-manual-desktop-evidence.ps1` for checking helper evidence packet shape, strict package checksums, and manual-gate metadata without claiming physical-keyboard proof.
 - No-admin user install helper. Implemented as `tools\install-user.ps1` for copying an extracted package to `%LOCALAPPDATA%\Programs\AgentMux`, creating user-local command shims, and optionally updating only the current user's PATH.
 - Shared package script. Implemented so CI artifacts and release assets use the same required-file and CLI-smoke gate.
 - Prerelease ZIP workflow. Implemented for `v*` tags with ZIP round-trip smoke and outer SHA-256 checksum.

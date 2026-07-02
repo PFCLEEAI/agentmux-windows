@@ -54,7 +54,7 @@ The package contains:
 
 - `AgentMux.exe`: WPF desktop app
 - `cli\agentmux.exe`: CLI for the running app
-- runtime config, dependency files, WebView2/xterm assets, `PACKAGE.json`, `EVIDENCE.json`, `SHA256SUMS.txt`, README, license, a no-admin user install helper, and the manual desktop-smoke helper/runbook
+- runtime config, dependency files, WebView2/xterm assets, `PACKAGE.json`, `EVIDENCE.json`, `SHA256SUMS.txt`, README, license, a no-admin user install helper, the manual desktop-smoke helper/runbook, and a manual evidence verifier
 
 It expects .NET 9 Desktop Runtime and WebView2 Runtime on the Windows machine. It is a smoke-ready pre-alpha package with a lightweight user install helper, not a signed installer or MSIX package.
 
@@ -79,7 +79,7 @@ For the manual desktop proof gate, run:
 .\tools\manual-desktop-smoke.ps1
 ```
 
-Follow [docs/manual-windows-desktop-smoke.md](docs/manual-windows-desktop-smoke.md) to collect screenshots, helper output, and pass/fail notes. The helper preflights the package and can launch AgentMux, but helper execution alone is not a pass; actual visible Windows desktop and physical-keyboard evidence is still required.
+Follow [docs/manual-windows-desktop-smoke.md](docs/manual-windows-desktop-smoke.md) to collect screenshots, helper output, and pass/fail notes. After the evidence folder is filled, run `.\tools\verify-manual-desktop-evidence.ps1 -EvidencePath <evidence-folder> -PackagePath <package-folder>` to check packet shape, package checksums, and manual-gate metadata. The helper and verifier preflight the package and evidence packet, but script execution alone is not a pass; actual visible Windows desktop and physical-keyboard evidence is still required.
 
 To produce the package from a Windows checkout after building:
 

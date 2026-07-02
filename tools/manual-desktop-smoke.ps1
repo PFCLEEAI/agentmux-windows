@@ -320,7 +320,8 @@ if (-not [string]::IsNullOrWhiteSpace($packageRoot)) {
     "SHA256SUMS.txt",
     "docs\manual-windows-desktop-smoke.md",
     "tools\install-user.ps1",
-    "tools\manual-desktop-smoke.ps1"
+    "tools\manual-desktop-smoke.ps1",
+    "tools\verify-manual-desktop-evidence.ps1"
   )) {
     if (-not (Test-Path -LiteralPath (Join-Path $packageRoot $requiredPackageFile) -PathType Leaf)) {
       Add-Failure "Required package file missing: $requiredPackageFile"
@@ -454,6 +455,7 @@ Do not paste tokens, passwords, SSH keys, API keys, customer data, private promp
 - [ ] cli-help.txt exists and shows agentmux - CLI.
 - [ ] launch.json records the app launch or -SkipLaunch was intentional.
 - [ ] tools\install-user.ps1 exists if the smoke is using a packaged build.
+- [ ] tools\verify-manual-desktop-evidence.ps1 passes after manual evidence is added.
 
 ## Manual Evidence
 

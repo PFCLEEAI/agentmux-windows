@@ -68,6 +68,9 @@ jobs:
           if ($manifest.requiredFiles -notcontains "EVIDENCE.json") {
             throw "PACKAGE.json requiredFiles does not include EVIDENCE.json."
           }
+          if ($manifest.requiredFiles -notcontains "tools\verify-manual-desktop-evidence.ps1") {
+            throw "PACKAGE.json requiredFiles does not include the manual evidence verifier."
+          }
           if ($evidence.provenance.commit -ne "${{ github.sha }}") {
             throw "EVIDENCE.json commit does not match this workflow run."
           }
@@ -83,6 +86,9 @@ jobs:
           if ($evidence.manualGate.status -ne "required") {
             throw "EVIDENCE.json manualGate.status should remain required."
           }
+          if ($evidence.manualGate.verifier -ne "tools/verify-manual-desktop-evidence.ps1") {
+            throw "EVIDENCE.json manualGate.verifier should name the packaged verifier."
+          }
           if ($evidence.releaseReadiness.status -ne "blocked") {
             throw "EVIDENCE.json releaseReadiness.status should remain blocked until real desktop smoke passes."
           }
@@ -96,6 +102,32 @@ jobs:
             -PackagePath "${{ runner.temp }}\agentmux-windows-package" `
             -EvidenceRoot "${{ runner.temp }}\manual-desktop-smoke-helper" `
             -SkipLaunch
+      - name: Manual desktop evidence verifier preflight
+        shell: pwsh
+        run: |
+          $reportPath = "${{ runner.temp }}\manual-desktop-smoke-helper-verification.json"
+          & "${{ runner.temp }}\agentmux-windows-package\tools\verify-manual-desktop-evidence.ps1" `
+            -EvidencePath "${{ runner.temp }}\manual-desktop-smoke-helper" `
+            -PackagePath "${{ runner.temp }}\agentmux-windows-package" `
+            -ReportPath "$reportPath" `
+            -PreflightOnly
+
+          $report = Get-Content $reportPath -Raw | ConvertFrom-Json
+          if ($report.status -ne "passed") {
+            throw "Manual evidence verifier preflight did not pass."
+          }
+          if ($report.mode -ne "preflight") {
+            throw "Manual evidence verifier must run in preflight mode in CI."
+          }
+          if (-not $report.packageIntegrityVerified) {
+            throw "Manual evidence verifier did not verify package integrity."
+          }
+          if (-not $report.helperEvidencePacketVerified) {
+            throw "Manual evidence verifier did not verify helper evidence packet shape."
+          }
+          if (-not $report.manualGateStillRequired -or -not $report.releaseReadinessStillBlocked) {
+            throw "Manual evidence verifier must preserve the manual-gate/release-readiness boundary."
+          }
       - name: User install helper preflight
         shell: pwsh
         run: |

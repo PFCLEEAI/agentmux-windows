@@ -108,6 +108,30 @@ If you want the helper to run local named-pipe RPC checks after launch:
 .\tools\manual-desktop-smoke.ps1 -PackagePath C:\AgentMuxSmoke\agentmux-windows-package -RunRpcChecks
 ```
 
+## Verify The Evidence Packet
+
+After filling `manual-checklist.md` and adding screenshots or notes to the evidence folder, run:
+
+```powershell
+.\tools\verify-manual-desktop-evidence.ps1 -EvidencePath C:\Path\To\Evidence\20260702-034800 -PackagePath C:\AgentMuxSmoke\agentmux-windows-package
+```
+
+For a release ZIP, pass the ZIP path:
+
+```powershell
+.\tools\verify-manual-desktop-evidence.ps1 -EvidencePath C:\Path\To\Evidence\20260702-034800 -PackagePath C:\Downloads\agentmux-windows-v0.1.0-framework-dependent.zip
+```
+
+The verifier writes `MANUAL-EVIDENCE-VERIFICATION.json` by default. It checks required helper files, strict package checksum coverage, `PACKAGE.json`, `EVIDENCE.json`, the manual-gate/release-readiness boundary, checklist completion fields, and expected screenshot or note filenames. It does not inspect screenshot pixels, perform OCR, redact evidence, or prove physical keyboard input by itself. A human reviewer still needs to inspect the visible Windows desktop evidence before marking the manual gate as passed.
+
+CI and Release workflows run the verifier only in preflight mode against `manual-desktop-smoke.ps1 -SkipLaunch` output:
+
+```powershell
+.\tools\verify-manual-desktop-evidence.ps1 -EvidencePath C:\Path\To\HelperOutput -PackagePath C:\AgentMuxSmoke\agentmux-windows-package -PreflightOnly
+```
+
+`-PreflightOnly` checks helper output shape and package integrity; it intentionally skips manual screenshots, `Result: PASS`, and physical-keyboard evidence.
+
 ## Manual Checks
 
 Record screenshots or short screen clips for each pass. Keep secrets out of the terminal and browser before capturing evidence.
@@ -343,6 +367,7 @@ agentmux-desktop-smoke-evidence/
     launch.json
     browser-smoke.html
     manual-checklist.md
+    MANUAL-EVIDENCE-VERIFICATION.json
     screenshots/
     logs/
 ```

@@ -95,6 +95,7 @@ try {
   Copy-Item docs/manual-windows-desktop-smoke.md (Join-Path $package "docs")
   Copy-Item tools/install-user.ps1 (Join-Path $package "tools")
   Copy-Item tools/manual-desktop-smoke.ps1 (Join-Path $package "tools")
+  Copy-Item tools/verify-manual-desktop-evidence.ps1 (Join-Path $package "tools")
 
   $requiredFiles = @(
     "AgentMux.exe",
@@ -120,6 +121,7 @@ try {
     "docs\manual-windows-desktop-smoke.md",
     "tools\install-user.ps1",
     "tools\manual-desktop-smoke.ps1",
+    "tools\verify-manual-desktop-evidence.ps1",
     "PACKAGE.json",
     "EVIDENCE.json",
     "SHA256SUMS.txt"
@@ -183,6 +185,7 @@ try {
       "Windows ConPTY smoke",
       "Package publish required-file and CLI smoke",
       "Manual desktop-smoke helper preflight with -SkipLaunch",
+      "Manual desktop evidence verifier preflight with -PreflightOnly",
       "User install helper preflight with -SkipPathUpdate",
       "Tampered-package install rejection",
       "Package artifact upload"
@@ -198,6 +201,7 @@ try {
       status = "required"
       runbook = "docs/manual-windows-desktop-smoke.md"
       helper = "tools/manual-desktop-smoke.ps1"
+      verifier = "tools/verify-manual-desktop-evidence.ps1"
       requires = @(
         "real visible Windows desktop session",
         "physical keyboard evidence",
