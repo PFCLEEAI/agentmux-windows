@@ -1780,7 +1780,8 @@ public partial class MainWindow : Window
         var activePane = ActivePane();
         WorkspaceTitle.Text = workspace.Title;
         var branchMeta = string.IsNullOrWhiteSpace(workspace.GitBranchLabel) ? "" : $"  |  {workspace.GitBranchLabel}";
-        WorkspaceMeta.Text = $"{workspace.WorkingDirectory}{branchMeta}  |  surfaces: {workspace.Surfaces.Count}  |  panes: {CountPanes(surface.Root)}  |  unread: {workspace.UnreadCount}";
+        var notificationMeta = string.IsNullOrWhiteSpace(workspace.LatestNotificationLabel) ? "" : $"  |  {workspace.LatestNotificationLabel}";
+        WorkspaceMeta.Text = $"{workspace.WorkingDirectory}{branchMeta}{notificationMeta}  |  surfaces: {workspace.Surfaces.Count}  |  panes: {CountPanes(surface.Root)}  |  unread: {workspace.UnreadCount}";
         RefreshSurfaceTabs(workspace);
         var activeSessionRunning = activePane is not null
             && _ptySessions.TryGetValue(activePane.Id, out var activeSession)
@@ -2438,6 +2439,7 @@ public partial class MainWindow : Window
             workspace.WorkingDirectory,
             gitBranch = workspace.GitBranch,
             workspace.UnreadCount,
+            latestNotification = workspace.LatestNotificationPreview,
             surfaceCount = workspace.Surfaces.Count,
             workspace.ActiveSurfaceIndex,
             activeSurfaceTitle = surface.Title,

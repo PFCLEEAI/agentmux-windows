@@ -33,6 +33,26 @@ public sealed class WorkspaceModelTests
         Assert.DoesNotContain("isGitDirty", json, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void WorkspaceLatestNotificationPreviewIsDisplayOnlyAndCapped()
+    {
+        var workspace = new WorkspaceState
+        {
+            LatestNotification = " Waiting\r\nfor\tinput \u0007" + new string('x', 140)
+        };
+
+        var json = JsonSerializer.Serialize(workspace, AgentMuxJson.Options);
+
+        Assert.NotNull(workspace.LatestNotificationPreview);
+        Assert.StartsWith("Waiting for input", workspace.LatestNotificationPreview, StringComparison.Ordinal);
+        Assert.EndsWith("...", workspace.LatestNotificationPreview, StringComparison.Ordinal);
+        Assert.Equal(120, workspace.LatestNotificationPreview!.Length);
+        Assert.Equal($"notify: {workspace.LatestNotificationPreview}", workspace.LatestNotificationLabel);
+        Assert.DoesNotContain("latestNotification", json, StringComparison.Ordinal);
+        Assert.DoesNotContain("latestNotificationPreview", json, StringComparison.Ordinal);
+        Assert.DoesNotContain("latestNotificationLabel", json, StringComparison.Ordinal);
+    }
+
     [Theory]
     [InlineData(SplitDirection.Right)]
     [InlineData(SplitDirection.Down)]

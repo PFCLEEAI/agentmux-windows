@@ -4,6 +4,8 @@ namespace AgentMux.Core.Models;
 
 public sealed class WorkspaceState
 {
+    private const int MaxLatestNotificationPreviewLength = 120;
+
     public string Id { get; set; } = Ids.New("workspace");
     public string Title { get; set; } = "Workspace";
     public string WorkingDirectory { get; set; } = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
@@ -15,8 +17,32 @@ public sealed class WorkspaceState
     public string? GitBranchLabel => string.IsNullOrWhiteSpace(GitBranch) ? null : $"branch: {GitBranch}";
     public int ActiveSurfaceIndex { get; set; }
     public int UnreadCount { get; set; }
+    [JsonIgnore]
     public string? LatestNotification { get; set; }
+    [JsonIgnore]
+    public string? LatestNotificationPreview => CompactNotificationPreview(LatestNotification);
+    [JsonIgnore]
+    public string? LatestNotificationLabel => LatestNotificationPreview is { } preview ? $"notify: {preview}" : null;
     public List<SurfaceState> Surfaces { get; set; } = [SurfaceState.CreateDefault()];
+
+    private static string? CompactNotificationPreview(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        var cleaned = new string(value.Select(ch => char.IsControl(ch) && !char.IsWhiteSpace(ch) ? ' ' : ch).ToArray());
+        var compact = string.Join(' ', cleaned.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+        if (string.IsNullOrWhiteSpace(compact))
+        {
+            return null;
+        }
+
+        return compact.Length <= MaxLatestNotificationPreviewLength
+            ? compact
+            : compact[..(MaxLatestNotificationPreviewLength - 3)] + "...";
+    }
 }
 
 public sealed class SurfaceState

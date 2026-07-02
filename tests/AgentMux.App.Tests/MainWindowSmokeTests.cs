@@ -267,7 +267,9 @@ public sealed class MainWindowSmokeTests
         var firstToken = $"agentmux-osc-secret-{Guid.NewGuid():N}";
         var secondToken = $"agentmux-osc-clear-secret-{Guid.NewGuid():N}";
         var thirdToken = $"agentmux-osc-rpc-clear-secret-{Guid.NewGuid():N}";
-        var rpcToken = $"agentmux-rpc-notify-secret-{Guid.NewGuid():N}";
+        var rpcPreviewHead = $"agentmux-rpc-notify-secret-{Guid.NewGuid():N}";
+        var rpcTailSecret = $"agentmux-rpc-tail-secret-{Guid.NewGuid():N}";
+        var rpcToken = $"{rpcPreviewHead}\r\n\t{new string('x', 140)} {rpcTailSecret}";
         var nativeToasts = new RecordingNativeToastService();
 
         try
@@ -300,6 +302,7 @@ public sealed class MainWindowSmokeTests
                 Assert.False(string.IsNullOrWhiteSpace(firstToast.WorkspaceId));
                 Assert.Equal(1, window.ActiveWorkspaceUnreadCountForSmokeTest);
                 Assert.True(window.ActivePaneHasUnreadNotificationForSmokeTest);
+                Assert.Contains($"notify: {firstToken}", window.ActiveWorkspaceMetaForSmokeTest, StringComparison.Ordinal);
                 Assert.Contains("visible-beforevisible-after", window.ActivePaneLastScreenTextForSmokeTest, StringComparison.Ordinal);
                 Assert.DoesNotContain(firstToken, window.ActivePaneLastScreenTextForSmokeTest, StringComparison.Ordinal);
                 Assert.DoesNotContain("\u001b]99", window.ActivePaneLastScreenTextForSmokeTest, StringComparison.Ordinal);
@@ -332,6 +335,12 @@ public sealed class MainWindowSmokeTests
                 Assert.Equal(notifiedPane, notification.GetProperty("paneId").GetString());
                 Assert.False(notification.GetProperty("isRead").GetBoolean());
 
+                var workspaceListResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceList);
+                Assert.True(workspaceListResponse.Ok, workspaceListResponse.Error);
+                var workspaceList = System.Text.Json.JsonSerializer.SerializeToElement(workspaceListResponse.Result, AgentMuxJson.Options);
+                var workspaceWithNotification = workspaceList.GetProperty("workspaces").EnumerateArray().Single();
+                Assert.Equal(firstToken, workspaceWithNotification.GetProperty("latestNotification").GetString());
+
                 Assert.True(window.HandlePreviewKeyDownForSmokeTest(Key.System, ModifierKeys.Control | ModifierKeys.Alt, Key.Right));
                 Assert.Equal(rightPane, window.ActivePaneIdForSmokeTest);
 
@@ -340,6 +349,7 @@ public sealed class MainWindowSmokeTests
                 Assert.Equal(notifiedPane, window.ActivePaneIdForSmokeTest);
                 Assert.Equal(0, window.ActiveWorkspaceUnreadCountForSmokeTest);
                 Assert.False(window.ActivePaneHasUnreadNotificationForSmokeTest);
+                Assert.DoesNotContain(firstToken, window.ActiveWorkspaceMetaForSmokeTest, StringComparison.Ordinal);
                 Assert.Equal("Notifications (0)", window.NotificationButtonContentForSmokeTest);
                 Assert.True(window.NotificationCenterContainsTextForSmokeTest("read"));
 
@@ -380,9 +390,29 @@ public sealed class MainWindowSmokeTests
                 Assert.Equal("Toast", nativeToasts.Requests[3].Subtitle);
                 Assert.Equal(rpcToken, nativeToasts.Requests[3].Body);
 
+                var rpcNotifyWorkspaceListResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceList);
+                Assert.True(rpcNotifyWorkspaceListResponse.Ok, rpcNotifyWorkspaceListResponse.Error);
+                var rpcNotifyWorkspaceList = System.Text.Json.JsonSerializer.SerializeToElement(rpcNotifyWorkspaceListResponse.Result, AgentMuxJson.Options);
+                var rpcNotifyWorkspace = rpcNotifyWorkspaceList.GetProperty("workspaces").EnumerateArray().Single();
+                var rpcPreview = rpcNotifyWorkspace.GetProperty("latestNotification").GetString();
+                Assert.NotNull(rpcPreview);
+                Assert.StartsWith(rpcPreviewHead, rpcPreview, StringComparison.Ordinal);
+                Assert.EndsWith("...", rpcPreview, StringComparison.Ordinal);
+                Assert.Equal(120, rpcPreview!.Length);
+                Assert.DoesNotContain(rpcTailSecret, rpcPreview, StringComparison.Ordinal);
+                Assert.Contains($"notify: {rpcPreview}", window.ActiveWorkspaceMetaForSmokeTest, StringComparison.Ordinal);
+                Assert.DoesNotContain(rpcTailSecret, window.ActiveWorkspaceMetaForSmokeTest, StringComparison.Ordinal);
+
                 var finalClearResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.NotificationsClear);
                 Assert.True(finalClearResponse.Ok, finalClearResponse.Error);
                 Assert.Equal(4, nativeToasts.Requests.Count);
+                Assert.DoesNotContain(rpcPreviewHead, window.ActiveWorkspaceMetaForSmokeTest, StringComparison.Ordinal);
+
+                var afterClearWorkspaceListResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceList);
+                Assert.True(afterClearWorkspaceListResponse.Ok, afterClearWorkspaceListResponse.Error);
+                var afterClearWorkspaceList = System.Text.Json.JsonSerializer.SerializeToElement(afterClearWorkspaceListResponse.Result, AgentMuxJson.Options);
+                var afterClearWorkspace = afterClearWorkspaceList.GetProperty("workspaces").EnumerateArray().Single();
+                Assert.Equal(System.Text.Json.JsonValueKind.Null, afterClearWorkspace.GetProperty("latestNotification").ValueKind);
 
                 await window.SaveSessionForSmokeTestAsync();
                 var snapshotText = await System.IO.File.ReadAllTextAsync(store.FilePath);
@@ -390,6 +420,7 @@ public sealed class MainWindowSmokeTests
                 Assert.DoesNotContain(secondToken, snapshotText, StringComparison.Ordinal);
                 Assert.DoesNotContain(thirdToken, snapshotText, StringComparison.Ordinal);
                 Assert.DoesNotContain(rpcToken, snapshotText, StringComparison.Ordinal);
+                Assert.DoesNotContain(rpcTailSecret, snapshotText, StringComparison.Ordinal);
                 Assert.DoesNotContain("hasUnreadNotification\":true", snapshotText, StringComparison.OrdinalIgnoreCase);
             }
             finally
@@ -574,7 +605,8 @@ public sealed class MainWindowSmokeTests
             Assert.Equal(0, initialWorkspace.GetProperty("browserPaneCount").GetInt32());
             Assert.False(initialWorkspace.TryGetProperty("surfaces", out _));
             Assert.False(initialWorkspace.TryGetProperty("root", out _));
-            Assert.False(initialWorkspace.TryGetProperty("latestNotification", out _));
+            Assert.True(initialWorkspace.TryGetProperty("latestNotification", out _));
+            Assert.Equal(System.Text.Json.JsonValueKind.Null, initialWorkspace.GetProperty("latestNotification").ValueKind);
             Assert.True(initialWorkspace.TryGetProperty("gitBranch", out _));
             Assert.Equal(System.Text.Json.JsonValueKind.Null, initialWorkspace.GetProperty("gitBranch").ValueKind);
             Assert.False(initialWorkspace.TryGetProperty("isGitDirty", out _));
