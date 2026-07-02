@@ -612,6 +612,9 @@ public sealed class MainWindowSmokeTests
             Assert.True(initialWorkspace.TryGetProperty("latestLog", out _));
             Assert.Equal(System.Text.Json.JsonValueKind.Null, initialWorkspace.GetProperty("latestLog").ValueKind);
             Assert.Equal(0, initialWorkspace.GetProperty("logCount").GetInt32());
+            Assert.True(initialWorkspace.TryGetProperty("latestStatus", out _));
+            Assert.Equal(System.Text.Json.JsonValueKind.Null, initialWorkspace.GetProperty("latestStatus").ValueKind);
+            Assert.Equal(0, initialWorkspace.GetProperty("statusCount").GetInt32());
             Assert.True(initialWorkspace.TryGetProperty("gitBranch", out _));
             Assert.Equal(System.Text.Json.JsonValueKind.Null, initialWorkspace.GetProperty("gitBranch").ValueKind);
             Assert.True(initialWorkspace.TryGetProperty("pullRequest", out _));
@@ -724,6 +727,92 @@ public sealed class MainWindowSmokeTests
             var invalidLogSource = System.Text.Json.JsonSerializer.SerializeToElement(invalidLogSourceResponse.Result, AgentMuxJson.Options);
             Assert.False(invalidLogSource.GetProperty("logged").GetBoolean());
             Assert.Equal("source must be a string", invalidLogSource.GetProperty("reason").GetString());
+
+            var statusResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceSetStatus, new
+            {
+                key = "build",
+                text = " Running\r\ntests \u0007",
+                icon = "checkmark",
+                color = "#22c55e"
+            });
+            Assert.True(statusResponse.Ok, statusResponse.Error);
+            var statusResult = System.Text.Json.JsonSerializer.SerializeToElement(statusResponse.Result, AgentMuxJson.Options);
+            Assert.True(statusResult.GetProperty("updated").GetBoolean());
+            var statusEntry = statusResult.GetProperty("status");
+            Assert.Equal(createdWorkspaceId, statusEntry.GetProperty("workspaceId").GetString());
+            Assert.Equal("API", statusEntry.GetProperty("workspaceTitle").GetString());
+            Assert.Equal("build", statusEntry.GetProperty("key").GetString());
+            Assert.Equal("Running tests", statusEntry.GetProperty("text").GetString());
+            Assert.Equal("checkmark", statusEntry.GetProperty("icon").GetString());
+            Assert.Equal("#22c55e", statusEntry.GetProperty("color").GetString());
+            Assert.Equal("build: checkmark Running tests", statusResult.GetProperty("workspace").GetProperty("latestStatus").GetString());
+            Assert.Equal(1, statusResult.GetProperty("workspace").GetProperty("statusCount").GetInt32());
+            Assert.Contains("status: build: checkmark Running tests", window.ActiveWorkspaceMetaForSmokeTest, StringComparison.Ordinal);
+
+            var listStatusResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceListStatus);
+            Assert.True(listStatusResponse.Ok, listStatusResponse.Error);
+            var listStatus = System.Text.Json.JsonSerializer.SerializeToElement(listStatusResponse.Result, AgentMuxJson.Options);
+            Assert.True(listStatus.GetProperty("listed").GetBoolean());
+            Assert.Equal(createdWorkspaceId, listStatus.GetProperty("workspaceId").GetString());
+            Assert.Equal(1, listStatus.GetProperty("count").GetInt32());
+            var listedStatus = Assert.Single(listStatus.GetProperty("statuses").EnumerateArray());
+            Assert.Equal("build", listedStatus.GetProperty("key").GetString());
+            Assert.Equal("Running tests", listedStatus.GetProperty("text").GetString());
+
+            var updatedStatusResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceSetStatus, new
+            {
+                key = "build",
+                text = "Passed"
+            });
+            Assert.True(updatedStatusResponse.Ok, updatedStatusResponse.Error);
+            var updatedStatus = System.Text.Json.JsonSerializer.SerializeToElement(updatedStatusResponse.Result, AgentMuxJson.Options);
+            Assert.True(updatedStatus.GetProperty("updated").GetBoolean());
+            Assert.Equal("build: Passed", updatedStatus.GetProperty("workspace").GetProperty("latestStatus").GetString());
+            Assert.Equal(1, updatedStatus.GetProperty("workspace").GetProperty("statusCount").GetInt32());
+            Assert.Contains("status: build: Passed", window.ActiveWorkspaceMetaForSmokeTest, StringComparison.Ordinal);
+
+            var targetedDefaultStatusResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceSetStatus, new
+            {
+                index = 0,
+                key = "owner",
+                text = "Idle"
+            });
+            Assert.True(targetedDefaultStatusResponse.Ok, targetedDefaultStatusResponse.Error);
+            var targetedDefaultStatus = System.Text.Json.JsonSerializer.SerializeToElement(targetedDefaultStatusResponse.Result, AgentMuxJson.Options);
+            Assert.True(targetedDefaultStatus.GetProperty("updated").GetBoolean());
+            Assert.Equal(defaultWorkspaceId, targetedDefaultStatus.GetProperty("workspace").GetProperty("id").GetString());
+            Assert.Equal("owner: Idle", targetedDefaultStatus.GetProperty("workspace").GetProperty("latestStatus").GetString());
+            Assert.Contains("status: build: Passed", window.ActiveWorkspaceMetaForSmokeTest, StringComparison.Ordinal);
+
+            var missingStatusKeyResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceSetStatus, new
+            {
+                text = "ready"
+            });
+            Assert.True(missingStatusKeyResponse.Ok, missingStatusKeyResponse.Error);
+            var missingStatusKey = System.Text.Json.JsonSerializer.SerializeToElement(missingStatusKeyResponse.Result, AgentMuxJson.Options);
+            Assert.False(missingStatusKey.GetProperty("updated").GetBoolean());
+            Assert.Equal("key is required", missingStatusKey.GetProperty("reason").GetString());
+
+            var missingStatusTextResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceSetStatus, new
+            {
+                key = "build",
+                text = " \t"
+            });
+            Assert.True(missingStatusTextResponse.Ok, missingStatusTextResponse.Error);
+            var missingStatusText = System.Text.Json.JsonSerializer.SerializeToElement(missingStatusTextResponse.Result, AgentMuxJson.Options);
+            Assert.False(missingStatusText.GetProperty("updated").GetBoolean());
+            Assert.Equal("text is required", missingStatusText.GetProperty("reason").GetString());
+
+            var invalidStatusIconResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceSetStatus, new
+            {
+                key = "build",
+                text = "ready",
+                icon = true
+            });
+            Assert.True(invalidStatusIconResponse.Ok, invalidStatusIconResponse.Error);
+            var invalidStatusIcon = System.Text.Json.JsonSerializer.SerializeToElement(invalidStatusIconResponse.Result, AgentMuxJson.Options);
+            Assert.False(invalidStatusIcon.GetProperty("updated").GetBoolean());
+            Assert.Equal("icon must be a string", invalidStatusIcon.GetProperty("reason").GetString());
 
             var setPullRequestResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceSetPullRequest, new
             {
@@ -865,6 +954,9 @@ public sealed class MainWindowSmokeTests
             Assert.Equal("[debug] Default ready", selectFirst.GetProperty("workspace").GetProperty("latestLog").GetString());
             Assert.Contains("log: [debug] Default ready", window.ActiveWorkspaceMetaForSmokeTest, StringComparison.Ordinal);
             Assert.DoesNotContain("Server ready", window.ActiveWorkspaceMetaForSmokeTest, StringComparison.Ordinal);
+            Assert.Equal("owner: Idle", selectFirst.GetProperty("workspace").GetProperty("latestStatus").GetString());
+            Assert.Contains("status: owner: Idle", window.ActiveWorkspaceMetaForSmokeTest, StringComparison.Ordinal);
+            Assert.DoesNotContain("build: Passed", window.ActiveWorkspaceMetaForSmokeTest, StringComparison.Ordinal);
             Assert.True(window.RenderedTextContainsForSmokeTest("AGENTMUX_WORKSPACE_ONE"));
             Assert.False(window.RenderedTextContainsForSmokeTest("AGENTMUX_WORKSPACE_TWO"));
 
@@ -926,6 +1018,7 @@ public sealed class MainWindowSmokeTests
             Assert.Contains("pr: #123 open", window.ActiveWorkspaceMetaForSmokeTest, StringComparison.Ordinal);
             Assert.Contains("ports: 3000, 5173", window.ActiveWorkspaceMetaForSmokeTest, StringComparison.Ordinal);
             Assert.Contains("log: [warn] server: Server ready", window.ActiveWorkspaceMetaForSmokeTest, StringComparison.Ordinal);
+            Assert.Contains("status: build: Passed", window.ActiveWorkspaceMetaForSmokeTest, StringComparison.Ordinal);
             Assert.Equal(secondPaneId, window.ActivePaneIdForSmokeTest);
             Assert.True(window.RenderedTextContainsForSmokeTest("AGENTMUX_WORKSPACE_TWO"));
             Assert.False(window.RenderedTextContainsForSmokeTest("AGENTMUX_WORKSPACE_ONE"));
@@ -971,9 +1064,102 @@ public sealed class MainWindowSmokeTests
             Assert.Equal(new[] { 3000, 5173 }, finalCreatedWorkspace.GetProperty("ports").EnumerateArray().Select(port => port.GetInt32()).ToArray());
             Assert.Equal("[info] cap 204", finalCreatedWorkspace.GetProperty("latestLog").GetString());
             Assert.Equal(200, finalCreatedWorkspace.GetProperty("logCount").GetInt32());
+            Assert.Equal("build: Passed", finalCreatedWorkspace.GetProperty("latestStatus").GetString());
+            Assert.Equal(1, finalCreatedWorkspace.GetProperty("statusCount").GetInt32());
             Assert.False(finalCreatedWorkspace.TryGetProperty("pid", out _));
             Assert.False(finalCreatedWorkspace.TryGetProperty("process", out _));
             Assert.False(finalCreatedWorkspace.TryGetProperty("status", out _));
+
+            var clearStatusKeyResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceClearStatus, new
+            {
+                id = createdWorkspaceId,
+                key = "build"
+            });
+            Assert.True(clearStatusKeyResponse.Ok, clearStatusKeyResponse.Error);
+            var clearStatusKey = System.Text.Json.JsonSerializer.SerializeToElement(clearStatusKeyResponse.Result, AgentMuxJson.Options);
+            Assert.Equal(1, clearStatusKey.GetProperty("cleared").GetInt32());
+            Assert.Equal(System.Text.Json.JsonValueKind.Null, clearStatusKey.GetProperty("workspace").GetProperty("latestStatus").ValueKind);
+            Assert.Equal(0, clearStatusKey.GetProperty("workspace").GetProperty("statusCount").GetInt32());
+            Assert.DoesNotContain("status:", window.ActiveWorkspaceMetaForSmokeTest, StringComparison.Ordinal);
+
+            foreach (var key in new[] { "deploy", "qa" })
+            {
+                var resetStatusResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceSetStatus, new
+                {
+                    id = createdWorkspaceId,
+                    key,
+                    text = "Queued"
+                });
+                Assert.True(resetStatusResponse.Ok, resetStatusResponse.Error);
+            }
+
+            var orderedStatusResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceListStatus, new
+            {
+                id = createdWorkspaceId
+            });
+            Assert.True(orderedStatusResponse.Ok, orderedStatusResponse.Error);
+            var orderedStatus = System.Text.Json.JsonSerializer.SerializeToElement(orderedStatusResponse.Result, AgentMuxJson.Options);
+            var orderedStatuses = orderedStatus.GetProperty("statuses").EnumerateArray().ToArray();
+            Assert.Equal(new[] { "deploy", "qa" }, orderedStatuses.Select(status => status.GetProperty("key").GetString()).ToArray());
+
+            var moveStatusResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceSetStatus, new
+            {
+                id = createdWorkspaceId,
+                key = "deploy",
+                text = "Done"
+            });
+            Assert.True(moveStatusResponse.Ok, moveStatusResponse.Error);
+            var movedStatusResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceListStatus, new
+            {
+                id = createdWorkspaceId
+            });
+            Assert.True(movedStatusResponse.Ok, movedStatusResponse.Error);
+            var movedStatus = System.Text.Json.JsonSerializer.SerializeToElement(movedStatusResponse.Result, AgentMuxJson.Options);
+            var movedStatuses = movedStatus.GetProperty("statuses").EnumerateArray().ToArray();
+            Assert.Equal(new[] { "qa", "deploy" }, movedStatuses.Select(status => status.GetProperty("key").GetString()).ToArray());
+            Assert.Equal("Done", movedStatuses[1].GetProperty("text").GetString());
+
+            var clearAllStatusResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceClearStatus, new
+            {
+                id = createdWorkspaceId,
+                all = true
+            });
+            Assert.True(clearAllStatusResponse.Ok, clearAllStatusResponse.Error);
+            var clearAllStatus = System.Text.Json.JsonSerializer.SerializeToElement(clearAllStatusResponse.Result, AgentMuxJson.Options);
+            Assert.Equal(2, clearAllStatus.GetProperty("cleared").GetInt32());
+            Assert.Equal(System.Text.Json.JsonValueKind.Null, clearAllStatus.GetProperty("workspace").GetProperty("latestStatus").ValueKind);
+            Assert.Equal(0, clearAllStatus.GetProperty("workspace").GetProperty("statusCount").GetInt32());
+
+            for (var index = 0; index < 105; index++)
+            {
+                var capStatusResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceSetStatus, new
+                {
+                    id = createdWorkspaceId,
+                    key = $"cap-{index}",
+                    text = "Queued"
+                });
+                Assert.True(capStatusResponse.Ok, capStatusResponse.Error);
+            }
+
+            var cappedStatusResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceListStatus, new
+            {
+                id = createdWorkspaceId
+            });
+            Assert.True(cappedStatusResponse.Ok, cappedStatusResponse.Error);
+            var cappedStatus = System.Text.Json.JsonSerializer.SerializeToElement(cappedStatusResponse.Result, AgentMuxJson.Options);
+            Assert.Equal(100, cappedStatus.GetProperty("count").GetInt32());
+            var cappedStatuses = cappedStatus.GetProperty("statuses").EnumerateArray().ToArray();
+            Assert.Equal("cap-5", cappedStatuses[0].GetProperty("key").GetString());
+            Assert.Equal("cap-104", cappedStatuses[^1].GetProperty("key").GetString());
+
+            var clearCappedStatusResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceClearStatus, new
+            {
+                id = createdWorkspaceId,
+                all = true
+            });
+            Assert.True(clearCappedStatusResponse.Ok, clearCappedStatusResponse.Error);
+            var clearCappedStatus = System.Text.Json.JsonSerializer.SerializeToElement(clearCappedStatusResponse.Result, AgentMuxJson.Options);
+            Assert.Equal(100, clearCappedStatus.GetProperty("cleared").GetInt32());
 
             var clearLogResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceClearLog, new
             {
@@ -1277,6 +1463,15 @@ public sealed class MainWindowSmokeTests
                 Assert.True(transientLog.Ok, transientLog.Error);
                 Assert.Contains("log: [warn] restore: TRANSIENT_SESSION_LOG", source.ActiveWorkspaceMetaForSmokeTest, StringComparison.Ordinal);
 
+                var transientStatus = await source.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceSetStatus, new
+                {
+                    id = createdWorkspaceId,
+                    key = "restore",
+                    text = "TRANSIENT_SESSION_STATUS"
+                });
+                Assert.True(transientStatus.Ok, transientStatus.Error);
+                Assert.Contains("status: restore: TRANSIENT_SESSION_STATUS", source.ActiveWorkspaceMetaForSmokeTest, StringComparison.Ordinal);
+
                 await source.SaveSessionForSmokeTestAsync();
             }
             finally
@@ -1298,6 +1493,7 @@ public sealed class MainWindowSmokeTests
                 Assert.Contains("pr: #123 draft", restored.ActiveWorkspaceMetaForSmokeTest, StringComparison.Ordinal);
                 Assert.Contains("ports: 3000, 5173", restored.ActiveWorkspaceMetaForSmokeTest, StringComparison.Ordinal);
                 Assert.DoesNotContain("log:", restored.ActiveWorkspaceMetaForSmokeTest, StringComparison.Ordinal);
+                Assert.DoesNotContain("status:", restored.ActiveWorkspaceMetaForSmokeTest, StringComparison.Ordinal);
                 Assert.Equal(2, restored.SurfaceCountForSmokeTest);
                 Assert.Equal(1, restored.ActiveSurfaceIndexForSmokeTest);
                 Assert.Equal("Persisted surface", restored.ActiveSurfaceTitleForSmokeTest);
@@ -1320,6 +1516,8 @@ public sealed class MainWindowSmokeTests
                 Assert.Equal(new[] { 3000, 5173 }, restoredWorkspace.GetProperty("ports").EnumerateArray().Select(port => port.GetInt32()).ToArray());
                 Assert.Equal(System.Text.Json.JsonValueKind.Null, restoredWorkspace.GetProperty("latestLog").ValueKind);
                 Assert.Equal(0, restoredWorkspace.GetProperty("logCount").GetInt32());
+                Assert.Equal(System.Text.Json.JsonValueKind.Null, restoredWorkspace.GetProperty("latestStatus").ValueKind);
+                Assert.Equal(0, restoredWorkspace.GetProperty("statusCount").GetInt32());
 
                 var selectFirstSurface = await restored.HandleRpcForSmokeTestAsync(AgentMuxMethods.SurfaceSelect, new
                 {

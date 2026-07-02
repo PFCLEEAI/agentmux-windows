@@ -136,6 +136,20 @@
                                         </Style>
                                     </TextBlock.Style>
                                 </TextBlock>
+                                <TextBlock Text="{Binding LatestStatusLabel}"
+                                           Foreground="{StaticResource AgentMuxMutedText}"
+                                           TextTrimming="CharacterEllipsis">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding LatestStatusLabel}" Value="{x:Null}">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
                                 <TextBlock Text="{Binding LatestNotificationLabel}"
                                            Foreground="{StaticResource AgentMuxMutedText}"
                                            TextTrimming="CharacterEllipsis">

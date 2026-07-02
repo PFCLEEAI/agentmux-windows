@@ -17,7 +17,7 @@
 ## Sprint 2 - Workspace UI
 
 - Workspace sidebar. Implemented in WPF shell.
-- Workspace switching. Preview implemented with `workspace.list`, `workspace.create`, `workspace.select`, `workspace.set_pull_request`, `workspace.set_ports`, `workspace.log`, `workspace.list_log`, `workspace.clear_log`, compact workspace DTOs, index/id selection, sidebar selected-state updates, render switching, lightweight `.git/HEAD` branch metadata, explicit persisted PR annotations, explicit persisted port annotations, latest unread notification preview metadata, in-memory latest-log metadata, and hosted app-smoke coverage.
+- Workspace switching. Preview implemented with `workspace.list`, `workspace.create`, `workspace.select`, `workspace.set_pull_request`, `workspace.set_ports`, `workspace.log`, `workspace.list_log`, `workspace.clear_log`, `workspace.set_status`, `workspace.list_status`, `workspace.clear_status`, compact workspace DTOs, index/id selection, sidebar selected-state updates, render switching, lightweight `.git/HEAD` branch metadata, explicit persisted PR annotations, explicit persisted port annotations, latest unread notification preview metadata, in-memory latest-log/status metadata, and hosted app-smoke coverage.
 - Surface tabs. Preview implemented with WPF active-workspace tabs, `+ Surface`, `surface.list`, `surface.create`, `surface.select`, and hosted app-smoke coverage.
 - Split pane layout. Implemented as recursive WPF panes with persisted split ratios.
 - WebView2/xterm renderer bridge. Preview implemented with WPF fallback; hosted CI proves runtime text, geometry, xterm runtime input events, renderer bridge input, and synthetic DOM keydown routing into the active terminal pane's ConPTY input path, plus PNG artifacts. Physical keyboard, native focus, and IME proof remain future/manual desktop work.
@@ -30,6 +30,7 @@
 - `ping`, `status`, `tree`.
 - Workspace create/list/select. Preview implemented with compact list DTOs, create-and-select behavior, zero-based index or id selection, CLI aliases, and hosted app-smoke coverage.
 - Workspace log/list-log/clear-log. Preview implemented as explicit local in-memory workspace context, capped at 200 entries, with latest-log sidebar metadata and hosted app-smoke coverage. Automatic terminal/file/process/Event Log ingestion and persistent log history remain out of scope.
+- Workspace set-status/list-status/clear-status. Preview implemented as explicit local in-memory workspace context, keyed per workspace and capped at 100 entries, with latest-status sidebar metadata and hosted app-smoke coverage. Automatic agent/process/task status inference, file/process/Event Log ingestion, watchers, and persistent status history remain out of scope.
 - Surface list/create/select. Preview implemented for active-workspace surfaces through RPC, CLI, and WPF tabs.
 - Split pane. Preview implemented.
 - Focus pane. Preview implemented.

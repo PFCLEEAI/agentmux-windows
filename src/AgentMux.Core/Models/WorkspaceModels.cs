@@ -39,6 +39,12 @@ public sealed class WorkspaceState
     public string? LatestLogPreview => CompactNotificationPreview(LatestLog);
     [JsonIgnore]
     public string? LatestLogLabel => LatestLogPreview is { } preview ? $"log: {preview}" : null;
+    [JsonIgnore]
+    public string? LatestStatus { get; set; }
+    [JsonIgnore]
+    public string? LatestStatusPreview => CompactNotificationPreview(LatestStatus);
+    [JsonIgnore]
+    public string? LatestStatusLabel => LatestStatusPreview is { } preview ? $"status: {preview}" : null;
     public List<SurfaceState> Surfaces { get; set; } = [SurfaceState.CreateDefault()];
 
     private static string? CompactNotificationPreview(string? value)
@@ -146,6 +152,18 @@ public sealed class WorkspaceLogEntry
     public string? Source { get; set; }
     public string Message { get; set; } = "";
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
+public sealed class WorkspaceStatusEntry
+{
+    public string Id { get; set; } = Ids.New("status");
+    public string WorkspaceId { get; set; } = "";
+    public string WorkspaceTitle { get; set; } = "";
+    public string Key { get; set; } = "";
+    public string Text { get; set; } = "";
+    public string? Icon { get; set; }
+    public string? Color { get; set; }
+    public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
 }
 
 public sealed class SessionSnapshot

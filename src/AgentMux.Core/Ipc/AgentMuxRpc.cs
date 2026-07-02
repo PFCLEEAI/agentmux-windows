@@ -59,6 +59,9 @@ public static class AgentMuxMethods
     public const string WorkspaceLog = "workspace.log";
     public const string WorkspaceListLog = "workspace.list_log";
     public const string WorkspaceClearLog = "workspace.clear_log";
+    public const string WorkspaceSetStatus = "workspace.set_status";
+    public const string WorkspaceListStatus = "workspace.list_status";
+    public const string WorkspaceClearStatus = "workspace.clear_status";
     public const string SurfaceList = "surface.list";
     public const string SurfaceCreate = "surface.create";
     public const string SurfaceSelect = "surface.select";

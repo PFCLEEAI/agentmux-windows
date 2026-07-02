@@ -23,12 +23,17 @@ public partial class MainWindow : Window
 {
     private const int MaxNotifications = 200;
     private const int MaxWorkspaceLogs = 200;
+    private const int MaxWorkspaceStatuses = 100;
     private const int MaxWorkspaceLogMessageLength = 1000;
     private const int MaxWorkspaceLogSourceLength = 80;
+    private const int MaxWorkspaceStatusKeyLength = 80;
+    private const int MaxWorkspaceStatusTextLength = 200;
+    private const int MaxWorkspaceStatusMetaLength = 80;
 
     private readonly ObservableCollection<WorkspaceState> _workspaces = [];
     private readonly List<TerminalNotification> _notifications = [];
     private readonly List<WorkspaceLogEntry> _workspaceLogs = [];
+    private readonly List<WorkspaceStatusEntry> _workspaceStatuses = [];
     private readonly Dictionary<string, ConPtySession> _ptySessions = [];
     private readonly Dictionary<string, TerminalPaneView> _terminalViews = [];
     private readonly Dictionary<string, TerminalOutputProcessor> _terminalOutputProcessors = [];
@@ -374,6 +379,7 @@ public partial class MainWindow : Window
         clone.UnreadCount = 0;
         clone.LatestNotification = null;
         clone.LatestLog = null;
+        clone.LatestStatus = null;
         foreach (var surface in clone.Surfaces)
         {
             ClearPaneNotificationState(surface.Root);
@@ -516,6 +522,9 @@ public partial class MainWindow : Window
             AgentMuxMethods.WorkspaceLog => AgentMuxResponse.Success(request.Id, HandleWorkspaceLog(request.Params)),
             AgentMuxMethods.WorkspaceListLog => AgentMuxResponse.Success(request.Id, HandleWorkspaceListLog(request.Params)),
             AgentMuxMethods.WorkspaceClearLog => AgentMuxResponse.Success(request.Id, HandleWorkspaceClearLog(request.Params)),
+            AgentMuxMethods.WorkspaceSetStatus => AgentMuxResponse.Success(request.Id, HandleWorkspaceSetStatus(request.Params)),
+            AgentMuxMethods.WorkspaceListStatus => AgentMuxResponse.Success(request.Id, HandleWorkspaceListStatus(request.Params)),
+            AgentMuxMethods.WorkspaceClearStatus => AgentMuxResponse.Success(request.Id, HandleWorkspaceClearStatus(request.Params)),
             AgentMuxMethods.SurfaceList => AgentMuxResponse.Success(request.Id, BuildSurfaceList()),
             AgentMuxMethods.SurfaceCreate => AgentMuxResponse.Success(request.Id, HandleSurfaceCreate(request.Params)),
             AgentMuxMethods.SurfaceSelect => AgentMuxResponse.Success(request.Id, HandleSurfaceSelect(request.Params)),
@@ -582,6 +591,7 @@ public partial class MainWindow : Window
             activeSurfaceTitle = surface.Title,
             notificationCount = _notifications.Count,
             workspaceLogCount = _workspaceLogs.Count,
+            workspaceStatusCount = _workspaceStatuses.Count,
             terminalSessionCount = _ptySessions.Count,
             browserPaneCount = CountPaneKind(surface.Root, PaneKind.Browser)
         };
@@ -813,6 +823,139 @@ public partial class MainWindow : Window
         var workspace = _workspaces[selectedIndex];
         var cleared = _workspaceLogs.RemoveAll(log => string.Equals(log.WorkspaceId, workspace.Id, StringComparison.Ordinal));
         RecalculateWorkspaceLogState();
+        return new
+        {
+            cleared,
+            workspace = BuildWorkspaceDto(workspace, selectedIndex)
+        };
+    }
+
+    private object HandleWorkspaceSetStatus(JsonElement? parameters)
+    {
+        if (!TryReadOptionalWorkspaceTarget(parameters, out var index, out var id, out var targetError))
+        {
+            return new { updated = false, reason = targetError };
+        }
+
+        if (!TryReadWorkspaceStatusKey(parameters, out var key, out var keyError))
+        {
+            return new { updated = false, reason = keyError };
+        }
+
+        if (!TryReadWorkspaceStatusText(parameters, out var text, out var textError))
+        {
+            return new { updated = false, reason = textError };
+        }
+
+        if (!TryReadWorkspaceStatusOptionalText(parameters, "icon", MaxWorkspaceStatusMetaLength, out var icon, out var iconError))
+        {
+            return new { updated = false, reason = iconError };
+        }
+
+        if (!TryReadWorkspaceStatusOptionalText(parameters, "color", MaxWorkspaceStatusMetaLength, out var color, out var colorError))
+        {
+            return new { updated = false, reason = colorError };
+        }
+
+        var selectedIndex = ResolveWorkspaceIndex(index, id);
+        if (selectedIndex < 0 || selectedIndex >= _workspaces.Count)
+        {
+            return new
+            {
+                updated = false,
+                reason = index.HasValue ? "index out of range" : "workspace not found"
+            };
+        }
+
+        var workspace = _workspaces[selectedIndex];
+        var existingIndex = _workspaceStatuses.FindIndex(status =>
+            string.Equals(status.WorkspaceId, workspace.Id, StringComparison.Ordinal)
+            && string.Equals(status.Key, key, StringComparison.Ordinal));
+        var entry = existingIndex >= 0
+            ? _workspaceStatuses[existingIndex]
+            : new WorkspaceStatusEntry();
+        if (existingIndex >= 0)
+        {
+            _workspaceStatuses.RemoveAt(existingIndex);
+        }
+
+        entry.WorkspaceId = workspace.Id;
+        entry.WorkspaceTitle = workspace.Title;
+        entry.Key = key;
+        entry.Text = text;
+        entry.Icon = icon;
+        entry.Color = color;
+        entry.UpdatedAt = DateTimeOffset.UtcNow;
+        _workspaceStatuses.Add(entry);
+        TrimWorkspaceStatuses();
+        RecalculateWorkspaceStatusState();
+
+        return new
+        {
+            updated = true,
+            status = BuildWorkspaceStatusDto(entry),
+            workspace = BuildWorkspaceDto(workspace, selectedIndex)
+        };
+    }
+
+    private object HandleWorkspaceListStatus(JsonElement? parameters)
+    {
+        if (!TryReadOptionalWorkspaceTarget(parameters, out var index, out var id, out var targetError))
+        {
+            return new { listed = false, reason = targetError };
+        }
+
+        var selectedIndex = ResolveWorkspaceIndex(index, id);
+        if (selectedIndex < 0 || selectedIndex >= _workspaces.Count)
+        {
+            return new
+            {
+                listed = false,
+                reason = index.HasValue ? "index out of range" : "workspace not found"
+            };
+        }
+
+        var workspace = _workspaces[selectedIndex];
+        var statuses = _workspaceStatuses
+            .Where(status => string.Equals(status.WorkspaceId, workspace.Id, StringComparison.Ordinal))
+            .ToList();
+
+        return new
+        {
+            listed = true,
+            workspaceId = workspace.Id,
+            count = statuses.Count,
+            statuses = statuses.Select(BuildWorkspaceStatusDto).ToList()
+        };
+    }
+
+    private object HandleWorkspaceClearStatus(JsonElement? parameters)
+    {
+        if (!TryReadOptionalWorkspaceTarget(parameters, out var index, out var id, out var targetError))
+        {
+            return new { cleared = 0, reason = targetError };
+        }
+
+        if (!TryReadWorkspaceStatusClearKey(parameters, out var key, out var clearAll, out var keyError))
+        {
+            return new { cleared = 0, reason = keyError };
+        }
+
+        var selectedIndex = ResolveWorkspaceIndex(index, id);
+        if (selectedIndex < 0 || selectedIndex >= _workspaces.Count)
+        {
+            return new
+            {
+                cleared = 0,
+                reason = index.HasValue ? "index out of range" : "workspace not found"
+            };
+        }
+
+        var workspace = _workspaces[selectedIndex];
+        var cleared = _workspaceStatuses.RemoveAll(status =>
+            string.Equals(status.WorkspaceId, workspace.Id, StringComparison.Ordinal)
+            && (clearAll || string.Equals(status.Key, key, StringComparison.Ordinal)));
+        RecalculateWorkspaceStatusState();
         return new
         {
             cleared,
@@ -1768,6 +1911,14 @@ public partial class MainWindow : Window
         }
     }
 
+    private void TrimWorkspaceStatuses()
+    {
+        while (_workspaceStatuses.Count > MaxWorkspaceStatuses)
+        {
+            _workspaceStatuses.RemoveAt(0);
+        }
+    }
+
     private void RecalculateWorkspaceLogState()
     {
         foreach (var workspace in _workspaces)
@@ -1778,12 +1929,29 @@ public partial class MainWindow : Window
         }
     }
 
+    private void RecalculateWorkspaceStatusState()
+    {
+        foreach (var workspace in _workspaces)
+        {
+            var latest = _workspaceStatuses
+                .LastOrDefault(status => string.Equals(status.WorkspaceId, workspace.Id, StringComparison.Ordinal));
+            workspace.LatestStatus = latest is null ? null : FormatWorkspaceStatusText(latest);
+        }
+    }
+
     private static string FormatWorkspaceLogText(WorkspaceLogEntry entry)
     {
         var prefix = $"[{entry.Level}]";
         return string.IsNullOrWhiteSpace(entry.Source)
             ? $"{prefix} {entry.Message}"
             : $"{prefix} {entry.Source}: {entry.Message}";
+    }
+
+    private static string FormatWorkspaceStatusText(WorkspaceStatusEntry entry)
+    {
+        return string.IsNullOrWhiteSpace(entry.Icon)
+            ? $"{entry.Key}: {entry.Text}"
+            : $"{entry.Key}: {entry.Icon} {entry.Text}";
     }
 
     private WorkspaceState ActiveWorkspace()
@@ -2002,9 +2170,10 @@ public partial class MainWindow : Window
         var branchMeta = string.IsNullOrWhiteSpace(workspace.GitBranchLabel) ? "" : $"  |  {workspace.GitBranchLabel}";
         var pullRequestMeta = string.IsNullOrWhiteSpace(workspace.PullRequestLabel) ? "" : $"  |  {workspace.PullRequestLabel}";
         var portsMeta = string.IsNullOrWhiteSpace(workspace.PortsLabel) ? "" : $"  |  {workspace.PortsLabel}";
+        var statusMeta = string.IsNullOrWhiteSpace(workspace.LatestStatusLabel) ? "" : $"  |  {workspace.LatestStatusLabel}";
         var notificationMeta = string.IsNullOrWhiteSpace(workspace.LatestNotificationLabel) ? "" : $"  |  {workspace.LatestNotificationLabel}";
         var logMeta = string.IsNullOrWhiteSpace(workspace.LatestLogLabel) ? "" : $"  |  {workspace.LatestLogLabel}";
-        WorkspaceMeta.Text = $"{workspace.WorkingDirectory}{branchMeta}{pullRequestMeta}{portsMeta}{notificationMeta}{logMeta}  |  surfaces: {workspace.Surfaces.Count}  |  panes: {CountPanes(surface.Root)}  |  unread: {workspace.UnreadCount}";
+        WorkspaceMeta.Text = $"{workspace.WorkingDirectory}{branchMeta}{pullRequestMeta}{portsMeta}{statusMeta}{notificationMeta}{logMeta}  |  surfaces: {workspace.Surfaces.Count}  |  panes: {CountPanes(surface.Root)}  |  unread: {workspace.UnreadCount}";
         RefreshSurfaceTabs(workspace);
         var activeSessionRunning = activePane is not null
             && _ptySessions.TryGetValue(activePane.Id, out var activeSession)
@@ -2666,7 +2835,9 @@ public partial class MainWindow : Window
             workspace.UnreadCount,
             latestNotification = workspace.LatestNotificationPreview,
             latestLog = workspace.LatestLogPreview,
+            latestStatus = workspace.LatestStatusPreview,
             logCount = _workspaceLogs.Count(log => string.Equals(log.WorkspaceId, workspace.Id, StringComparison.Ordinal)),
+            statusCount = _workspaceStatuses.Count(status => string.Equals(status.WorkspaceId, workspace.Id, StringComparison.Ordinal)),
             surfaceCount = workspace.Surfaces.Count,
             workspace.ActiveSurfaceIndex,
             activeSurfaceTitle = surface.Title,
@@ -2699,6 +2870,21 @@ public partial class MainWindow : Window
             log.Source,
             log.Message,
             log.CreatedAt
+        };
+    }
+
+    private static object BuildWorkspaceStatusDto(WorkspaceStatusEntry status)
+    {
+        return new
+        {
+            status.Id,
+            status.WorkspaceId,
+            status.WorkspaceTitle,
+            status.Key,
+            status.Text,
+            status.Icon,
+            status.Color,
+            status.UpdatedAt
         };
     }
 
@@ -3480,6 +3666,125 @@ public partial class MainWindow : Window
         }
 
         limit = Math.Min(parsed, MaxWorkspaceLogs);
+        return true;
+    }
+
+    private static bool TryReadWorkspaceStatusKey(JsonElement? parameters, out string key, out string error)
+    {
+        key = "";
+        error = "";
+        if (parameters is not { ValueKind: JsonValueKind.Object } element
+            || !element.TryGetProperty("key", out var property)
+            || property.ValueKind != JsonValueKind.String)
+        {
+            error = "key is required";
+            return false;
+        }
+
+        key = CompactWorkspaceLogValue(property.GetString(), MaxWorkspaceStatusKeyLength);
+        if (string.IsNullOrWhiteSpace(key))
+        {
+            error = "key is required";
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool TryReadWorkspaceStatusText(JsonElement? parameters, out string text, out string error)
+    {
+        text = "";
+        error = "";
+        if (parameters is not { ValueKind: JsonValueKind.Object } element
+            || !element.TryGetProperty("text", out var property)
+            || property.ValueKind != JsonValueKind.String)
+        {
+            error = "text is required";
+            return false;
+        }
+
+        text = CompactWorkspaceLogValue(property.GetString(), MaxWorkspaceStatusTextLength);
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            error = "text is required";
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool TryReadWorkspaceStatusOptionalText(
+        JsonElement? parameters,
+        string propertyName,
+        int maxLength,
+        out string? value,
+        out string error)
+    {
+        value = null;
+        error = "";
+        if (parameters is not { ValueKind: JsonValueKind.Object } element
+            || !element.TryGetProperty(propertyName, out var property)
+            || property.ValueKind == JsonValueKind.Null)
+        {
+            return true;
+        }
+
+        if (property.ValueKind != JsonValueKind.String)
+        {
+            error = $"{propertyName} must be a string";
+            return false;
+        }
+
+        var compact = CompactWorkspaceLogValue(property.GetString(), maxLength);
+        value = string.IsNullOrWhiteSpace(compact) ? null : compact;
+        return true;
+    }
+
+    private static bool TryReadWorkspaceStatusClearKey(JsonElement? parameters, out string? key, out bool clearAll, out string error)
+    {
+        key = null;
+        clearAll = false;
+        error = "";
+        if (parameters is not { ValueKind: JsonValueKind.Object } element)
+        {
+            error = "key or all is required";
+            return false;
+        }
+
+        if (element.TryGetProperty("all", out var allProperty))
+        {
+            if (allProperty.ValueKind != JsonValueKind.True)
+            {
+                error = "all must be true";
+                return false;
+            }
+
+            clearAll = true;
+        }
+
+        var hasKey = element.TryGetProperty("key", out var keyProperty);
+        if (hasKey)
+        {
+            if (keyProperty.ValueKind != JsonValueKind.String)
+            {
+                error = "key is required";
+                return false;
+            }
+
+            key = CompactWorkspaceLogValue(keyProperty.GetString(), MaxWorkspaceStatusKeyLength);
+            if (string.IsNullOrWhiteSpace(key))
+            {
+                error = "key is required";
+                return false;
+            }
+        }
+
+        if (clearAll == hasKey)
+        {
+            error = clearAll ? "provide key or all, not both" : "key or all is required";
+            return false;
+        }
+
         return true;
     }
 

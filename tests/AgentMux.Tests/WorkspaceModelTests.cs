@@ -74,6 +74,26 @@ public sealed class WorkspaceModelTests
     }
 
     [Fact]
+    public void WorkspaceLatestStatusPreviewIsDisplayOnlyAndCapped()
+    {
+        var workspace = new WorkspaceState
+        {
+            LatestStatus = " build:\r\nrunning\tchecks \u0007" + new string('x', 140)
+        };
+
+        var json = JsonSerializer.Serialize(workspace, AgentMuxJson.Options);
+
+        Assert.NotNull(workspace.LatestStatusPreview);
+        Assert.StartsWith("build: running checks", workspace.LatestStatusPreview, StringComparison.Ordinal);
+        Assert.EndsWith("...", workspace.LatestStatusPreview, StringComparison.Ordinal);
+        Assert.Equal(120, workspace.LatestStatusPreview!.Length);
+        Assert.Equal($"status: {workspace.LatestStatusPreview}", workspace.LatestStatusLabel);
+        Assert.DoesNotContain("latestStatus", json, StringComparison.Ordinal);
+        Assert.DoesNotContain("latestStatusPreview", json, StringComparison.Ordinal);
+        Assert.DoesNotContain("latestStatusLabel", json, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void WorkspacePortsRoundTripAndLabelIsDisplayOnly()
     {
         var workspace = new WorkspaceState

@@ -10,6 +10,9 @@ public sealed class CliWorkspaceCommandTests
     private const string WorkspaceLogUsage = "Usage: agentmux log <message> [--level <info|warn|error|debug>] [--source <text>] [--workspace <id-or-index>]";
     private const string WorkspaceListLogUsage = "Usage: agentmux list-log [--limit <count>] [--workspace <id-or-index>]";
     private const string WorkspaceClearLogUsage = "Usage: agentmux clear-log [--workspace <id-or-index>]";
+    private const string WorkspaceSetStatusUsage = "Usage: agentmux set-status <key> <text> [--icon <text>] [--color <text>] [--workspace <id-or-index>]";
+    private const string WorkspaceListStatusUsage = "Usage: agentmux list-status [--workspace <id-or-index>]";
+    private const string WorkspaceClearStatusUsage = "Usage: agentmux clear-status <key|--all> [--workspace <id-or-index>]";
 
     [Theory]
     [InlineData("list")]
@@ -292,6 +295,86 @@ public sealed class CliWorkspaceCommandTests
     }
 
     [Fact]
+    public void WorkspaceSetStatusCommandParsesPositionalsWithMetadataAndWorkspaceIndex()
+    {
+        var request = Program.ParseWorkspaceSetStatusRequestForTests(
+            ["build", "Running", "tests", "--icon", "checkmark", "--color", "#22c55e", "--workspace", "1"],
+            out var error);
+
+        Assert.Equal("", error);
+        Assert.NotNull(request);
+        Assert.Equal(AgentMuxMethods.WorkspaceSetStatus, request.Method);
+
+        var parameters = JsonSerializer.SerializeToElement(request.Parameters, AgentMuxJson.Options);
+        Assert.Equal("build", parameters.GetProperty("key").GetString());
+        Assert.Equal("Running tests", parameters.GetProperty("text").GetString());
+        Assert.Equal("checkmark", parameters.GetProperty("icon").GetString());
+        Assert.Equal("#22c55e", parameters.GetProperty("color").GetString());
+        Assert.Equal(1, parameters.GetProperty("index").GetInt32());
+        Assert.False(parameters.TryGetProperty("id", out _));
+    }
+
+    [Fact]
+    public void WorkspaceSetStatusCommandParsesNamedFieldsAndWorkspaceId()
+    {
+        var request = Program.ParseWorkspaceSetStatusRequestForTests(
+            ["--key", "deploy", "--text", "Queued", "--workspace", "workspace-1"],
+            out var error);
+
+        Assert.Equal("", error);
+        Assert.NotNull(request);
+        Assert.Equal(AgentMuxMethods.WorkspaceSetStatus, request.Method);
+
+        var parameters = JsonSerializer.SerializeToElement(request.Parameters, AgentMuxJson.Options);
+        Assert.Equal("deploy", parameters.GetProperty("key").GetString());
+        Assert.Equal("Queued", parameters.GetProperty("text").GetString());
+        Assert.Equal("workspace-1", parameters.GetProperty("id").GetString());
+        Assert.False(parameters.TryGetProperty("index", out _));
+    }
+
+    [Fact]
+    public void WorkspaceListStatusCommandParsesWorkspaceId()
+    {
+        var request = Program.ParseWorkspaceListStatusRequestForTests(["--workspace", "workspace-1"], out var error);
+
+        Assert.Equal("", error);
+        Assert.NotNull(request);
+        Assert.Equal(AgentMuxMethods.WorkspaceListStatus, request.Method);
+
+        var parameters = JsonSerializer.SerializeToElement(request.Parameters, AgentMuxJson.Options);
+        Assert.Equal("workspace-1", parameters.GetProperty("id").GetString());
+    }
+
+    [Fact]
+    public void WorkspaceClearStatusCommandParsesKeyAndWorkspaceIndex()
+    {
+        var request = Program.ParseWorkspaceClearStatusRequestForTests(["build", "--workspace", "0"], out var error);
+
+        Assert.Equal("", error);
+        Assert.NotNull(request);
+        Assert.Equal(AgentMuxMethods.WorkspaceClearStatus, request.Method);
+
+        var parameters = JsonSerializer.SerializeToElement(request.Parameters, AgentMuxJson.Options);
+        Assert.Equal("build", parameters.GetProperty("key").GetString());
+        Assert.Equal(0, parameters.GetProperty("index").GetInt32());
+        Assert.False(parameters.TryGetProperty("all", out _));
+    }
+
+    [Fact]
+    public void WorkspaceClearStatusCommandParsesAll()
+    {
+        var request = Program.ParseWorkspaceClearStatusRequestForTests(["--all"], out var error);
+
+        Assert.Equal("", error);
+        Assert.NotNull(request);
+        Assert.Equal(AgentMuxMethods.WorkspaceClearStatus, request.Method);
+
+        var parameters = JsonSerializer.SerializeToElement(request.Parameters, AgentMuxJson.Options);
+        Assert.True(parameters.GetProperty("all").GetBoolean());
+        Assert.False(parameters.TryGetProperty("key", out _));
+    }
+
+    [Fact]
     public void WorkspaceCommandRejectsMissingAction()
     {
         var request = Program.ParseWorkspaceRequestForTests([], out var error);
@@ -526,6 +609,83 @@ public sealed class CliWorkspaceCommandTests
 
         Assert.Null(request);
         Assert.Equal(WorkspaceClearLogUsage, error);
+    }
+
+    [Theory]
+    [InlineData()]
+    [InlineData("--key", "build")]
+    [InlineData("build")]
+    [InlineData("--key")]
+    [InlineData("build", "--text")]
+    public void WorkspaceSetStatusCommandRejectsMissingKeyOrText(params string[] args)
+    {
+        var request = Program.ParseWorkspaceSetStatusRequestForTests(args, out var error);
+
+        Assert.Null(request);
+        Assert.Equal(WorkspaceSetStatusUsage, error);
+    }
+
+    [Theory]
+    [InlineData("--icon")]
+    [InlineData("--color")]
+    public void WorkspaceSetStatusCommandRejectsBareMetadataFlags(params string[] args)
+    {
+        var request = Program.ParseWorkspaceSetStatusRequestForTests(["build", "ready", .. args], out var error);
+
+        Assert.Null(request);
+        Assert.Equal(WorkspaceSetStatusUsage, error);
+    }
+
+    [Fact]
+    public void WorkspaceSetStatusCommandRejectsAmbiguousWorkspaceTarget()
+    {
+        var request = Program.ParseWorkspaceSetStatusRequestForTests(["build", "ready", "--workspace", "0", "--id", "workspace-1"], out var error);
+
+        Assert.Null(request);
+        Assert.Equal(WorkspaceSetStatusUsage, error);
+    }
+
+    [Theory]
+    [InlineData("build", "Running", "--text", "Passed")]
+    [InlineData("--key", "build", "--text", "Passed", "extra")]
+    public void WorkspaceSetStatusCommandRejectsMixedNamedTextAndExtraPositionals(params string[] args)
+    {
+        var request = Program.ParseWorkspaceSetStatusRequestForTests(args, out var error);
+
+        Assert.Null(request);
+        Assert.Equal(WorkspaceSetStatusUsage, error);
+    }
+
+    [Fact]
+    public void WorkspaceListStatusCommandRejectsPositionals()
+    {
+        var request = Program.ParseWorkspaceListStatusRequestForTests(["extra"], out var error);
+
+        Assert.Null(request);
+        Assert.Equal(WorkspaceListStatusUsage, error);
+    }
+
+    [Fact]
+    public void WorkspaceListStatusCommandRejectsBareWorkspaceFlag()
+    {
+        var request = Program.ParseWorkspaceListStatusRequestForTests(["--workspace"], out var error);
+
+        Assert.Null(request);
+        Assert.Equal(WorkspaceListStatusUsage, error);
+    }
+
+    [Theory]
+    [InlineData()]
+    [InlineData("--all", "build")]
+    [InlineData("build", "deploy")]
+    [InlineData("--key")]
+    [InlineData("--all", "false")]
+    public void WorkspaceClearStatusCommandRejectsInvalidKeyOrAll(params string[] args)
+    {
+        var request = Program.ParseWorkspaceClearStatusRequestForTests(args, out var error);
+
+        Assert.Null(request);
+        Assert.Equal(WorkspaceClearStatusUsage, error);
     }
 
     [Fact]
