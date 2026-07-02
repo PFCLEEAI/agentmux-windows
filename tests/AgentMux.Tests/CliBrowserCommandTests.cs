@@ -74,6 +74,147 @@ public sealed class CliBrowserCommandTests
     }
 
     [Theory]
+    [InlineData("title", AgentMuxMethods.BrowserGetTitle)]
+    [InlineData("url", AgentMuxMethods.BrowserGetUrl)]
+    public void BrowserGetParsesNoSelectorCommands(string kind, string method)
+    {
+        var request = Program.ParseBrowserRequestForTests(["get", kind], out var error);
+
+        Assert.Equal("", error);
+        Assert.NotNull(request);
+        Assert.Equal(method, request.Method);
+    }
+
+    [Theory]
+    [InlineData("text", AgentMuxMethods.BrowserGetText)]
+    [InlineData("html", AgentMuxMethods.BrowserGetHtml)]
+    [InlineData("value", AgentMuxMethods.BrowserGetValue)]
+    [InlineData("count", AgentMuxMethods.BrowserGetCount)]
+    [InlineData("box", AgentMuxMethods.BrowserGetBox)]
+    public void BrowserGetParsesSelectorCommands(string kind, string method)
+    {
+        var request = Program.ParseBrowserRequestForTests([
+            "get",
+            kind,
+            "#target",
+            "--frame",
+            "agentmux-child-frame"
+        ], out var error);
+
+        Assert.Equal("", error);
+        Assert.NotNull(request);
+        Assert.Equal(method, request.Method);
+        var parameters = JsonSerializer.SerializeToElement(request.Parameters, AgentMuxJson.Options);
+        Assert.Equal("#target", parameters.GetProperty("selector").GetString());
+        Assert.Equal("agentmux-child-frame", parameters.GetProperty("frame").GetString());
+    }
+
+    [Fact]
+    public void BrowserGetParsesNamedSelector()
+    {
+        var request = Program.ParseBrowserRequestForTests(["get", "text", "--selector", "main"], out var error);
+
+        Assert.Equal("", error);
+        Assert.NotNull(request);
+        Assert.Equal(AgentMuxMethods.BrowserGetText, request.Method);
+        var parameters = JsonSerializer.SerializeToElement(request.Parameters, AgentMuxJson.Options);
+        Assert.Equal("main", parameters.GetProperty("selector").GetString());
+    }
+
+    [Fact]
+    public void BrowserGetParsesAttribute()
+    {
+        var request = Program.ParseBrowserRequestForTests([
+            "get",
+            "attr",
+            "img",
+            "--attr",
+            "src",
+            "--frame",
+            "agentmux-child-frame"
+        ], out var error);
+
+        Assert.Equal("", error);
+        Assert.NotNull(request);
+        Assert.Equal(AgentMuxMethods.BrowserGetAttribute, request.Method);
+        var parameters = JsonSerializer.SerializeToElement(request.Parameters, AgentMuxJson.Options);
+        Assert.Equal("img", parameters.GetProperty("selector").GetString());
+        Assert.Equal("src", parameters.GetProperty("attr").GetString());
+        Assert.Equal("agentmux-child-frame", parameters.GetProperty("frame").GetString());
+    }
+
+    [Theory]
+    [InlineData("styles")]
+    [InlineData("style")]
+    public void BrowserGetParsesStyleProperty(string command)
+    {
+        var request = Program.ParseBrowserRequestForTests([
+            "get",
+            command,
+            ".button",
+            "--property",
+            "color"
+        ], out var error);
+
+        Assert.Equal("", error);
+        Assert.NotNull(request);
+        Assert.Equal(AgentMuxMethods.BrowserGetStyle, request.Method);
+        var parameters = JsonSerializer.SerializeToElement(request.Parameters, AgentMuxJson.Options);
+        Assert.Equal(".button", parameters.GetProperty("selector").GetString());
+        Assert.Equal("color", parameters.GetProperty("property").GetString());
+    }
+
+    [Fact]
+    public void BrowserGetRejectsUnknownKind()
+    {
+        var request = Program.ParseBrowserRequestForTests(["get", "snapshot"], out var error);
+
+        Assert.Null(request);
+        Assert.Equal("Unknown browser get command: snapshot", error);
+    }
+
+    [Theory]
+    [InlineData("text", "Usage: agentmux browser get text <selector>")]
+    [InlineData("html", "Usage: agentmux browser get html <selector>")]
+    [InlineData("value", "Usage: agentmux browser get value <selector>")]
+    [InlineData("count", "Usage: agentmux browser get count <selector>")]
+    [InlineData("box", "Usage: agentmux browser get box <selector>")]
+    public void BrowserGetRequiresSelector(string kind, string usage)
+    {
+        var request = Program.ParseBrowserRequestForTests(["get", kind], out var error);
+
+        Assert.Null(request);
+        Assert.Equal(usage, error);
+    }
+
+    [Fact]
+    public void BrowserGetAttributeRequiresAttr()
+    {
+        var request = Program.ParseBrowserRequestForTests(["get", "attr", "img"], out var error);
+
+        Assert.Null(request);
+        Assert.Equal("Usage: agentmux browser get attr <selector> --attr <name>", error);
+    }
+
+    [Fact]
+    public void BrowserGetStyleRequiresProperty()
+    {
+        var request = Program.ParseBrowserRequestForTests(["get", "styles", ".button"], out var error);
+
+        Assert.Null(request);
+        Assert.Equal("Usage: agentmux browser get styles <selector> --property <name>", error);
+    }
+
+    [Fact]
+    public void BrowserGetRejectsUnsupportedSurfaceOption()
+    {
+        var request = Program.ParseBrowserRequestForTests(["get", "text", "main", "--surface", "surface:1"], out var error);
+
+        Assert.Null(request);
+        Assert.Equal("Usage: agentmux browser get text <selector>", error);
+    }
+
+    [Theory]
     [InlineData("text")]
     [InlineData("inner-text")]
     public void BrowserTextParsesSelectorFrameAndMaxChars(string command)

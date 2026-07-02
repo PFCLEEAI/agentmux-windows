@@ -80,6 +80,14 @@ public static class AgentMuxMethods
     public const string BrowserForward = "browser.forward";
     public const string BrowserReload = "browser.reload";
     public const string BrowserGetUrl = "browser.url.get";
+    public const string BrowserGetText = "browser.get.text";
+    public const string BrowserGetHtml = "browser.get.html";
+    public const string BrowserGetValue = "browser.get.value";
+    public const string BrowserGetAttribute = "browser.get.attr";
+    public const string BrowserGetCount = "browser.get.count";
+    public const string BrowserGetBox = "browser.get.box";
+    public const string BrowserGetStyle = "browser.get.styles";
+    public const string BrowserGetTitle = "browser.get.title";
     public const string BrowserEval = "surface.eval_js";
     public const string BrowserText = "surface.browser_text";
     public const string BrowserClick = "surface.click_selector";

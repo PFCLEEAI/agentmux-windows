@@ -551,6 +551,14 @@ public partial class MainWindow : Window
             AgentMuxMethods.BrowserForward => AgentMuxResponse.Success(request.Id, await HandleBrowserForwardAsync().ConfigureAwait(true)),
             AgentMuxMethods.BrowserReload => AgentMuxResponse.Success(request.Id, await HandleBrowserReloadAsync().ConfigureAwait(true)),
             AgentMuxMethods.BrowserGetUrl => AgentMuxResponse.Success(request.Id, await HandleBrowserGetUrlAsync().ConfigureAwait(true)),
+            AgentMuxMethods.BrowserGetText => AgentMuxResponse.Success(request.Id, await HandleBrowserGetAsync(request.Params, "text").ConfigureAwait(true)),
+            AgentMuxMethods.BrowserGetHtml => AgentMuxResponse.Success(request.Id, await HandleBrowserGetAsync(request.Params, "html").ConfigureAwait(true)),
+            AgentMuxMethods.BrowserGetValue => AgentMuxResponse.Success(request.Id, await HandleBrowserGetAsync(request.Params, "value").ConfigureAwait(true)),
+            AgentMuxMethods.BrowserGetAttribute => AgentMuxResponse.Success(request.Id, await HandleBrowserGetAsync(request.Params, "attr").ConfigureAwait(true)),
+            AgentMuxMethods.BrowserGetCount => AgentMuxResponse.Success(request.Id, await HandleBrowserGetAsync(request.Params, "count").ConfigureAwait(true)),
+            AgentMuxMethods.BrowserGetBox => AgentMuxResponse.Success(request.Id, await HandleBrowserGetAsync(request.Params, "box").ConfigureAwait(true)),
+            AgentMuxMethods.BrowserGetStyle => AgentMuxResponse.Success(request.Id, await HandleBrowserGetAsync(request.Params, "styles").ConfigureAwait(true)),
+            AgentMuxMethods.BrowserGetTitle => AgentMuxResponse.Success(request.Id, await HandleBrowserGetTitleAsync().ConfigureAwait(true)),
             AgentMuxMethods.BrowserEval => AgentMuxResponse.Success(request.Id, await HandleBrowserEvalAsync(request.Params).ConfigureAwait(true)),
             AgentMuxMethods.BrowserText => AgentMuxResponse.Success(request.Id, await HandleBrowserTextAsync(request.Params).ConfigureAwait(true)),
             AgentMuxMethods.BrowserClick => AgentMuxResponse.Success(request.Id, await HandleBrowserClickAsync(request.Params).ConfigureAwait(true)),
@@ -1393,6 +1401,50 @@ public partial class MainWindow : Window
     private async Task<object> HandleBrowserGetUrlAsync()
     {
         return await RunBrowserNavigationAsync(view => view.GetCurrentUrlAsync()).ConfigureAwait(true);
+    }
+
+    private async Task<object> HandleBrowserGetTitleAsync()
+    {
+        var pane = ActivePane();
+        return await RunBrowserScriptAsync(view => view.GetElementDataAsync("title", paneId: pane?.Id)).ConfigureAwait(true);
+    }
+
+    private async Task<object> HandleBrowserGetAsync(JsonElement? parameters, string kind)
+    {
+        var parsed = Deserialize<BrowserGetParams>(parameters);
+        var selector = parsed?.Selector;
+        if (string.IsNullOrWhiteSpace(selector))
+        {
+            return new { ok = false, kind, reason = "selector is required" };
+        }
+
+        string? name = null;
+        if (kind is "attr")
+        {
+            if (string.IsNullOrWhiteSpace(parsed?.Attr))
+            {
+                return new { ok = false, kind, selector, reason = "attr is required" };
+            }
+
+            name = parsed.Attr;
+        }
+        else if (kind is "styles")
+        {
+            if (string.IsNullOrWhiteSpace(parsed?.Property))
+            {
+                return new { ok = false, kind, selector, reason = "property is required" };
+            }
+
+            name = parsed.Property;
+        }
+
+        var pane = ActivePane();
+        return await RunBrowserScriptAsync(view => view.GetElementDataAsync(
+            kind,
+            selector,
+            parsed?.Frame,
+            name,
+            pane?.Id)).ConfigureAwait(true);
     }
 
     private async Task<object> HandleBrowserEvalAsync(JsonElement? parameters)
@@ -2924,6 +2976,14 @@ public partial class MainWindow : Window
             or AgentMuxMethods.BrowserForward
             or AgentMuxMethods.BrowserReload
             or AgentMuxMethods.BrowserGetUrl
+            or AgentMuxMethods.BrowserGetText
+            or AgentMuxMethods.BrowserGetHtml
+            or AgentMuxMethods.BrowserGetValue
+            or AgentMuxMethods.BrowserGetAttribute
+            or AgentMuxMethods.BrowserGetCount
+            or AgentMuxMethods.BrowserGetBox
+            or AgentMuxMethods.BrowserGetStyle
+            or AgentMuxMethods.BrowserGetTitle
             or AgentMuxMethods.BrowserEval
             or AgentMuxMethods.BrowserText
             or AgentMuxMethods.BrowserClick
@@ -4229,6 +4289,14 @@ public partial class MainWindow : Window
         public string? Selector { get; set; }
         public string? Frame { get; set; }
         public int? MaxChars { get; set; }
+    }
+
+    private sealed class BrowserGetParams
+    {
+        public string? Selector { get; set; }
+        public string? Frame { get; set; }
+        public string? Attr { get; set; }
+        public string? Property { get; set; }
     }
 
     private sealed class BrowserSelectorParams

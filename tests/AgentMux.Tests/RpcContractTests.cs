@@ -94,6 +94,14 @@ public sealed class RpcContractTests
         Assert.Equal("browser.forward", AgentMuxMethods.BrowserForward);
         Assert.Equal("browser.reload", AgentMuxMethods.BrowserReload);
         Assert.Equal("browser.url.get", AgentMuxMethods.BrowserGetUrl);
+        Assert.Equal("browser.get.text", AgentMuxMethods.BrowserGetText);
+        Assert.Equal("browser.get.html", AgentMuxMethods.BrowserGetHtml);
+        Assert.Equal("browser.get.value", AgentMuxMethods.BrowserGetValue);
+        Assert.Equal("browser.get.attr", AgentMuxMethods.BrowserGetAttribute);
+        Assert.Equal("browser.get.count", AgentMuxMethods.BrowserGetCount);
+        Assert.Equal("browser.get.box", AgentMuxMethods.BrowserGetBox);
+        Assert.Equal("browser.get.styles", AgentMuxMethods.BrowserGetStyle);
+        Assert.Equal("browser.get.title", AgentMuxMethods.BrowserGetTitle);
         Assert.Equal("surface.eval_js", AgentMuxMethods.BrowserEval);
         Assert.Equal("surface.browser_text", AgentMuxMethods.BrowserText);
         Assert.Equal("surface.click_selector", AgentMuxMethods.BrowserClick);

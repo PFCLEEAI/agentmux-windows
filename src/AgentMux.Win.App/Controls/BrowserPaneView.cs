@@ -328,6 +328,174 @@ internal sealed class BrowserPaneView : Grid, IDisposable
             """).ConfigureAwait(true);
     }
 
+    public async Task<string> GetElementDataAsync(
+        string kind,
+        string? selector = null,
+        string? frame = null,
+        string? name = null,
+        string? paneId = null)
+    {
+        var normalizedKind = string.IsNullOrWhiteSpace(kind) ? "" : kind.Trim().ToLowerInvariant();
+        var normalizedSelector = NormalizeSelector(selector);
+        var normalizedName = string.IsNullOrWhiteSpace(name) ? null : name.Trim();
+
+        if (normalizedKind is not ("title" or "text" or "html" or "value" or "attr" or "count" or "box" or "styles"))
+        {
+            return JsonSerializer.Serialize(new { ok = false, kind = normalizedKind, reason = "unsupported get kind" }, AgentMuxJson.Options);
+        }
+
+        if (normalizedKind is not "title" && string.IsNullOrWhiteSpace(normalizedSelector))
+        {
+            return JsonSerializer.Serialize(new { ok = false, kind = normalizedKind, reason = "selector is required" }, AgentMuxJson.Options);
+        }
+
+        if (normalizedKind is "attr" && string.IsNullOrWhiteSpace(normalizedName))
+        {
+            return JsonSerializer.Serialize(new { ok = false, kind = normalizedKind, selector = normalizedSelector, reason = "attr is required" }, AgentMuxJson.Options);
+        }
+
+        if (normalizedKind is "styles" && string.IsNullOrWhiteSpace(normalizedName))
+        {
+            return JsonSerializer.Serialize(new { ok = false, kind = normalizedKind, selector = normalizedSelector, reason = "property is required" }, AgentMuxJson.Options);
+        }
+
+        await EnsureReadyAsync().ConfigureAwait(true);
+
+        return await _webView.CoreWebView2!.ExecuteScriptAsync($$"""
+            (() => {
+              const kind = {{JsonSerializer.Serialize(normalizedKind)}};
+              const selector = {{JsonSerializer.Serialize(normalizedSelector)}};
+              const name = {{JsonSerializer.Serialize(normalizedName)}};
+              const paneId = {{JsonSerializer.Serialize(string.IsNullOrWhiteSpace(paneId) ? null : paneId)}};
+              const maxChars = {{DefaultBrowserTextChars}};
+              {{FrameScopeScript(frame)}}
+
+              const cap = value => {
+                const raw = value == null ? "" : String(value);
+                const length = raw.length;
+                const truncated = length > maxChars;
+                return {
+                  value: truncated ? raw.slice(0, maxChars) : raw,
+                  length,
+                  truncated,
+                  maxChars
+                };
+              };
+
+              const payload = (field, value) => {
+                const capped = cap(value);
+                return {
+                  [field]: capped.value,
+                  length: capped.length,
+                  truncated: capped.truncated,
+                  maxChars: capped.maxChars
+                };
+              };
+
+              const baseResult = scope => ({
+                kind,
+                selector,
+                frame: scope?.frame ?? null,
+                paneId
+              });
+
+              if (kind === "title") {
+                const capped = payload("title", document.title || "");
+                return { ok: true, ...baseResult({ frame: null }), ...capped };
+              }
+
+              const scope = resolveAutomationScope();
+              if (!scope.ok) {
+                return { ...scope, ...baseResult(scope) };
+              }
+
+              if (kind === "count") {
+                try {
+                  return { ok: true, ...baseResult(scope), count: scope.document.querySelectorAll(selector).length };
+                } catch {
+                  return { ok: false, reason: "invalid selector", ...baseResult(scope) };
+                }
+              }
+
+              let element = null;
+              try {
+                element = scope.document.querySelector(selector);
+              } catch {
+                return { ok: false, reason: "invalid selector", ...baseResult(scope) };
+              }
+
+              if (!element) {
+                return { ok: false, reason: "selector not found", ...baseResult(scope) };
+              }
+
+              if (kind === "text") {
+                const rawText = typeof element.innerText === "string" ? element.innerText : (element.textContent || "");
+                return { ok: true, ...baseResult(scope), ...payload("text", rawText) };
+              }
+
+              if (kind === "html") {
+                return { ok: true, ...baseResult(scope), ...payload("html", element.outerHTML || "") };
+              }
+
+              if (kind === "value") {
+                const rawValue = "value" in element
+                  ? element.value
+                  : element.isContentEditable
+                    ? (typeof element.innerText === "string" ? element.innerText : (element.textContent || ""))
+                    : (element.getAttribute("value") || "");
+                return { ok: true, ...baseResult(scope), ...payload("value", rawValue) };
+              }
+
+              if (kind === "attr") {
+                const attrValue = element.getAttribute(name);
+                if (attrValue === null) {
+                  return {
+                    ok: true,
+                    ...baseResult(scope),
+                    attr: name,
+                    exists: false,
+                    value: null,
+                    length: 0,
+                    truncated: false,
+                    maxChars
+                  };
+                }
+
+                return { ok: true, ...baseResult(scope), attr: name, exists: true, ...payload("value", attrValue) };
+              }
+
+              if (kind === "box") {
+                const rect = element.getBoundingClientRect();
+                return {
+                  ok: true,
+                  ...baseResult(scope),
+                  x: rect.x,
+                  y: rect.y,
+                  width: rect.width,
+                  height: rect.height,
+                  top: rect.top,
+                  right: rect.right,
+                  bottom: rect.bottom,
+                  left: rect.left,
+                  visible: rect.width > 0 && rect.height > 0
+                };
+              }
+
+              if (kind === "styles") {
+                const styles = scope.window.getComputedStyle(element);
+                let styleValue = styles.getPropertyValue(name);
+                if (!styleValue && name in styles) {
+                  styleValue = styles[name];
+                }
+
+                return { ok: true, ...baseResult(scope), property: name, ...payload("value", styleValue || "") };
+              }
+
+              return { ok: false, reason: "unsupported get kind", ...baseResult(scope) };
+            })()
+            """).ConfigureAwait(true);
+    }
+
     public async Task<string> ClickAsync(string selector, string? frame = null)
     {
         if (string.IsNullOrWhiteSpace(selector))

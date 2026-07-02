@@ -307,6 +307,11 @@ public static class Program
             return new CliRequest(AgentMuxMethods.BrowserGetUrl, new { });
         }
 
+        if (args[0].Equals("get", StringComparison.OrdinalIgnoreCase))
+        {
+            return ParseBrowserGetRequest(args[1..], out error);
+        }
+
         if (args[0].Equals("eval", StringComparison.OrdinalIgnoreCase))
         {
             var named = ParseNamed(args[1..]);
@@ -686,6 +691,116 @@ public static class Program
         }
 
         error = $"Unknown browser command: {args[0]}";
+        return null;
+    }
+
+    private static CliRequest? ParseBrowserGetRequest(string[] args, out string error)
+    {
+        const string usage = "Usage: agentmux browser get <text|html|value|attr|count|box|styles|title|url> [selector]";
+        if (args.Length == 0)
+        {
+            error = usage;
+            return null;
+        }
+
+        var kind = args[0].Trim().ToLowerInvariant();
+        if (kind is not ("text" or "html" or "value" or "attr" or "count" or "box" or "styles" or "style" or "title" or "url"))
+        {
+            return BrowserGetUnknown(kind, usage, out error);
+        }
+
+        if (kind is "title")
+        {
+            if (args.Length != 1)
+            {
+                error = "Usage: agentmux browser get title";
+                return null;
+            }
+
+            error = "";
+            return new CliRequest(AgentMuxMethods.BrowserGetTitle, new { });
+        }
+
+        if (kind is "url")
+        {
+            if (args.Length != 1)
+            {
+                error = "Usage: agentmux browser get url";
+                return null;
+            }
+
+            error = "";
+            return new CliRequest(AgentMuxMethods.BrowserGetUrl, new { });
+        }
+
+        var named = ParseNamed(args[1..]);
+        var selector = NamedOrFirst(named, "selector");
+        if (!TryReadOptionalFrame(named, usage, out var frame, out error))
+        {
+            return null;
+        }
+
+        if (kind is "attr")
+        {
+            if (!NamedKeysAreAllowed(named, ["selector", "attr", "frame"])
+                || string.IsNullOrWhiteSpace(selector)
+                || !named.TryGetValue("attr", out var attr)
+                || string.IsNullOrWhiteSpace(attr)
+                || string.Equals(attr, "true", StringComparison.OrdinalIgnoreCase))
+            {
+                error = "Usage: agentmux browser get attr <selector> --attr <name>";
+                return null;
+            }
+
+            error = "";
+            return new CliRequest(AgentMuxMethods.BrowserGetAttribute, new { selector, attr, frame });
+        }
+
+        if (kind is "styles" or "style")
+        {
+            if (!NamedKeysAreAllowed(named, ["selector", "property", "frame"])
+                || string.IsNullOrWhiteSpace(selector)
+                || !named.TryGetValue("property", out var property)
+                || string.IsNullOrWhiteSpace(property)
+                || string.Equals(property, "true", StringComparison.OrdinalIgnoreCase))
+            {
+                error = "Usage: agentmux browser get styles <selector> --property <name>";
+                return null;
+            }
+
+            error = "";
+            return new CliRequest(AgentMuxMethods.BrowserGetStyle, new { selector, property, frame });
+        }
+
+        if (!NamedKeysAreAllowed(named, ["selector", "frame"]) || string.IsNullOrWhiteSpace(selector))
+        {
+            error = kind switch
+            {
+                "text" => "Usage: agentmux browser get text <selector>",
+                "html" => "Usage: agentmux browser get html <selector>",
+                "value" => "Usage: agentmux browser get value <selector>",
+                "count" => "Usage: agentmux browser get count <selector>",
+                "box" => "Usage: agentmux browser get box <selector>",
+                _ => usage
+            };
+            return null;
+        }
+
+        error = "";
+        return kind switch
+        {
+            "text" => new CliRequest(AgentMuxMethods.BrowserGetText, new { selector, frame }),
+            "html" => new CliRequest(AgentMuxMethods.BrowserGetHtml, new { selector, frame }),
+            "value" => new CliRequest(AgentMuxMethods.BrowserGetValue, new { selector, frame }),
+            "count" => new CliRequest(AgentMuxMethods.BrowserGetCount, new { selector, frame }),
+            "box" => new CliRequest(AgentMuxMethods.BrowserGetBox, new { selector, frame }),
+            _ => BrowserGetUnknown(kind, usage, out error)
+        };
+    }
+
+    private static CliRequest? BrowserGetUnknown(string kind, string usage, out string error)
+    {
+        error = string.IsNullOrWhiteSpace(kind) ? usage : $"Unknown browser get command: {kind}";
         return null;
     }
 
@@ -1924,6 +2039,15 @@ public static class Program
           agentmux browser reload
           agentmux browser url
           agentmux browser get-url
+          agentmux browser get title
+          agentmux browser get url
+          agentmux browser get text "main"
+          agentmux browser get html "#content"
+          agentmux browser get value "input[name='email']"
+          agentmux browser get attr "img" --attr src
+          agentmux browser get count ".item"
+          agentmux browser get box ".element"
+          agentmux browser get styles ".button" --property color
           agentmux browser eval "document.title"
           agentmux browser text --selector "main" --max-chars 10000
           agentmux browser click "#submit"
