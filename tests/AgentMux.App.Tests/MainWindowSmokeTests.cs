@@ -1457,6 +1457,16 @@ public sealed class MainWindowSmokeTests
             Assert.False(findOnTerminal.GetProperty("ok").GetBoolean());
             Assert.Equal("active pane is not a browser", findOnTerminal.GetProperty("reason").GetString());
 
+            var selectOnTerminalResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserSelect, new
+            {
+                selector = "select",
+                value = "US"
+            });
+            Assert.True(selectOnTerminalResponse.Ok, selectOnTerminalResponse.Error);
+            var selectOnTerminal = System.Text.Json.JsonSerializer.SerializeToElement(selectOnTerminalResponse.Result, AgentMuxJson.Options);
+            Assert.False(selectOnTerminal.GetProperty("ok").GetBoolean());
+            Assert.Equal("active pane is not a browser", selectOnTerminal.GetProperty("reason").GetString());
+
             var urlOnTerminalResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserGetUrl);
             Assert.True(urlOnTerminalResponse.Ok, urlOnTerminalResponse.Error);
             var urlOnTerminal = System.Text.Json.JsonSerializer.SerializeToElement(urlOnTerminalResponse.Result, AgentMuxJson.Options);
@@ -2059,6 +2069,63 @@ public sealed class MainWindowSmokeTests
             Assert.True(setup.GetProperty("result").GetBoolean());
             await WaitForBrowserEvalTrueAsync(window, "window.__agentMuxFrameReady === true").ConfigureAwait(true);
 
+            AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserEval, new
+            {
+                script = """
+                    (() => {
+                        window.__agentMuxSelectInput = 0;
+                        window.__agentMuxSelectChange = 0;
+                        window.__agentMuxFrameSelectInput = 0;
+                        window.__agentMuxFrameSelectChange = 0;
+
+                        const country = document.createElement("select");
+                        country.id = "rpc-country";
+                        country.innerHTML = '<option value="">Choose</option><option value="US">United States</option><option value="DIS" disabled>Disabled</option>';
+                        country.addEventListener("input", () => {
+                            window.__agentMuxSelectInput += 1;
+                        });
+                        country.addEventListener("change", () => {
+                            window.__agentMuxSelectChange += 1;
+                        });
+                        document.body.appendChild(country);
+
+                        const disabled = document.createElement("select");
+                        disabled.id = "rpc-country-disabled";
+                        disabled.disabled = true;
+                        disabled.innerHTML = '<option value="US">United States</option>';
+                        document.body.appendChild(disabled);
+
+                        const disabledFieldset = document.createElement("fieldset");
+                        disabledFieldset.disabled = true;
+                        disabledFieldset.innerHTML = '<select id="rpc-country-fieldset-disabled"><option value="US">United States</option></select>';
+                        document.body.appendChild(disabledFieldset);
+
+                        const multi = document.createElement("select");
+                        multi.id = "rpc-country-multiple";
+                        multi.multiple = true;
+                        multi.innerHTML = '<option value="US">United States</option>';
+                        document.body.appendChild(multi);
+
+                        const notSelect = document.createElement("div");
+                        notSelect.id = "rpc-not-select";
+                        document.body.appendChild(notSelect);
+
+                        const frameDoc = document.querySelector("#rpc-frame").contentDocument;
+                        const frameCountry = frameDoc.createElement("select");
+                        frameCountry.id = "frame-country";
+                        frameCountry.innerHTML = '<option value="">Choose</option><option value="FR">France</option>';
+                        frameCountry.addEventListener("input", () => {
+                            window.__agentMuxFrameSelectInput += 1;
+                        });
+                        frameCountry.addEventListener("change", () => {
+                            window.__agentMuxFrameSelectChange += 1;
+                        });
+                        frameDoc.body.appendChild(frameCountry);
+                        return true;
+                    })()
+                    """
+            }));
+
             var getTitle = AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserGetTitle).ConfigureAwait(true));
             Assert.Equal("title", getTitle.GetProperty("kind").GetString());
             Assert.Equal("AgentMux browser get smoke", getTitle.GetProperty("title").GetString());
@@ -2266,6 +2333,71 @@ public sealed class MainWindowSmokeTests
             }).ConfigureAwait(true));
             Assert.Equal("invalid selector", findInvalidSelector.GetProperty("reason").GetString());
 
+            var selectCountry = AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserSelect, new
+            {
+                selector = "#rpc-country",
+                value = "US"
+            }).ConfigureAwait(true));
+            Assert.Equal("select", selectCountry.GetProperty("kind").GetString());
+            Assert.Equal("#rpc-country", selectCountry.GetProperty("selector").GetString());
+            Assert.Equal("US", selectCountry.GetProperty("value").GetString());
+            Assert.Equal("", selectCountry.GetProperty("previousValue").GetString());
+            Assert.True(selectCountry.GetProperty("changed").GetBoolean());
+            Assert.Equal("United States", selectCountry.GetProperty("selectedText").GetString());
+            Assert.Equal(1, selectCountry.GetProperty("selectedIndex").GetInt32());
+            Assert.Equal(3, selectCountry.GetProperty("optionCount").GetInt32());
+            Assert.False(selectCountry.GetProperty("multiple").GetBoolean());
+
+            var selectMissingOption = AssertRpcNotOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserSelect, new
+            {
+                selector = "#rpc-country",
+                value = "CA"
+            }).ConfigureAwait(true));
+            Assert.Equal("option value not found", selectMissingOption.GetProperty("reason").GetString());
+            Assert.Equal(3, selectMissingOption.GetProperty("optionCount").GetInt32());
+
+            var selectDisabledOption = AssertRpcNotOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserSelect, new
+            {
+                selector = "#rpc-country",
+                value = "DIS"
+            }).ConfigureAwait(true));
+            Assert.Equal("option is disabled", selectDisabledOption.GetProperty("reason").GetString());
+
+            var selectDisabled = AssertRpcNotOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserSelect, new
+            {
+                selector = "#rpc-country-disabled",
+                value = "US"
+            }).ConfigureAwait(true));
+            Assert.Equal("select is disabled", selectDisabled.GetProperty("reason").GetString());
+
+            var selectFieldsetDisabled = AssertRpcNotOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserSelect, new
+            {
+                selector = "#rpc-country-fieldset-disabled",
+                value = "US"
+            }).ConfigureAwait(true));
+            Assert.Equal("select is disabled", selectFieldsetDisabled.GetProperty("reason").GetString());
+
+            var selectMultiple = AssertRpcNotOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserSelect, new
+            {
+                selector = "#rpc-country-multiple",
+                value = "US"
+            }).ConfigureAwait(true));
+            Assert.Equal("multiple select is not supported", selectMultiple.GetProperty("reason").GetString());
+
+            var selectNotSelect = AssertRpcNotOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserSelect, new
+            {
+                selector = "#rpc-not-select",
+                value = "US"
+            }).ConfigureAwait(true));
+            Assert.Equal("selector is not a select element", selectNotSelect.GetProperty("reason").GetString());
+
+            var selectInvalidSelector = AssertRpcNotOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserSelect, new
+            {
+                selector = "[",
+                value = "US"
+            }).ConfigureAwait(true));
+            Assert.Equal("invalid selector", selectInvalidSelector.GetProperty("reason").GetString());
+
             var hover = AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserHover, new
             {
                 selector = "#rpc-style"
@@ -2317,7 +2449,10 @@ public sealed class MainWindowSmokeTests
                         typedValue: document.querySelector("#rpc-typed").value,
                         typedInput: window.__agentMuxRpcTypedInput,
                         pressedEnter: window.__agentMuxRpcPressedEnter,
-                        typedResult: document.querySelector("#rpc-typed-result").textContent
+                        typedResult: document.querySelector("#rpc-typed-result").textContent,
+                        selectedValue: document.querySelector("#rpc-country").value,
+                        selectInput: window.__agentMuxSelectInput,
+                        selectChange: window.__agentMuxSelectChange
                     }))()
                     """
             }));
@@ -2332,11 +2467,15 @@ public sealed class MainWindowSmokeTests
             Assert.True(state.GetProperty("typedInput").GetInt32() >= 1);
             Assert.Equal(1, state.GetProperty("pressedEnter").GetInt32());
             Assert.Equal("agentmux-rpc-type-smoke", state.GetProperty("typedResult").GetString());
+            Assert.Equal("US", state.GetProperty("selectedValue").GetString());
+            Assert.Equal(1, state.GetProperty("selectInput").GetInt32());
+            Assert.Equal(1, state.GetProperty("selectChange").GetInt32());
 
             const string frameName = "agentmux-child-frame";
             var browserTextSecretToken = $"agentmux-browser-text-{Guid.NewGuid():N}";
             var browserIsSecretToken = $"agentmux-browser-is-{Guid.NewGuid():N}";
             var browserFindSecretToken = $"agentmux-browser-find-{Guid.NewGuid():N}";
+            var browserSelectSecretToken = $"agentmux-browser-select-{Guid.NewGuid():N}";
             AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserEval, new
             {
                 script = $$"""
@@ -2354,6 +2493,10 @@ public sealed class MainWindowSmokeTests
                         findMarker.setAttribute("data-testid", {{System.Text.Json.JsonSerializer.Serialize(browserFindSecretToken)}});
                         findMarker.textContent = "find";
                         document.body.appendChild(findMarker);
+                        const selectMarker = document.createElement("select");
+                        selectMarker.id = "rpc-secret-select";
+                        selectMarker.innerHTML = `<option value="">Choose</option><option value="{{browserSelectSecretToken}}">secret</option>`;
+                        document.body.appendChild(selectMarker);
                         return true;
                     })()
                     """
@@ -2371,6 +2514,13 @@ public sealed class MainWindowSmokeTests
             }));
             Assert.Equal(1, tokenFound.GetProperty("count").GetInt32());
             Assert.Equal("rpc-secret-find", tokenFound.GetProperty("match").GetProperty("id").GetString());
+
+            var tokenSelected = AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserSelect, new
+            {
+                selector = "#rpc-secret-select",
+                value = browserSelectSecretToken
+            }));
+            Assert.Equal(browserSelectSecretToken, tokenSelected.GetProperty("value").GetString());
 
             var topDocumentText = AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserText, new
             {
@@ -2476,6 +2626,18 @@ public sealed class MainWindowSmokeTests
             Assert.Equal(1, frameFindRole.GetProperty("count").GetInt32());
             Assert.Equal("frame-go", frameFindRole.GetProperty("match").GetProperty("id").GetString());
 
+            var frameSelect = AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserSelect, new
+            {
+                selector = "#frame-country",
+                value = "FR",
+                frame = frameName
+            }).ConfigureAwait(true));
+            Assert.Equal("select", frameSelect.GetProperty("kind").GetString());
+            Assert.Equal(frameName, frameSelect.GetProperty("frame").GetString());
+            Assert.Equal("FR", frameSelect.GetProperty("value").GetString());
+            Assert.Equal("France", frameSelect.GetProperty("selectedText").GetString());
+            Assert.True(frameSelect.GetProperty("changed").GetBoolean());
+
             var missingText = AssertRpcNotOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserText, new
             {
                 selector = "#missing-browser-text"
@@ -2551,7 +2713,10 @@ public sealed class MainWindowSmokeTests
                             frameTypedValue: doc.querySelector("#frame-typed").value,
                             frameTypedInput: window.__agentMuxFrameTypedInput,
                             framePressedEnter: window.__agentMuxFramePressedEnter,
-                            frameTypedResult: doc.querySelector("#frame-typed-result").textContent
+                            frameTypedResult: doc.querySelector("#frame-typed-result").textContent,
+                            frameSelectedValue: doc.querySelector("#frame-country").value,
+                            frameSelectInput: window.__agentMuxFrameSelectInput,
+                            frameSelectChange: window.__agentMuxFrameSelectChange
                         };
                     })()
                     """
@@ -2567,6 +2732,9 @@ public sealed class MainWindowSmokeTests
             Assert.True(frameState.GetProperty("frameTypedInput").GetInt32() >= 1);
             Assert.Equal(1, frameState.GetProperty("framePressedEnter").GetInt32());
             Assert.Equal("agentmux-frame-type-smoke", frameState.GetProperty("frameTypedResult").GetString());
+            Assert.Equal("FR", frameState.GetProperty("frameSelectedValue").GetString());
+            Assert.Equal(1, frameState.GetProperty("frameSelectInput").GetInt32());
+            Assert.Equal(1, frameState.GetProperty("frameSelectChange").GetInt32());
 
             var framePressWithoutSelector = AssertRpcNotOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserPress, new
             {
@@ -2643,6 +2811,32 @@ public sealed class MainWindowSmokeTests
             }));
             Assert.Equal("frame is not same-origin accessible", sandboxFrameFind.GetProperty("reason").GetString());
             Assert.Equal("agentmux-sandbox-frame", sandboxFrameFind.GetProperty("frame").GetString());
+
+            var sandboxFrameSelect = AssertRpcNotOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserSelect, new
+            {
+                selector = "#blocked",
+                value = "US",
+                frame = "agentmux-sandbox-frame"
+            }));
+            Assert.Equal("frame is not same-origin accessible", sandboxFrameSelect.GetProperty("reason").GetString());
+            Assert.Equal("agentmux-sandbox-frame", sandboxFrameSelect.GetProperty("frame").GetString());
+
+            var selectMissingValue = AssertRpcNotOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserSelect, new
+            {
+                selector = "#rpc-country"
+            }));
+            Assert.Equal("value is required", selectMissingValue.GetProperty("reason").GetString());
+
+            var selectMalformedParams = AssertRpcNotOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserSelect, new[] { "bad" }));
+            Assert.Equal("parameters must be an object", selectMalformedParams.GetProperty("reason").GetString());
+
+            var selectUnsupportedParam = AssertRpcNotOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserSelect, new
+            {
+                selector = "#rpc-country",
+                value = "US",
+                snapshot_after = true
+            }));
+            Assert.Equal("unsupported parameter: snapshot_after", selectUnsupportedParam.GetProperty("reason").GetString());
 
             var frameTree = await WaitForFrameTreeWithChildAsync(window, "agentmux-child-frame").ConfigureAwait(true);
             Assert.True(frameTree.GetProperty("ok").GetBoolean(), frameTree.ToString());
@@ -2740,6 +2934,7 @@ public sealed class MainWindowSmokeTests
             Assert.DoesNotContain(browserTextSecretToken, waitSnapshotText, StringComparison.Ordinal);
             Assert.DoesNotContain(browserIsSecretToken, waitSnapshotText, StringComparison.Ordinal);
             Assert.DoesNotContain(browserFindSecretToken, waitSnapshotText, StringComparison.Ordinal);
+            Assert.DoesNotContain(browserSelectSecretToken, waitSnapshotText, StringComparison.Ordinal);
 
             var missingWait = AssertRpcNotOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserWaitForSelector, new
             {

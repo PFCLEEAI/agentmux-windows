@@ -322,6 +322,11 @@ public static class Program
             return ParseBrowserFindRequest(args[1..], out error);
         }
 
+        if (args[0].Equals("select", StringComparison.OrdinalIgnoreCase))
+        {
+            return ParseBrowserSelectRequest(args[1..], out error);
+        }
+
         if (args[0].Equals("eval", StringComparison.OrdinalIgnoreCase))
         {
             var named = ParseNamed(args[1..]);
@@ -1045,6 +1050,82 @@ public static class Program
 
         error = "";
         return new CliRequest(AgentMuxMethods.BrowserFindNth, new { selector, index, frame });
+    }
+
+    private static CliRequest? ParseBrowserSelectRequest(string[] args, out string error)
+    {
+        const string usage = "Usage: agentmux browser select [--frame <name-or-id>] <selector> <value>";
+        if (!NamedOptionsHaveExplicitValues(args, ["selector", "value"]))
+        {
+            error = usage;
+            return null;
+        }
+
+        var named = ParseNamed(args);
+        if (!NamedKeysAreAllowed(named, ["selector", "value", "frame"])
+            || NamedValueIsBareFlag(named, "frame"))
+        {
+            error = usage;
+            return null;
+        }
+
+        if (!TryReadOptionalFrame(named, usage, out var frame, out error))
+        {
+            return null;
+        }
+
+        var positional = ReadPositional(named);
+        string? selector;
+        string? value;
+        if (named.TryGetValue("selector", out var namedSelector))
+        {
+            selector = namedSelector;
+            if (named.TryGetValue("value", out var namedValue))
+            {
+                if (positional.Length != 0)
+                {
+                    error = usage;
+                    return null;
+                }
+
+                value = namedValue;
+            }
+            else
+            {
+                value = positional.Length == 0 ? null : string.Join(' ', positional);
+            }
+        }
+        else if (named.TryGetValue("value", out var namedValue))
+        {
+            if (positional.Length != 1)
+            {
+                error = usage;
+                return null;
+            }
+
+            selector = positional[0];
+            value = namedValue;
+        }
+        else
+        {
+            if (positional.Length < 2)
+            {
+                error = usage;
+                return null;
+            }
+
+            selector = positional[0];
+            value = string.Join(' ', positional.Skip(1));
+        }
+
+        if (string.IsNullOrWhiteSpace(selector) || value is null)
+        {
+            error = usage;
+            return null;
+        }
+
+        error = "";
+        return new CliRequest(AgentMuxMethods.BrowserSelect, new { selector, value, frame });
     }
 
     private static string BrowserFindUsage(string kind) => kind switch
@@ -1974,6 +2055,31 @@ public static class Program
     private static bool NamedValueIsBareFlag(Dictionary<string, string> named, string key) =>
         named.TryGetValue(key, out var value) && string.Equals(value, "true", StringComparison.OrdinalIgnoreCase);
 
+    private static bool NamedOptionsHaveExplicitValues(string[] args, string[] keys)
+    {
+        for (var index = 0; index < args.Length; index++)
+        {
+            var arg = args[index];
+            if (!arg.StartsWith("--", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var key = arg[2..];
+            if (!keys.Contains(key, StringComparer.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (index + 1 >= args.Length || args[index + 1].StartsWith("-", StringComparison.Ordinal))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     private static object ParseNotify(string[] args)
     {
         var named = ParseNamed(args);
@@ -2400,6 +2506,8 @@ public static class Program
           agentmux browser find placeholder "Search"
           agentmux browser find testid login-submit
           agentmux browser find nth ".item" 0
+          agentmux browser select "#country" US
+          agentmux browser select --frame agentmux-child-frame "#country" FR
           agentmux browser fill "#prompt" "write tests"
           agentmux browser type "#prompt" "write tests"
           agentmux browser press Enter --selector "#prompt" --frame agentmux-child-frame

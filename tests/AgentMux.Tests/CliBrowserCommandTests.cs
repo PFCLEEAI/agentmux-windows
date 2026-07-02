@@ -600,6 +600,116 @@ public sealed class CliBrowserCommandTests
     }
 
     [Fact]
+    public void BrowserSelectParsesSelectorValueAndFrame()
+    {
+        var request = Program.ParseBrowserRequestForTests([
+            "select",
+            "#country",
+            "US",
+            "--frame",
+            "agentmux-child-frame"
+        ], out var error);
+
+        Assert.Equal("", error);
+        Assert.NotNull(request);
+        Assert.Equal(AgentMuxMethods.BrowserSelect, request.Method);
+        var parameters = JsonSerializer.SerializeToElement(request.Parameters, AgentMuxJson.Options);
+        Assert.Equal("#country", parameters.GetProperty("selector").GetString());
+        Assert.Equal("US", parameters.GetProperty("value").GetString());
+        Assert.Equal("agentmux-child-frame", parameters.GetProperty("frame").GetString());
+    }
+
+    [Fact]
+    public void BrowserSelectParsesNamedSelectorAndValue()
+    {
+        var request = Program.ParseBrowserRequestForTests([
+            "select",
+            "--selector",
+            "#country",
+            "--value",
+            "United States"
+        ], out var error);
+
+        Assert.Equal("", error);
+        Assert.NotNull(request);
+        Assert.Equal(AgentMuxMethods.BrowserSelect, request.Method);
+        var parameters = JsonSerializer.SerializeToElement(request.Parameters, AgentMuxJson.Options);
+        Assert.Equal("#country", parameters.GetProperty("selector").GetString());
+        Assert.Equal("United States", parameters.GetProperty("value").GetString());
+        Assert.Equal(JsonValueKind.Null, parameters.GetProperty("frame").ValueKind);
+    }
+
+    [Fact]
+    public void BrowserSelectParsesNamedTrueValue()
+    {
+        var request = Program.ParseBrowserRequestForTests([
+            "select",
+            "--selector",
+            "#feature-enabled",
+            "--value",
+            "true"
+        ], out var error);
+
+        Assert.Equal("", error);
+        Assert.NotNull(request);
+        Assert.Equal(AgentMuxMethods.BrowserSelect, request.Method);
+        var parameters = JsonSerializer.SerializeToElement(request.Parameters, AgentMuxJson.Options);
+        Assert.Equal("#feature-enabled", parameters.GetProperty("selector").GetString());
+        Assert.Equal("true", parameters.GetProperty("value").GetString());
+    }
+
+    [Fact]
+    public void BrowserSelectParsesNamedSelectorAndPositionalValueWithSpaces()
+    {
+        var request = Program.ParseBrowserRequestForTests([
+            "select",
+            "--selector",
+            "#country",
+            "United",
+            "States"
+        ], out var error);
+
+        Assert.Equal("", error);
+        Assert.NotNull(request);
+        Assert.Equal(AgentMuxMethods.BrowserSelect, request.Method);
+        var parameters = JsonSerializer.SerializeToElement(request.Parameters, AgentMuxJson.Options);
+        Assert.Equal("#country", parameters.GetProperty("selector").GetString());
+        Assert.Equal("United States", parameters.GetProperty("value").GetString());
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("true")]
+    public void BrowserSelectParsesExplicitPositionalOptionValues(string value)
+    {
+        var request = Program.ParseBrowserRequestForTests(["select", "#country", value], out var error);
+
+        Assert.Equal("", error);
+        Assert.NotNull(request);
+        Assert.Equal(AgentMuxMethods.BrowserSelect, request.Method);
+        var parameters = JsonSerializer.SerializeToElement(request.Parameters, AgentMuxJson.Options);
+        Assert.Equal("#country", parameters.GetProperty("selector").GetString());
+        Assert.Equal(value, parameters.GetProperty("value").GetString());
+    }
+
+    [Theory]
+    [InlineData("select")]
+    [InlineData("select #country")]
+    [InlineData("select --selector #country")]
+    [InlineData("select #country --value")]
+    [InlineData("select #country US --frame")]
+    [InlineData("select #country US --surface surface:1")]
+    [InlineData("select #country US --snapshot-after")]
+    public void BrowserSelectRejectsInvalidShapes(string commandLine)
+    {
+        var args = commandLine.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        var request = Program.ParseBrowserRequestForTests(args, out var error);
+
+        Assert.Null(request);
+        Assert.Equal("Usage: agentmux browser select [--frame <name-or-id>] <selector> <value>", error);
+    }
+
+    [Fact]
     public void BrowserFrameOptionRequiresValue()
     {
         var request = Program.ParseBrowserRequestForTests(["click", "#submit", "--frame"], out var error);

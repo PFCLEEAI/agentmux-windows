@@ -575,6 +575,7 @@ public partial class MainWindow : Window
             AgentMuxMethods.BrowserFindFirst => AgentMuxResponse.Success(request.Id, await HandleBrowserFindAsync(request.Params, "first").ConfigureAwait(true)),
             AgentMuxMethods.BrowserFindLast => AgentMuxResponse.Success(request.Id, await HandleBrowserFindAsync(request.Params, "last").ConfigureAwait(true)),
             AgentMuxMethods.BrowserFindNth => AgentMuxResponse.Success(request.Id, await HandleBrowserFindAsync(request.Params, "nth").ConfigureAwait(true)),
+            AgentMuxMethods.BrowserSelect => AgentMuxResponse.Success(request.Id, await HandleBrowserSelectAsync(request.Params).ConfigureAwait(true)),
             AgentMuxMethods.BrowserFill => AgentMuxResponse.Success(request.Id, await HandleBrowserFillAsync(request.Params).ConfigureAwait(true)),
             AgentMuxMethods.BrowserType => AgentMuxResponse.Success(request.Id, await HandleBrowserTypeAsync(request.Params).ConfigureAwait(true)),
             AgentMuxMethods.BrowserPress => AgentMuxResponse.Success(request.Id, await HandleBrowserPressAsync(request.Params).ConfigureAwait(true)),
@@ -1593,6 +1594,97 @@ public partial class MainWindow : Window
             parsed.Index,
             parsed.Exact,
             parsed.Frame)).ConfigureAwait(true);
+    }
+
+    private async Task<object> HandleBrowserSelectAsync(JsonElement? parameters)
+    {
+        if (!TryReadBrowserSelectParams(parameters, out var parsed, out var reason))
+        {
+            return new { ok = false, reason };
+        }
+
+        return await RunBrowserScriptAsync(view => view.SelectAsync(parsed.Selector!, parsed.Value!, parsed.Frame)).ConfigureAwait(true);
+    }
+
+    private static bool TryReadBrowserSelectParams(JsonElement? parameters, out BrowserSelectParams parsed, out string reason)
+    {
+        parsed = new BrowserSelectParams();
+        reason = "";
+        if (parameters is null or { ValueKind: JsonValueKind.Null or JsonValueKind.Undefined })
+        {
+            reason = "selector is required";
+            return false;
+        }
+
+        if (parameters is not { ValueKind: JsonValueKind.Object } element)
+        {
+            reason = "parameters must be an object";
+            return false;
+        }
+
+        var hasValue = false;
+        foreach (var property in element.EnumerateObject())
+        {
+            if (property.Name.Equals("selector", StringComparison.OrdinalIgnoreCase))
+            {
+                if (property.Value.ValueKind != JsonValueKind.String)
+                {
+                    reason = "selector must be a string";
+                    return false;
+                }
+
+                parsed.Selector = property.Value.GetString();
+                continue;
+            }
+
+            if (property.Name.Equals("value", StringComparison.OrdinalIgnoreCase))
+            {
+                if (property.Value.ValueKind != JsonValueKind.String)
+                {
+                    reason = property.Value.ValueKind == JsonValueKind.Null ? "value is required" : "value must be a string";
+                    return false;
+                }
+
+                parsed.Value = property.Value.GetString();
+                hasValue = true;
+                continue;
+            }
+
+            if (property.Name.Equals("frame", StringComparison.OrdinalIgnoreCase))
+            {
+                if (property.Value.ValueKind == JsonValueKind.Null)
+                {
+                    parsed.Frame = null;
+                    continue;
+                }
+
+                if (property.Value.ValueKind != JsonValueKind.String)
+                {
+                    reason = "frame must be a string";
+                    return false;
+                }
+
+                parsed.Frame = property.Value.GetString();
+                continue;
+            }
+
+            reason = $"unsupported parameter: {property.Name}";
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(parsed.Selector))
+        {
+            reason = "selector is required";
+            return false;
+        }
+
+        if (!hasValue)
+        {
+            reason = "value is required";
+            return false;
+        }
+
+        return true;
     }
 
     private async Task<object> HandleBrowserFillAsync(JsonElement? parameters)
@@ -3090,6 +3182,7 @@ public partial class MainWindow : Window
             or AgentMuxMethods.BrowserFindFirst
             or AgentMuxMethods.BrowserFindLast
             or AgentMuxMethods.BrowserFindNth
+            or AgentMuxMethods.BrowserSelect
             or AgentMuxMethods.BrowserFill
             or AgentMuxMethods.BrowserType
             or AgentMuxMethods.BrowserPress
@@ -4419,6 +4512,13 @@ public partial class MainWindow : Window
         public string? Selector { get; set; }
         public int? Index { get; set; }
         public bool Exact { get; set; }
+        public string? Frame { get; set; }
+    }
+
+    private sealed class BrowserSelectParams
+    {
+        public string? Selector { get; set; }
+        public string? Value { get; set; }
         public string? Frame { get; set; }
     }
 

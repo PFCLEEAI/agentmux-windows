@@ -118,6 +118,7 @@ public sealed class RpcContractTests
         Assert.Equal("browser.find.first", AgentMuxMethods.BrowserFindFirst);
         Assert.Equal("browser.find.last", AgentMuxMethods.BrowserFindLast);
         Assert.Equal("browser.find.nth", AgentMuxMethods.BrowserFindNth);
+        Assert.Equal("browser.select", AgentMuxMethods.BrowserSelect);
         Assert.Equal("surface.fill_selector", AgentMuxMethods.BrowserFill);
         Assert.Equal("surface.browser_type_text", AgentMuxMethods.BrowserType);
         Assert.Equal("surface.browser_press_key", AgentMuxMethods.BrowserPress);

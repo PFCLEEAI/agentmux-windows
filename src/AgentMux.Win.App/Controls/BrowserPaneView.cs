@@ -973,6 +973,108 @@ internal sealed class BrowserPaneView : Grid, IDisposable
         }
     }
 
+    public async Task<string> SelectAsync(string selector, string value, string? frame = null)
+    {
+        if (string.IsNullOrWhiteSpace(selector))
+        {
+            return """{"ok":false,"reason":"selector is required"}""";
+        }
+
+        if (value is null)
+        {
+            return """{"ok":false,"reason":"value is required"}""";
+        }
+
+        var normalizedSelector = selector.Trim();
+        var normalizedFrame = NormalizeFrame(frame);
+
+        await EnsureReadyAsync().ConfigureAwait(true);
+        try
+        {
+            return await _webView.CoreWebView2!.ExecuteScriptAsync($$"""
+                (() => {
+                  const selector = {{JsonSerializer.Serialize(normalizedSelector)}};
+                  const value = {{JsonSerializer.Serialize(value)}};
+                  {{FrameScopeScript(normalizedFrame)}}
+                  const scope = resolveAutomationScope();
+                  if (!scope.ok) {
+                    return scope;
+                  }
+
+                  let element = null;
+                  try {
+                    element = scope.document.querySelector(selector);
+                  } catch {
+                    return { ok: false, kind: "select", reason: "invalid selector", selector, value, frame: scope.frame };
+                  }
+
+                  if (!element) {
+                    return { ok: false, kind: "select", reason: "selector not found", selector, value, frame: scope.frame };
+                  }
+
+                  if (element.tagName?.toLocaleLowerCase() !== "select") {
+                    return {
+                      ok: false,
+                      kind: "select",
+                      reason: "selector is not a select element",
+                      selector,
+                      value,
+                      frame: scope.frame,
+                      tagName: element.tagName || null
+                    };
+                  }
+
+                  const disabledByPseudo = typeof element.matches === "function" && element.matches(":disabled");
+                  if (element.disabled || disabledByPseudo) {
+                    return { ok: false, kind: "select", reason: "select is disabled", selector, value, frame: scope.frame };
+                  }
+
+                  if (element.multiple) {
+                    return { ok: false, kind: "select", reason: "multiple select is not supported", selector, value, frame: scope.frame, multiple: true };
+                  }
+
+                  const options = Array.from(element.options || []);
+                  const option = options.find(candidate => candidate.value === value);
+                  if (!option) {
+                    return { ok: false, kind: "select", reason: "option value not found", selector, value, frame: scope.frame, optionCount: options.length };
+                  }
+
+                  const disabledGroup = option.closest?.("optgroup")?.disabled === true;
+                  if (option.disabled || disabledGroup) {
+                    return { ok: false, kind: "select", reason: "option is disabled", selector, value, frame: scope.frame };
+                  }
+
+                  const previousValue = element.value;
+                  const changed = previousValue !== value;
+                  element.value = value;
+                  option.selected = true;
+                  if (changed) {
+                    element.dispatchEvent(new Event("input", { bubbles: true }));
+                    element.dispatchEvent(new Event("change", { bubbles: true }));
+                  }
+
+                  return {
+                    ok: true,
+                    kind: "select",
+                    selector,
+                    frame: scope.frame,
+                    value: element.value,
+                    previousValue,
+                    changed,
+                    selectedIndex: element.selectedIndex,
+                    selectedText: option.textContent || "",
+                    optionCount: options.length,
+                    multiple: false
+                  };
+                })()
+                """).ConfigureAwait(true);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or System.Runtime.InteropServices.COMException)
+        {
+            return """{"ok":false,"reason":"document unavailable"}""";
+        }
+    }
+
     public async Task<string> FillAsync(string selector, string text, string? frame = null)
     {
         if (string.IsNullOrWhiteSpace(selector))

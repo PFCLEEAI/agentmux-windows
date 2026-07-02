@@ -104,6 +104,7 @@ public static class AgentMuxMethods
     public const string BrowserFindFirst = "browser.find.first";
     public const string BrowserFindLast = "browser.find.last";
     public const string BrowserFindNth = "browser.find.nth";
+    public const string BrowserSelect = "browser.select";
     public const string BrowserFill = "surface.fill_selector";
     public const string BrowserType = "surface.browser_type_text";
     public const string BrowserPress = "surface.browser_press_key";
