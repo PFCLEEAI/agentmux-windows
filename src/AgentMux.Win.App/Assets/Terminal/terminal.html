@@ -119,6 +119,44 @@
       terminal.input(text, true);
       return true;
     };
+
+    window.agentmuxEmitSyntheticKeydownForSmoke = value => {
+      const text = String(value || '');
+      const key = text.length === 1 ? text : '';
+      if (!key || !/^[a-z]$/i.test(key)) {
+        return false;
+      }
+
+      const target = terminal.textarea || document.querySelector('.xterm-helper-textarea');
+      if (!target) {
+        return false;
+      }
+
+      const upper = key.toUpperCase();
+      const keyCode = upper.charCodeAt(0);
+      const event = new KeyboardEvent('keydown', {
+        key,
+        code: `Key${upper}`,
+        keyCode,
+        which: keyCode,
+        bubbles: true,
+        cancelable: true
+      });
+      for (const property of ['keyCode', 'which']) {
+        try {
+          Object.defineProperty(event, property, { get: () => keyCode });
+        } catch {
+          if (event[property] !== keyCode) {
+            return false;
+          }
+        }
+      }
+
+      terminal.focus();
+      target.focus();
+      target.dispatchEvent(event);
+      return true;
+    };
   </script>
 </body>
 </html>

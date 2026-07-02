@@ -2584,6 +2584,17 @@ public partial class MainWindow : Window
         return await view.EmitXtermInputForSmokeTestAsync(input).ConfigureAwait(true);
     }
 
+    internal async Task<bool> EmitActiveTerminalSyntheticKeydownForSmokeTestAsync(string key)
+    {
+        if (ActivePane() is not { Kind: PaneKind.Terminal } pane
+            || !_terminalViews.TryGetValue(pane.Id, out var view))
+        {
+            return false;
+        }
+
+        return await view.EmitSyntheticKeydownForSmokeTestAsync(key).ConfigureAwait(true);
+    }
+
     internal async Task<string> CaptureActiveTerminalPngForSmokeTestAsync(string path)
     {
         if (ActivePane() is not { Kind: PaneKind.Terminal } pane

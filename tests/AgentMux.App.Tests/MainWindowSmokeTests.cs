@@ -802,11 +802,15 @@ public sealed class MainWindowSmokeTests
             Assert.Equal(rendererInputPane, window.ActivePaneIdForSmokeTest);
             await WaitForReadScreenContainsAsync(window, "RAW:58");
             await WaitForReadScreenContainsAsync(window, "RAW:54");
-            var terminalRuntimeText = await window.WaitForActiveTerminalRuntimeTextForSmokeTestAsync("RAW:54");
+            Assert.True(await window.EmitActiveTerminalSyntheticKeydownForSmokeTestAsync("j"));
+            Assert.Equal(rendererInputPane, window.ActivePaneIdForSmokeTest);
+            await WaitForReadScreenContainsAsync(window, "RAW:6A");
+            var terminalRuntimeText = await window.WaitForActiveTerminalRuntimeTextForSmokeTestAsync("RAW:6A");
             Assert.Contains("RAW:4B", terminalRuntimeText, StringComparison.Ordinal);
             Assert.Contains("RAW:4D", terminalRuntimeText, StringComparison.Ordinal);
             Assert.Contains("RAW:58", terminalRuntimeText, StringComparison.Ordinal);
             Assert.Contains("RAW:54", terminalRuntimeText, StringComparison.Ordinal);
+            Assert.Contains("RAW:6A", terminalRuntimeText, StringComparison.Ordinal);
             var terminalKeyCapture = await window.CaptureActiveTerminalPngForSmokeTestAsync(
                 System.IO.Path.Combine(SmokeArtifactDirectory(), "terminal-key-capture.png"));
             AssertPngFile(terminalKeyCapture);
@@ -1884,7 +1888,8 @@ public sealed class MainWindowSmokeTests
                     hasAppendText: typeof window.agentmuxAppendText === "function",
                     hasSmokeProbe: typeof window.agentmuxGetTextForSmoke === "function",
                     hasInputProbe: typeof window.agentmuxEmitInputForSmoke === "function",
-                    hasXtermInputProbe: typeof window.agentmuxEmitXtermInputForSmoke === "function"
+                    hasXtermInputProbe: typeof window.agentmuxEmitXtermInputForSmoke === "function",
+                    hasSyntheticKeydownProbe: typeof window.agentmuxEmitSyntheticKeydownForSmoke === "function"
                 }))()
                 """);
             using (var diagnostics = System.Text.Json.JsonDocument.Parse(diagnosticsJson))
@@ -1896,6 +1901,7 @@ public sealed class MainWindowSmokeTests
                 Assert.True(root.GetProperty("hasSmokeProbe").GetBoolean());
                 Assert.True(root.GetProperty("hasInputProbe").GetBoolean());
                 Assert.True(root.GetProperty("hasXtermInputProbe").GetBoolean());
+                Assert.True(root.GetProperty("hasSyntheticKeydownProbe").GetBoolean());
             }
 
             var inputReceived = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -1912,6 +1918,16 @@ public sealed class MainWindowSmokeTests
             };
             Assert.True(await terminal.EmitXtermInputForSmokeTestAsync("AGENTMUX_XTERM_INPUT"));
             Assert.Equal("AGENTMUX_XTERM_INPUT", await xtermInputReceived.Task.WaitAsync(TimeSpan.FromSeconds(5)));
+            var syntheticKeydownReceived = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+            terminal.InputReceived += (_, data) =>
+            {
+                if (string.Equals(data, "j", StringComparison.Ordinal))
+                {
+                    syntheticKeydownReceived.TrySetResult(data);
+                }
+            };
+            Assert.True(await terminal.EmitSyntheticKeydownForSmokeTestAsync("j"));
+            Assert.Equal("j", await syntheticKeydownReceived.Task.WaitAsync(TimeSpan.FromSeconds(5)));
 
             var runtimeText = await terminal.WaitForRuntimeTextForSmokeTestAsync(terminalMarker);
             Assert.Contains(terminalMarker, runtimeText);

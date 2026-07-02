@@ -20,7 +20,7 @@
 - Workspace switching. Preview implemented with `workspace.list`, `workspace.create`, `workspace.select`, compact workspace DTOs, index/id selection, sidebar selected-state updates, render switching, and hosted app-smoke coverage.
 - Surface tabs. Preview implemented with WPF active-workspace tabs, `+ Surface`, `surface.list`, `surface.create`, `surface.select`, and hosted app-smoke coverage.
 - Split pane layout. Implemented as recursive WPF panes with persisted split ratios.
-- WebView2/xterm renderer bridge. Preview implemented with WPF fallback; hosted CI proves runtime text, geometry, xterm runtime input events and renderer bridge input routing into the active terminal pane's ConPTY input path, and PNG artifacts. Physical keyboard proof remains future/manual desktop work.
+- WebView2/xterm renderer bridge. Preview implemented with WPF fallback; hosted CI proves runtime text, geometry, xterm runtime input events, renderer bridge input, and synthetic DOM keydown routing into the active terminal pane's ConPTY input path, plus PNG artifacts. Physical keyboard, native focus, and IME proof remain future/manual desktop work.
 - Focus movement. Preview implemented with `surface.focus_pane`, `agentmux focus`, `Ctrl+Tab`, and `Ctrl+Alt+Arrow`.
 - Keyboard shortcuts. Basic pane cycling, directional pane focus, pane zoom/close shortcuts, and JSON shortcut remapping are implemented; a full settings UI remains future work.
 - Each terminal pane now owns an independent ConPTY session started lazily.

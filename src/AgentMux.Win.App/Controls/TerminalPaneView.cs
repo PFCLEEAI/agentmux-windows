@@ -267,6 +267,19 @@ internal sealed class TerminalPaneView : Grid
         return JsonSerializer.Deserialize<bool>(resultJson);
     }
 
+    internal async Task<bool> EmitSyntheticKeydownForSmokeTestAsync(string key)
+    {
+        await EnsureRuntimeReadyForSmokeTestAsync().ConfigureAwait(true);
+        var json = JsonSerializer.Serialize(key);
+        var resultJson = await ExecuteRuntimeScriptForSmokeTestAsync($"""
+            (() => typeof window.agentmuxEmitSyntheticKeydownForSmoke === "function"
+                ? window.agentmuxEmitSyntheticKeydownForSmoke({json})
+                : false)()
+            """).ConfigureAwait(true);
+
+        return JsonSerializer.Deserialize<bool>(resultJson);
+    }
+
     private async Task<string> ReadRuntimeTextForSmokeTestAsync()
     {
         var json = await ExecuteRuntimeScriptForSmokeTestAsync("""
