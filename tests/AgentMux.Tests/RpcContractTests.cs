@@ -105,6 +105,8 @@ public sealed class RpcContractTests
         Assert.Equal("surface.eval_js", AgentMuxMethods.BrowserEval);
         Assert.Equal("surface.browser_text", AgentMuxMethods.BrowserText);
         Assert.Equal("surface.click_selector", AgentMuxMethods.BrowserClick);
+        Assert.Equal("browser.hover", AgentMuxMethods.BrowserHover);
+        Assert.Equal("browser.focus", AgentMuxMethods.BrowserFocus);
         Assert.Equal("surface.fill_selector", AgentMuxMethods.BrowserFill);
         Assert.Equal("surface.browser_type_text", AgentMuxMethods.BrowserType);
         Assert.Equal("surface.browser_press_key", AgentMuxMethods.BrowserPress);

@@ -504,46 +504,7 @@ internal sealed class BrowserPaneView : Grid, IDisposable
         }
 
         var normalizedFrame = NormalizeFrame(frame);
-        var targetJson = await EvaluateScriptAsync($$"""
-            (() => {
-              const selector = {{JsonSerializer.Serialize(selector)}};
-              {{FrameScopeScript(normalizedFrame)}}
-              const scope = resolveAutomationScope();
-              if (!scope.ok) {
-                return scope;
-              }
-
-              const element = scope.document.querySelector(selector);
-              if (!element) {
-                return { ok: false, reason: "selector not found", selector, frame: scope.frame };
-              }
-
-              element.scrollIntoView({ block: "center", inline: "center" });
-              const rect = element.getBoundingClientRect();
-              if (!rect || rect.width <= 0 || rect.height <= 0) {
-                return { ok: false, reason: "selector is not visible", selector, frame: scope.frame };
-              }
-
-              const frameOffset = automationFrameOffset(scope);
-              const localX = Math.min(Math.max(rect.left + rect.width / 2, 0), Math.max(scope.window.innerWidth - 1, 0));
-              const localY = Math.min(Math.max(rect.top + rect.height / 2, 0), Math.max(scope.window.innerHeight - 1, 0));
-              const hit = scope.document.elementFromPoint(localX, localY);
-              if (!hit || (hit !== element && !element.contains(hit) && !hit.contains(element))) {
-                return { ok: false, reason: "selector center is covered", selector, frame: scope.frame };
-              }
-
-              const x = Math.min(Math.max(frameOffset.x + localX, 0), Math.max(window.innerWidth - 1, 0));
-              const y = Math.min(Math.max(frameOffset.y + localY, 0), Math.max(window.innerHeight - 1, 0));
-              if (scope.offsetElement) {
-                const topHit = document.elementFromPoint(x, y);
-                if (topHit !== scope.offsetElement) {
-                  return { ok: false, reason: "frame target is covered", selector, frame: scope.frame };
-                }
-              }
-
-              return { ok: true, selector, frame: scope.frame, x, y };
-            })()
-            """).ConfigureAwait(true);
+        var targetJson = await ResolvePointerTargetAsync(selector, normalizedFrame).ConfigureAwait(true);
 
         var target = ParseAutomationResult(targetJson);
         if (!target.Ok)
@@ -556,6 +517,77 @@ internal sealed class BrowserPaneView : Grid, IDisposable
         await DispatchMouseEventAsync("mouseReleased", target.X, target.Y).ConfigureAwait(true);
         var navigationSettled = await TryWaitForInputNavigationAsync().ConfigureAwait(true);
         return JsonSerializer.Serialize(new { ok = true, selector, frame = normalizedFrame, x = target.X, y = target.Y, navigationSettled });
+    }
+
+    public async Task<string> HoverAsync(string selector, string? frame = null)
+    {
+        if (string.IsNullOrWhiteSpace(selector))
+        {
+            return """{"ok":false,"reason":"selector is required"}""";
+        }
+
+        var normalizedFrame = NormalizeFrame(frame);
+        var targetJson = await ResolvePointerTargetAsync(selector, normalizedFrame).ConfigureAwait(true);
+        var target = ParseAutomationResult(targetJson);
+        if (!target.Ok)
+        {
+            return targetJson;
+        }
+
+        await DispatchMouseEventAsync("mouseMoved", target.X, target.Y).ConfigureAwait(true);
+        return JsonSerializer.Serialize(new { ok = true, kind = "hover", selector, frame = normalizedFrame, x = target.X, y = target.Y });
+    }
+
+    public async Task<string> FocusAsync(string selector, string? frame = null)
+    {
+        if (string.IsNullOrWhiteSpace(selector))
+        {
+            return """{"ok":false,"reason":"selector is required"}""";
+        }
+
+        var normalizedFrame = NormalizeFrame(frame);
+        return await EvaluateScriptAsync($$"""
+            (() => {
+              const selector = {{JsonSerializer.Serialize(selector)}};
+              {{FrameScopeScript(normalizedFrame)}}
+              const scope = resolveAutomationScope();
+              if (!scope.ok) {
+                return scope;
+              }
+
+              let element = null;
+              try {
+                element = scope.document.querySelector(selector);
+              } catch {
+                return { ok: false, reason: "invalid selector", selector, frame: scope.frame };
+              }
+
+              if (!element) {
+                return { ok: false, reason: "selector not found", selector, frame: scope.frame };
+              }
+
+              if (typeof element.focus !== "function") {
+                return { ok: false, reason: "selector is not focusable", selector, frame: scope.frame };
+              }
+
+              element.scrollIntoView({ block: "center", inline: "center" });
+              element.focus({ preventScroll: true });
+              const active = scope.document.activeElement;
+              const focused = active === element || element.contains(active);
+              if (!focused) {
+                return { ok: false, reason: "selector did not receive focus", selector, frame: scope.frame };
+              }
+
+              return {
+                ok: true,
+                kind: "focus",
+                selector,
+                frame: scope.frame,
+                tagName: element.tagName || null,
+                activeElementId: active?.id || null
+              };
+            })()
+            """).ConfigureAwait(true);
     }
 
     public async Task<string> FillAsync(string selector, string text, string? frame = null)
@@ -2497,6 +2529,56 @@ internal sealed class BrowserPaneView : Grid, IDisposable
         }
 
         await CallDevToolsInputAsync("Input.dispatchMouseEvent", payload).ConfigureAwait(true);
+    }
+
+    private async Task<string> ResolvePointerTargetAsync(string selector, string? normalizedFrame)
+    {
+        return await EvaluateScriptAsync($$"""
+            (() => {
+              const selector = {{JsonSerializer.Serialize(selector)}};
+              {{FrameScopeScript(normalizedFrame)}}
+              const scope = resolveAutomationScope();
+              if (!scope.ok) {
+                return scope;
+              }
+
+              let element = null;
+              try {
+                element = scope.document.querySelector(selector);
+              } catch {
+                return { ok: false, reason: "invalid selector", selector, frame: scope.frame };
+              }
+
+              if (!element) {
+                return { ok: false, reason: "selector not found", selector, frame: scope.frame };
+              }
+
+              element.scrollIntoView({ block: "center", inline: "center" });
+              const rect = element.getBoundingClientRect();
+              if (!rect || rect.width <= 0 || rect.height <= 0) {
+                return { ok: false, reason: "selector is not visible", selector, frame: scope.frame };
+              }
+
+              const frameOffset = automationFrameOffset(scope);
+              const localX = Math.min(Math.max(rect.left + rect.width / 2, 0), Math.max(scope.window.innerWidth - 1, 0));
+              const localY = Math.min(Math.max(rect.top + rect.height / 2, 0), Math.max(scope.window.innerHeight - 1, 0));
+              const hit = scope.document.elementFromPoint(localX, localY);
+              if (!hit || (hit !== element && !element.contains(hit) && !hit.contains(element))) {
+                return { ok: false, reason: "selector center is covered", selector, frame: scope.frame };
+              }
+
+              const x = Math.min(Math.max(frameOffset.x + localX, 0), Math.max(window.innerWidth - 1, 0));
+              const y = Math.min(Math.max(frameOffset.y + localY, 0), Math.max(window.innerHeight - 1, 0));
+              if (scope.offsetElement) {
+                const topHit = document.elementFromPoint(x, y);
+                if (topHit !== scope.offsetElement) {
+                  return { ok: false, reason: "frame target is covered", selector, frame: scope.frame };
+                }
+              }
+
+              return { ok: true, selector, frame: scope.frame, x, y };
+            })()
+            """).ConfigureAwait(true);
     }
 
     private async Task DispatchKeyEventAsync(string type, BrowserKey key)

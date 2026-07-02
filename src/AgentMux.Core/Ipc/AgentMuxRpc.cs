@@ -91,6 +91,8 @@ public static class AgentMuxMethods
     public const string BrowserEval = "surface.eval_js";
     public const string BrowserText = "surface.browser_text";
     public const string BrowserClick = "surface.click_selector";
+    public const string BrowserHover = "browser.hover";
+    public const string BrowserFocus = "browser.focus";
     public const string BrowserFill = "surface.fill_selector";
     public const string BrowserType = "surface.browser_type_text";
     public const string BrowserPress = "surface.browser_press_key";

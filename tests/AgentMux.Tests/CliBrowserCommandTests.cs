@@ -290,23 +290,83 @@ public sealed class CliBrowserCommandTests
     public void BrowserActionsKeepOptionalFrameTarget()
     {
         var click = Program.ParseBrowserRequestForTests(["click", "--frame", "agentmux-child-frame", "#submit"], out var clickError);
+        var hover = Program.ParseBrowserRequestForTests(["hover", "--frame", "agentmux-child-frame", "#submit"], out var hoverError);
+        var focus = Program.ParseBrowserRequestForTests(["focus", "--frame", "agentmux-child-frame", "#prompt"], out var focusError);
         var fill = Program.ParseBrowserRequestForTests(["fill", "--frame", "agentmux-child-frame", "#prompt", "write", "tests"], out var fillError);
         var type = Program.ParseBrowserRequestForTests(["type", "--frame", "agentmux-child-frame", "#prompt", "write", "tests"], out var typeError);
         var press = Program.ParseBrowserRequestForTests(["press", "Enter", "--selector", "#prompt", "--frame", "agentmux-child-frame"], out var pressError);
 
         Assert.Equal("", clickError);
+        Assert.Equal("", hoverError);
+        Assert.Equal("", focusError);
         Assert.Equal("", fillError);
         Assert.Equal("", typeError);
         Assert.Equal("", pressError);
         Assert.NotNull(click);
+        Assert.NotNull(hover);
+        Assert.NotNull(focus);
         Assert.NotNull(fill);
         Assert.NotNull(type);
         Assert.NotNull(press);
+        Assert.Equal(AgentMuxMethods.BrowserHover, hover.Method);
+        Assert.Equal(AgentMuxMethods.BrowserFocus, focus.Method);
 
         Assert.Equal("agentmux-child-frame", JsonSerializer.SerializeToElement(click.Parameters, AgentMuxJson.Options).GetProperty("frame").GetString());
+        Assert.Equal("agentmux-child-frame", JsonSerializer.SerializeToElement(hover.Parameters, AgentMuxJson.Options).GetProperty("frame").GetString());
+        Assert.Equal("agentmux-child-frame", JsonSerializer.SerializeToElement(focus.Parameters, AgentMuxJson.Options).GetProperty("frame").GetString());
         Assert.Equal("agentmux-child-frame", JsonSerializer.SerializeToElement(fill.Parameters, AgentMuxJson.Options).GetProperty("frame").GetString());
         Assert.Equal("agentmux-child-frame", JsonSerializer.SerializeToElement(type.Parameters, AgentMuxJson.Options).GetProperty("frame").GetString());
         Assert.Equal("agentmux-child-frame", JsonSerializer.SerializeToElement(press.Parameters, AgentMuxJson.Options).GetProperty("frame").GetString());
+    }
+
+    [Theory]
+    [InlineData("hover", AgentMuxMethods.BrowserHover)]
+    [InlineData("focus", AgentMuxMethods.BrowserFocus)]
+    public void BrowserHoverFocusParseSelector(string command, string method)
+    {
+        var request = Program.ParseBrowserRequestForTests([command, ".menu", "button"], out var error);
+
+        Assert.Equal("", error);
+        Assert.NotNull(request);
+        Assert.Equal(method, request.Method);
+        var parameters = JsonSerializer.SerializeToElement(request.Parameters, AgentMuxJson.Options);
+        Assert.Equal(".menu button", parameters.GetProperty("selector").GetString());
+        Assert.Equal(JsonValueKind.Null, parameters.GetProperty("frame").ValueKind);
+    }
+
+    [Theory]
+    [InlineData("hover")]
+    [InlineData("focus")]
+    public void BrowserHoverFocusRequireSelector(string command)
+    {
+        var request = Program.ParseBrowserRequestForTests([command], out var error);
+
+        Assert.Null(request);
+        Assert.Equal($"Usage: agentmux browser {command} [--frame <name-or-id>] <selector>", error);
+    }
+
+    [Theory]
+    [InlineData("hover")]
+    [InlineData("focus")]
+    public void BrowserHoverFocusFrameOptionRequiresValue(string command)
+    {
+        var request = Program.ParseBrowserRequestForTests([command, "#submit", "--frame"], out var error);
+
+        Assert.Null(request);
+        Assert.Equal($"Usage: agentmux browser {command} [--frame <name-or-id>] <selector>", error);
+    }
+
+    [Theory]
+    [InlineData("hover", "--surface")]
+    [InlineData("hover", "--snapshot-after")]
+    [InlineData("focus", "--surface")]
+    [InlineData("focus", "--snapshot-after")]
+    public void BrowserHoverFocusRejectUnsupportedNamedFlags(string command, string flag)
+    {
+        var request = Program.ParseBrowserRequestForTests([command, "#submit", flag, "true"], out var error);
+
+        Assert.Null(request);
+        Assert.Equal($"Usage: agentmux browser {command} [--frame <name-or-id>] <selector>", error);
     }
 
     [Fact]

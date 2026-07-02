@@ -372,6 +372,29 @@ public static class Program
             return new CliRequest(AgentMuxMethods.BrowserClick, new { selector, frame });
         }
 
+        if (args[0].Equals("hover", StringComparison.OrdinalIgnoreCase)
+            || args[0].Equals("focus", StringComparison.OrdinalIgnoreCase))
+        {
+            var command = args[0].ToLowerInvariant();
+            var usage = $"Usage: agentmux browser {command} [--frame <name-or-id>] <selector>";
+            var named = ParseNamed(args[1..]);
+            var selector = NamedOrJoined(named, "selector");
+            if (!NamedKeysAreAllowed(named, ["selector", "frame"]) || string.IsNullOrWhiteSpace(selector))
+            {
+                error = usage;
+                return null;
+            }
+
+            if (!TryReadOptionalFrame(named, usage, out var frame, out error))
+            {
+                return null;
+            }
+
+            error = "";
+            var method = command == "hover" ? AgentMuxMethods.BrowserHover : AgentMuxMethods.BrowserFocus;
+            return new CliRequest(method, new { selector, frame });
+        }
+
         if (args[0].Equals("fill", StringComparison.OrdinalIgnoreCase))
         {
             var named = ParseNamed(args[1..]);
@@ -2052,6 +2075,8 @@ public static class Program
           agentmux browser text --selector "main" --max-chars 10000
           agentmux browser click "#submit"
           agentmux browser click --frame agentmux-child-frame "#submit"
+          agentmux browser hover ".menu-item"
+          agentmux browser focus "input[name='username']"
           agentmux browser fill "#prompt" "write tests"
           agentmux browser type "#prompt" "write tests"
           agentmux browser press Enter --selector "#prompt" --frame agentmux-child-frame

@@ -1421,6 +1421,24 @@ public sealed class MainWindowSmokeTests
             Assert.False(getTextOnTerminal.GetProperty("ok").GetBoolean());
             Assert.Equal("active pane is not a browser", getTextOnTerminal.GetProperty("reason").GetString());
 
+            var hoverOnTerminalResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserHover, new
+            {
+                selector = "body"
+            });
+            Assert.True(hoverOnTerminalResponse.Ok, hoverOnTerminalResponse.Error);
+            var hoverOnTerminal = System.Text.Json.JsonSerializer.SerializeToElement(hoverOnTerminalResponse.Result, AgentMuxJson.Options);
+            Assert.False(hoverOnTerminal.GetProperty("ok").GetBoolean());
+            Assert.Equal("active pane is not a browser", hoverOnTerminal.GetProperty("reason").GetString());
+
+            var focusOnTerminalResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserFocus, new
+            {
+                selector = "body"
+            });
+            Assert.True(focusOnTerminalResponse.Ok, focusOnTerminalResponse.Error);
+            var focusOnTerminal = System.Text.Json.JsonSerializer.SerializeToElement(focusOnTerminalResponse.Result, AgentMuxJson.Options);
+            Assert.False(focusOnTerminal.GetProperty("ok").GetBoolean());
+            Assert.Equal("active pane is not a browser", focusOnTerminal.GetProperty("reason").GetString());
+
             var urlOnTerminalResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserGetUrl);
             Assert.True(urlOnTerminalResponse.Ok, urlOnTerminalResponse.Error);
             var urlOnTerminal = System.Text.Json.JsonSerializer.SerializeToElement(urlOnTerminalResponse.Result, AgentMuxJson.Options);
@@ -1955,13 +1973,23 @@ public sealed class MainWindowSmokeTests
                     document.body.innerHTML = '<main id="rpc-text">agentmux browser text smoke</main><section id="rpc-html"><strong data-kind="bold">agentmux get html smoke</strong></section><input id="rpc-get-value" value="agentmux-get-value"><div id="rpc-attr" data-token="agentmux-attr-value"></div><button id="rpc-style" style="color: rgb(1, 2, 3); width: 123px; height: 45px;">styled</button><span class="rpc-count"></span><span class="rpc-count"></span><input id="rpc-name"><button id="rpc-go">go</button><output id="rpc-result"></output><input id="rpc-typed"><output id="rpc-typed-result"></output><iframe id="rpc-frame" name="agentmux-child-frame" style="border:0;width:420px;height:160px;"></iframe>';
                     window.__agentMuxRpcClicked = 0;
                     window.__agentMuxRpcMouseDown = 0;
+                    window.__agentMuxRpcHover = 0;
+                    window.__agentMuxRpcFocus = 0;
                     window.__agentMuxRpcTypedInput = 0;
                     window.__agentMuxRpcPressedEnter = 0;
                     window.__agentMuxFrameReady = false;
                     window.__agentMuxFrameClicked = 0;
                     window.__agentMuxFrameMouseDown = 0;
+                    window.__agentMuxFrameHover = 0;
+                    window.__agentMuxFrameFocus = 0;
                     window.__agentMuxFrameTypedInput = 0;
                     window.__agentMuxFramePressedEnter = 0;
+                    document.querySelector("#rpc-style").addEventListener("mousemove", () => {
+                        window.__agentMuxRpcHover += 1;
+                    });
+                    document.querySelector("#rpc-name").addEventListener("focus", () => {
+                        window.__agentMuxRpcFocus += 1;
+                    });
                     document.querySelector("#rpc-go").addEventListener("mousedown", () => {
                         window.__agentMuxRpcMouseDown += 1;
                     });
@@ -1985,9 +2013,15 @@ public sealed class MainWindowSmokeTests
                         doc.querySelector("#frame-go").addEventListener("mousedown", () => {
                             topWindow.__agentMuxFrameMouseDown += 1;
                         });
+                        doc.querySelector("#frame-go").addEventListener("mousemove", () => {
+                            topWindow.__agentMuxFrameHover += 1;
+                        });
                         doc.querySelector("#frame-go").addEventListener("click", () => {
                             topWindow.__agentMuxFrameClicked += 1;
                             doc.querySelector("#frame-result").textContent = doc.querySelector("#frame-name").value;
+                        });
+                        doc.querySelector("#frame-name").addEventListener("focus", () => {
+                            topWindow.__agentMuxFrameFocus += 1;
                         });
                         doc.querySelector("#frame-typed").addEventListener("input", () => {
                             topWindow.__agentMuxFrameTypedInput += 1;
@@ -2072,6 +2106,23 @@ public sealed class MainWindowSmokeTests
             Assert.Equal("color", getStyle.GetProperty("property").GetString());
             Assert.Contains("rgb", getStyle.GetProperty("value").GetString(), StringComparison.Ordinal);
 
+            var hover = AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserHover, new
+            {
+                selector = "#rpc-style"
+            }).ConfigureAwait(true));
+            Assert.Equal("hover", hover.GetProperty("kind").GetString());
+            Assert.Equal("#rpc-style", hover.GetProperty("selector").GetString());
+            Assert.True(hover.GetProperty("x").GetDouble() >= 0, hover.ToString());
+            Assert.True(hover.GetProperty("y").GetDouble() >= 0, hover.ToString());
+
+            var focus = AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserFocus, new
+            {
+                selector = "#rpc-name"
+            }).ConfigureAwait(true));
+            Assert.Equal("focus", focus.GetProperty("kind").GetString());
+            Assert.Equal("#rpc-name", focus.GetProperty("selector").GetString());
+            Assert.Equal("rpc-name", focus.GetProperty("activeElementId").GetString());
+
             AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserFill, new
             {
                 selector = "#rpc-name",
@@ -2100,6 +2151,9 @@ public sealed class MainWindowSmokeTests
                         result: document.querySelector("#rpc-result").textContent,
                         clicked: window.__agentMuxRpcClicked,
                         mouseDown: window.__agentMuxRpcMouseDown,
+                        hover: window.__agentMuxRpcHover,
+                        focus: window.__agentMuxRpcFocus,
+                        activeElementId: document.activeElement?.id || "",
                         typedValue: document.querySelector("#rpc-typed").value,
                         typedInput: window.__agentMuxRpcTypedInput,
                         pressedEnter: window.__agentMuxRpcPressedEnter,
@@ -2112,6 +2166,8 @@ public sealed class MainWindowSmokeTests
             Assert.Equal("agentmux-rpc-browser-smoke", state.GetProperty("result").GetString());
             Assert.Equal(1, state.GetProperty("clicked").GetInt32());
             Assert.True(state.GetProperty("mouseDown").GetInt32() >= 1);
+            Assert.True(state.GetProperty("hover").GetInt32() >= 1);
+            Assert.True(state.GetProperty("focus").GetInt32() >= 1);
             Assert.Equal("agentmux-rpc-type-smoke", state.GetProperty("typedValue").GetString());
             Assert.True(state.GetProperty("typedInput").GetInt32() >= 1);
             Assert.Equal(1, state.GetProperty("pressedEnter").GetInt32());
@@ -2215,6 +2271,23 @@ public sealed class MainWindowSmokeTests
                 text = "agentmux-frame-browser-smoke",
                 frame = frameName
             }));
+            var frameHover = AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserHover, new
+            {
+                selector = "#frame-go",
+                frame = frameName
+            }));
+            Assert.Equal("hover", frameHover.GetProperty("kind").GetString());
+            Assert.Equal(frameName, frameHover.GetProperty("frame").GetString());
+
+            var frameFocus = AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserFocus, new
+            {
+                selector = "#frame-name",
+                frame = frameName
+            }));
+            Assert.Equal("focus", frameFocus.GetProperty("kind").GetString());
+            Assert.Equal(frameName, frameFocus.GetProperty("frame").GetString());
+            Assert.Equal("frame-name", frameFocus.GetProperty("activeElementId").GetString());
+
             AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserClick, new
             {
                 selector = "#frame-go",
@@ -2243,6 +2316,9 @@ public sealed class MainWindowSmokeTests
                             frameResult: doc.querySelector("#frame-result").textContent,
                             frameClicked: window.__agentMuxFrameClicked,
                             frameMouseDown: window.__agentMuxFrameMouseDown,
+                            frameHover: window.__agentMuxFrameHover,
+                            frameFocus: window.__agentMuxFrameFocus,
+                            frameActiveElementId: doc.activeElement?.id || "",
                             frameTypedValue: doc.querySelector("#frame-typed").value,
                             frameTypedInput: window.__agentMuxFrameTypedInput,
                             framePressedEnter: window.__agentMuxFramePressedEnter,
@@ -2256,6 +2332,8 @@ public sealed class MainWindowSmokeTests
             Assert.Equal("agentmux-frame-browser-smoke", frameState.GetProperty("frameResult").GetString());
             Assert.Equal(1, frameState.GetProperty("frameClicked").GetInt32());
             Assert.True(frameState.GetProperty("frameMouseDown").GetInt32() >= 1);
+            Assert.True(frameState.GetProperty("frameHover").GetInt32() >= 1);
+            Assert.True(frameState.GetProperty("frameFocus").GetInt32() >= 1);
             Assert.Equal("agentmux-frame-type-smoke", frameState.GetProperty("frameTypedValue").GetString());
             Assert.True(frameState.GetProperty("frameTypedInput").GetInt32() >= 1);
             Assert.Equal(1, frameState.GetProperty("framePressedEnter").GetInt32());
@@ -2304,6 +2382,22 @@ public sealed class MainWindowSmokeTests
             }));
             Assert.Equal("frame is not same-origin accessible", sandboxFrameText.GetProperty("reason").GetString());
             Assert.Equal("agentmux-sandbox-frame", sandboxFrameText.GetProperty("frame").GetString());
+
+            var sandboxFrameHover = AssertRpcNotOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserHover, new
+            {
+                selector = "#blocked",
+                frame = "agentmux-sandbox-frame"
+            }));
+            Assert.Equal("frame is not same-origin accessible", sandboxFrameHover.GetProperty("reason").GetString());
+            Assert.Equal("agentmux-sandbox-frame", sandboxFrameHover.GetProperty("frame").GetString());
+
+            var sandboxFrameFocus = AssertRpcNotOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserFocus, new
+            {
+                selector = "#blocked",
+                frame = "agentmux-sandbox-frame"
+            }));
+            Assert.Equal("frame is not same-origin accessible", sandboxFrameFocus.GetProperty("reason").GetString());
+            Assert.Equal("agentmux-sandbox-frame", sandboxFrameFocus.GetProperty("frame").GetString());
 
             var frameTree = await WaitForFrameTreeWithChildAsync(window, "agentmux-child-frame").ConfigureAwait(true);
             Assert.True(frameTree.GetProperty("ok").GetBoolean(), frameTree.ToString());
