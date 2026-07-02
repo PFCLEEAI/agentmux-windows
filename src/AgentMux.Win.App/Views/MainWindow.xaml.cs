@@ -564,6 +564,9 @@ public partial class MainWindow : Window
             AgentMuxMethods.BrowserClick => AgentMuxResponse.Success(request.Id, await HandleBrowserClickAsync(request.Params).ConfigureAwait(true)),
             AgentMuxMethods.BrowserHover => AgentMuxResponse.Success(request.Id, await HandleBrowserHoverAsync(request.Params).ConfigureAwait(true)),
             AgentMuxMethods.BrowserFocus => AgentMuxResponse.Success(request.Id, await HandleBrowserFocusAsync(request.Params).ConfigureAwait(true)),
+            AgentMuxMethods.BrowserIsVisible => AgentMuxResponse.Success(request.Id, await HandleBrowserIsAsync(request.Params, "visible").ConfigureAwait(true)),
+            AgentMuxMethods.BrowserIsEnabled => AgentMuxResponse.Success(request.Id, await HandleBrowserIsAsync(request.Params, "enabled").ConfigureAwait(true)),
+            AgentMuxMethods.BrowserIsChecked => AgentMuxResponse.Success(request.Id, await HandleBrowserIsAsync(request.Params, "checked").ConfigureAwait(true)),
             AgentMuxMethods.BrowserFill => AgentMuxResponse.Success(request.Id, await HandleBrowserFillAsync(request.Params).ConfigureAwait(true)),
             AgentMuxMethods.BrowserType => AgentMuxResponse.Success(request.Id, await HandleBrowserTypeAsync(request.Params).ConfigureAwait(true)),
             AgentMuxMethods.BrowserPress => AgentMuxResponse.Success(request.Id, await HandleBrowserPressAsync(request.Params).ConfigureAwait(true)),
@@ -1527,6 +1530,17 @@ public partial class MainWindow : Window
         }
 
         return await RunBrowserScriptAsync(view => view.FocusAsync(parsed.Selector, parsed.Frame)).ConfigureAwait(true);
+    }
+
+    private async Task<object> HandleBrowserIsAsync(JsonElement? parameters, string state)
+    {
+        var parsed = Deserialize<BrowserSelectorParams>(parameters);
+        if (string.IsNullOrWhiteSpace(parsed?.Selector))
+        {
+            return new { ok = false, reason = "selector is required" };
+        }
+
+        return await RunBrowserScriptAsync(view => view.CheckElementStateAsync(state, parsed.Selector, parsed.Frame)).ConfigureAwait(true);
     }
 
     private async Task<object> HandleBrowserFillAsync(JsonElement? parameters)
@@ -3013,6 +3027,9 @@ public partial class MainWindow : Window
             or AgentMuxMethods.BrowserClick
             or AgentMuxMethods.BrowserHover
             or AgentMuxMethods.BrowserFocus
+            or AgentMuxMethods.BrowserIsVisible
+            or AgentMuxMethods.BrowserIsEnabled
+            or AgentMuxMethods.BrowserIsChecked
             or AgentMuxMethods.BrowserFill
             or AgentMuxMethods.BrowserType
             or AgentMuxMethods.BrowserPress

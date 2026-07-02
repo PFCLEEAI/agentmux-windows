@@ -590,6 +590,92 @@ internal sealed class BrowserPaneView : Grid, IDisposable
             """).ConfigureAwait(true);
     }
 
+    public async Task<string> CheckElementStateAsync(string state, string selector, string? frame = null)
+    {
+        if (string.IsNullOrWhiteSpace(selector))
+        {
+            return """{"ok":false,"reason":"selector is required"}""";
+        }
+
+        var normalizedState = string.IsNullOrWhiteSpace(state) ? "" : state.Trim().ToLowerInvariant();
+        if (normalizedState is not ("visible" or "enabled" or "checked"))
+        {
+            return JsonSerializer.Serialize(new { ok = false, reason = "unsupported state", state }, AgentMuxJson.Options);
+        }
+
+        var normalizedFrame = NormalizeFrame(frame);
+        await EnsureReadyAsync().ConfigureAwait(true);
+        try
+        {
+            return await _webView.CoreWebView2!.ExecuteScriptAsync($$"""
+                (() => {
+                  const kind = {{JsonSerializer.Serialize(normalizedState)}};
+                  const selector = {{JsonSerializer.Serialize(selector)}};
+                  {{FrameScopeScript(normalizedFrame, scrollFrameIntoView: false)}}
+                  const scope = resolveAutomationScope();
+                  const baseResult = scope => ({
+                    kind,
+                    selector,
+                    frame: scope?.frame ?? null
+                  });
+
+                  if (!scope.ok) {
+                    return { ...scope, ...baseResult(scope) };
+                  }
+
+                  let element = null;
+                  try {
+                    element = scope.document.querySelector(selector);
+                  } catch {
+                    return { ok: false, reason: "invalid selector", ...baseResult(scope) };
+                  }
+
+                  const attached = !!element;
+                  let visible = false;
+                  let enabled = false;
+                  let checked = false;
+                  let checkable = false;
+
+                  if (element) {
+                    const style = scope.window.getComputedStyle(element);
+                    const rect = element.getBoundingClientRect();
+                    visible = style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0;
+
+                    const disabledByPseudo = typeof element.matches === "function" && element.matches(":disabled");
+                    const disabledByProperty = "disabled" in element && element.disabled === true;
+                    const disabledByAria = element.getAttribute("aria-disabled") === "true";
+                    enabled = !(disabledByPseudo || disabledByProperty || disabledByAria);
+
+                    const ariaChecked = element.getAttribute("aria-checked");
+                    checkable = "checked" in element || ariaChecked !== null;
+                    checked = "checked" in element ? !!element.checked : ariaChecked === "true";
+                  }
+
+                  const matches = kind === "visible"
+                    ? visible
+                    : kind === "enabled"
+                      ? enabled
+                      : checked;
+
+                  return {
+                    ok: true,
+                    ...baseResult(scope),
+                    attached,
+                    visible,
+                    enabled,
+                    checked,
+                    checkable,
+                    matches
+                  };
+                })()
+                """).ConfigureAwait(true);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or System.Runtime.InteropServices.COMException)
+        {
+            return """{"ok":false,"reason":"document unavailable"}""";
+        }
+    }
+
     public async Task<string> FillAsync(string selector, string text, string? frame = null)
     {
         if (string.IsNullOrWhiteSpace(selector))
@@ -2869,11 +2955,12 @@ internal sealed class BrowserPaneView : Grid, IDisposable
     private static string? NormalizeSelector(string? selector) =>
         string.IsNullOrWhiteSpace(selector) ? null : selector.Trim();
 
-    private static string FrameScopeScript(string? frame)
+    private static string FrameScopeScript(string? frame, bool scrollFrameIntoView = true)
     {
         var normalizedFrame = NormalizeFrame(frame);
         return $$"""
               const frameName = {{JsonSerializer.Serialize(normalizedFrame)}};
+              const shouldScrollFrameIntoView = {{JsonSerializer.Serialize(scrollFrameIntoView)}};
               const resolveAutomationScope = () => {
                 if (!frameName) {
                   return { ok: true, document, window, offsetElement: null, frame: null };
@@ -2888,7 +2975,9 @@ internal sealed class BrowserPaneView : Grid, IDisposable
                   return { ok: false, reason: "frame not found", frame: frameName };
                 }
 
-                frameElement.scrollIntoView({ block: "center", inline: "center" });
+                if (shouldScrollFrameIntoView) {
+                  frameElement.scrollIntoView({ block: "center", inline: "center" });
+                }
 
                 let frameWindow;
                 let frameDocument;

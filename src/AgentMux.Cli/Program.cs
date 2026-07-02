@@ -312,6 +312,11 @@ public static class Program
             return ParseBrowserGetRequest(args[1..], out error);
         }
 
+        if (args[0].Equals("is", StringComparison.OrdinalIgnoreCase))
+        {
+            return ParseBrowserIsRequest(args[1..], out error);
+        }
+
         if (args[0].Equals("eval", StringComparison.OrdinalIgnoreCase))
         {
             var named = ParseNamed(args[1..]);
@@ -825,6 +830,45 @@ public static class Program
     {
         error = string.IsNullOrWhiteSpace(kind) ? usage : $"Unknown browser get command: {kind}";
         return null;
+    }
+
+    private static CliRequest? ParseBrowserIsRequest(string[] args, out string error)
+    {
+        const string usage = "Usage: agentmux browser is <visible|enabled|checked> [--frame <name-or-id>] <selector>";
+        if (args.Length == 0)
+        {
+            error = usage;
+            return null;
+        }
+
+        var state = args[0].Trim().ToLowerInvariant();
+        if (!IsBrowserIsState(state))
+        {
+            error = usage;
+            return null;
+        }
+
+        var named = ParseNamed(args[1..]);
+        var selector = NamedOrJoined(named, "selector");
+        if (!NamedKeysAreAllowed(named, ["selector", "frame"]) || string.IsNullOrWhiteSpace(selector))
+        {
+            error = usage;
+            return null;
+        }
+
+        if (!TryReadOptionalFrame(named, usage, out var frame, out error))
+        {
+            return null;
+        }
+
+        error = "";
+        return state switch
+        {
+            "visible" => new CliRequest(AgentMuxMethods.BrowserIsVisible, new { selector, frame }),
+            "enabled" => new CliRequest(AgentMuxMethods.BrowserIsEnabled, new { selector, frame }),
+            "checked" => new CliRequest(AgentMuxMethods.BrowserIsChecked, new { selector, frame }),
+            _ => throw new InvalidOperationException("Unsupported browser is state.")
+        };
     }
 
     private static CliRequest? ParseBrowserRouteRequest(string[] args, out string error)
@@ -1935,6 +1979,13 @@ public static class Program
             || value.Equals("hidden", StringComparison.OrdinalIgnoreCase);
     }
 
+    private static bool IsBrowserIsState(string value)
+    {
+        return value.Equals("visible", StringComparison.OrdinalIgnoreCase)
+            || value.Equals("enabled", StringComparison.OrdinalIgnoreCase)
+            || value.Equals("checked", StringComparison.OrdinalIgnoreCase);
+    }
+
     private static bool IsBrowserLoadState(string value)
     {
         return value.Equals("domcontentloaded", StringComparison.OrdinalIgnoreCase)
@@ -2077,6 +2128,9 @@ public static class Program
           agentmux browser click --frame agentmux-child-frame "#submit"
           agentmux browser hover ".menu-item"
           agentmux browser focus "input[name='username']"
+          agentmux browser is visible ".modal"
+          agentmux browser is enabled "button.submit"
+          agentmux browser is checked "input[type='checkbox']"
           agentmux browser fill "#prompt" "write tests"
           agentmux browser type "#prompt" "write tests"
           agentmux browser press Enter --selector "#prompt" --frame agentmux-child-frame

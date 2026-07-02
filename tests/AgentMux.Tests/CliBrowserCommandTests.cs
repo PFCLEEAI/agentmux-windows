@@ -369,6 +369,72 @@ public sealed class CliBrowserCommandTests
         Assert.Equal($"Usage: agentmux browser {command} [--frame <name-or-id>] <selector>", error);
     }
 
+    [Theory]
+    [InlineData("visible", AgentMuxMethods.BrowserIsVisible)]
+    [InlineData("enabled", AgentMuxMethods.BrowserIsEnabled)]
+    [InlineData("checked", AgentMuxMethods.BrowserIsChecked)]
+    public void BrowserIsParseSelector(string state, string method)
+    {
+        var request = Program.ParseBrowserRequestForTests(["is", state, ".menu", "button"], out var error);
+
+        Assert.Equal("", error);
+        Assert.NotNull(request);
+        Assert.Equal(method, request.Method);
+        var parameters = JsonSerializer.SerializeToElement(request.Parameters, AgentMuxJson.Options);
+        Assert.Equal(".menu button", parameters.GetProperty("selector").GetString());
+        Assert.Equal(JsonValueKind.Null, parameters.GetProperty("frame").ValueKind);
+    }
+
+    [Fact]
+    public void BrowserIsKeepsOptionalFrameTarget()
+    {
+        var request = Program.ParseBrowserRequestForTests(["is", "visible", "--frame", "agentmux-child-frame", "#submit"], out var error);
+
+        Assert.Equal("", error);
+        Assert.NotNull(request);
+        Assert.Equal(AgentMuxMethods.BrowserIsVisible, request.Method);
+        var parameters = JsonSerializer.SerializeToElement(request.Parameters, AgentMuxJson.Options);
+        Assert.Equal("#submit", parameters.GetProperty("selector").GetString());
+        Assert.Equal("agentmux-child-frame", parameters.GetProperty("frame").GetString());
+    }
+
+    [Fact]
+    public void BrowserIsAcceptsNamedSelector()
+    {
+        var request = Program.ParseBrowserRequestForTests(["is", "enabled", "--selector", "#submit"], out var error);
+
+        Assert.Equal("", error);
+        Assert.NotNull(request);
+        Assert.Equal(AgentMuxMethods.BrowserIsEnabled, request.Method);
+        var parameters = JsonSerializer.SerializeToElement(request.Parameters, AgentMuxJson.Options);
+        Assert.Equal("#submit", parameters.GetProperty("selector").GetString());
+    }
+
+    [Theory]
+    [InlineData("is")]
+    [InlineData("is visible")]
+    [InlineData("is detached #submit")]
+    [InlineData("is visible #submit --frame")]
+    public void BrowserIsRejectsInvalidShape(string commandLine)
+    {
+        var args = commandLine.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        var request = Program.ParseBrowserRequestForTests(args, out var error);
+
+        Assert.Null(request);
+        Assert.Equal("Usage: agentmux browser is <visible|enabled|checked> [--frame <name-or-id>] <selector>", error);
+    }
+
+    [Theory]
+    [InlineData("--surface")]
+    [InlineData("--snapshot-after")]
+    public void BrowserIsRejectsUnsupportedNamedFlags(string flag)
+    {
+        var request = Program.ParseBrowserRequestForTests(["is", "visible", "#submit", flag, "true"], out var error);
+
+        Assert.Null(request);
+        Assert.Equal("Usage: agentmux browser is <visible|enabled|checked> [--frame <name-or-id>] <selector>", error);
+    }
+
     [Fact]
     public void BrowserFrameOptionRequiresValue()
     {

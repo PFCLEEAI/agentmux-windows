@@ -1439,6 +1439,15 @@ public sealed class MainWindowSmokeTests
             Assert.False(focusOnTerminal.GetProperty("ok").GetBoolean());
             Assert.Equal("active pane is not a browser", focusOnTerminal.GetProperty("reason").GetString());
 
+            var isVisibleOnTerminalResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserIsVisible, new
+            {
+                selector = "body"
+            });
+            Assert.True(isVisibleOnTerminalResponse.Ok, isVisibleOnTerminalResponse.Error);
+            var isVisibleOnTerminal = System.Text.Json.JsonSerializer.SerializeToElement(isVisibleOnTerminalResponse.Result, AgentMuxJson.Options);
+            Assert.False(isVisibleOnTerminal.GetProperty("ok").GetBoolean());
+            Assert.Equal("active pane is not a browser", isVisibleOnTerminal.GetProperty("reason").GetString());
+
             var urlOnTerminalResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserGetUrl);
             Assert.True(urlOnTerminalResponse.Ok, urlOnTerminalResponse.Error);
             var urlOnTerminal = System.Text.Json.JsonSerializer.SerializeToElement(urlOnTerminalResponse.Result, AgentMuxJson.Options);
@@ -1970,7 +1979,7 @@ public sealed class MainWindowSmokeTests
             {
                 script = """
                     document.title = "AgentMux browser get smoke";
-                    document.body.innerHTML = '<main id="rpc-text">agentmux browser text smoke</main><section id="rpc-html"><strong data-kind="bold">agentmux get html smoke</strong></section><input id="rpc-get-value" value="agentmux-get-value"><div id="rpc-attr" data-token="agentmux-attr-value"></div><button id="rpc-style" style="color: rgb(1, 2, 3); width: 123px; height: 45px;">styled</button><span class="rpc-count"></span><span class="rpc-count"></span><input id="rpc-name"><button id="rpc-go">go</button><output id="rpc-result"></output><input id="rpc-typed"><output id="rpc-typed-result"></output><iframe id="rpc-frame" name="agentmux-child-frame" style="border:0;width:420px;height:160px;"></iframe>';
+                    document.body.innerHTML = '<main id="rpc-text">agentmux browser text smoke</main><section id="rpc-html"><strong data-kind="bold">agentmux get html smoke</strong></section><input id="rpc-get-value" value="agentmux-get-value"><div id="rpc-attr" data-token="agentmux-attr-value"></div><button id="rpc-style" style="color: rgb(1, 2, 3); width: 123px; height: 45px;">styled</button><button id="rpc-disabled" disabled>disabled</button><input id="rpc-check" type="checkbox" checked><input id="rpc-uncheck" type="checkbox"><span class="rpc-count"></span><span class="rpc-count"></span><input id="rpc-name"><button id="rpc-go">go</button><output id="rpc-result"></output><input id="rpc-typed"><output id="rpc-typed-result"></output><iframe id="rpc-frame" name="agentmux-child-frame" style="border:0;width:420px;height:160px;"></iframe>';
                     window.__agentMuxRpcClicked = 0;
                     window.__agentMuxRpcMouseDown = 0;
                     window.__agentMuxRpcHover = 0;
@@ -2034,7 +2043,7 @@ public sealed class MainWindowSmokeTests
                         });
                         topWindow.__agentMuxFrameReady = true;
                     }, { once: true });
-                    frame.srcdoc = `<!doctype html><html><body><main id="frame-text">agentmux frame text smoke</main><input id="frame-name"><button id="frame-go">go</button><output id="frame-result"></output><input id="frame-typed"><output id="frame-typed-result"></output></body></html>`;
+                    frame.srcdoc = `<!doctype html><html><body><main id="frame-text">agentmux frame text smoke</main><input id="frame-name"><button id="frame-go">go</button><button id="frame-disabled" disabled>disabled</button><input id="frame-check" type="checkbox" checked><input id="frame-uncheck" type="checkbox"><output id="frame-result"></output><input id="frame-typed"><output id="frame-typed-result"></output></body></html>`;
                     true;
                     """
             });
@@ -2106,6 +2115,63 @@ public sealed class MainWindowSmokeTests
             Assert.Equal("color", getStyle.GetProperty("property").GetString());
             Assert.Contains("rgb", getStyle.GetProperty("value").GetString(), StringComparison.Ordinal);
 
+            var isVisible = AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserIsVisible, new
+            {
+                selector = "#rpc-style"
+            }).ConfigureAwait(true));
+            Assert.Equal("visible", isVisible.GetProperty("kind").GetString());
+            Assert.True(isVisible.GetProperty("matches").GetBoolean());
+            Assert.True(isVisible.GetProperty("attached").GetBoolean());
+            Assert.True(isVisible.GetProperty("visible").GetBoolean());
+
+            var missingVisible = AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserIsVisible, new
+            {
+                selector = "#missing-browser-is"
+            }).ConfigureAwait(true));
+            Assert.False(missingVisible.GetProperty("matches").GetBoolean());
+            Assert.False(missingVisible.GetProperty("attached").GetBoolean());
+            Assert.False(missingVisible.GetProperty("visible").GetBoolean());
+
+            var isEnabled = AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserIsEnabled, new
+            {
+                selector = "#rpc-go"
+            }).ConfigureAwait(true));
+            Assert.Equal("enabled", isEnabled.GetProperty("kind").GetString());
+            Assert.True(isEnabled.GetProperty("matches").GetBoolean());
+            Assert.True(isEnabled.GetProperty("enabled").GetBoolean());
+
+            var disabledButton = AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserIsEnabled, new
+            {
+                selector = "#rpc-disabled"
+            }).ConfigureAwait(true));
+            Assert.False(disabledButton.GetProperty("matches").GetBoolean());
+            Assert.False(disabledButton.GetProperty("enabled").GetBoolean());
+
+            var isChecked = AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserIsChecked, new
+            {
+                selector = "#rpc-check"
+            }).ConfigureAwait(true));
+            Assert.Equal("checked", isChecked.GetProperty("kind").GetString());
+            Assert.True(isChecked.GetProperty("matches").GetBoolean());
+            Assert.True(isChecked.GetProperty("checked").GetBoolean());
+            Assert.True(isChecked.GetProperty("checkable").GetBoolean());
+
+            var uncheckedInput = AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserIsChecked, new
+            {
+                selector = "#rpc-uncheck"
+            }).ConfigureAwait(true));
+            Assert.False(uncheckedInput.GetProperty("matches").GetBoolean());
+            Assert.False(uncheckedInput.GetProperty("checked").GetBoolean());
+            Assert.True(uncheckedInput.GetProperty("checkable").GetBoolean());
+
+            var nonCheckable = AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserIsChecked, new
+            {
+                selector = "#rpc-style"
+            }).ConfigureAwait(true));
+            Assert.False(nonCheckable.GetProperty("matches").GetBoolean());
+            Assert.False(nonCheckable.GetProperty("checked").GetBoolean());
+            Assert.False(nonCheckable.GetProperty("checkable").GetBoolean());
+
             var hover = AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserHover, new
             {
                 selector = "#rpc-style"
@@ -2175,6 +2241,7 @@ public sealed class MainWindowSmokeTests
 
             const string frameName = "agentmux-child-frame";
             var browserTextSecretToken = $"agentmux-browser-text-{Guid.NewGuid():N}";
+            var browserIsSecretToken = $"agentmux-browser-is-{Guid.NewGuid():N}";
             AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserEval, new
             {
                 script = $$"""
@@ -2183,10 +2250,20 @@ public sealed class MainWindowSmokeTests
                         marker.id = "rpc-secret-text";
                         marker.textContent = {{System.Text.Json.JsonSerializer.Serialize(browserTextSecretToken)}};
                         document.body.appendChild(marker);
+                        const stateMarker = document.createElement("button");
+                        stateMarker.id = {{System.Text.Json.JsonSerializer.Serialize(browserIsSecretToken)}};
+                        stateMarker.textContent = "state";
+                        document.body.appendChild(stateMarker);
                         return true;
                     })()
                     """
             }));
+
+            var tokenVisible = AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserIsVisible, new
+            {
+                selector = $"#{browserIsSecretToken}"
+            }));
+            Assert.True(tokenVisible.GetProperty("matches").GetBoolean());
 
             var topDocumentText = AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserText, new
             {
@@ -2253,6 +2330,33 @@ public sealed class MainWindowSmokeTests
             Assert.Equal("agentmux frame text smoke", frameGetText.GetProperty("text").GetString());
             Assert.Equal(frameName, frameGetText.GetProperty("frame").GetString());
 
+            var frameVisible = AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserIsVisible, new
+            {
+                selector = "#frame-go",
+                frame = frameName
+            }));
+            Assert.Equal("visible", frameVisible.GetProperty("kind").GetString());
+            Assert.Equal(frameName, frameVisible.GetProperty("frame").GetString());
+            Assert.True(frameVisible.GetProperty("matches").GetBoolean());
+
+            var frameDisabled = AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserIsEnabled, new
+            {
+                selector = "#frame-disabled",
+                frame = frameName
+            }));
+            Assert.Equal(frameName, frameDisabled.GetProperty("frame").GetString());
+            Assert.False(frameDisabled.GetProperty("matches").GetBoolean());
+            Assert.False(frameDisabled.GetProperty("enabled").GetBoolean());
+
+            var frameChecked = AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserIsChecked, new
+            {
+                selector = "#frame-check",
+                frame = frameName
+            }));
+            Assert.Equal(frameName, frameChecked.GetProperty("frame").GetString());
+            Assert.True(frameChecked.GetProperty("matches").GetBoolean());
+            Assert.True(frameChecked.GetProperty("checked").GetBoolean());
+
             var missingText = AssertRpcNotOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserText, new
             {
                 selector = "#missing-browser-text"
@@ -2264,6 +2368,12 @@ public sealed class MainWindowSmokeTests
                 selector = "["
             }));
             Assert.Equal("invalid selector", invalidSelectorText.GetProperty("reason").GetString());
+
+            var invalidSelectorIsVisible = AssertRpcNotOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserIsVisible, new
+            {
+                selector = "["
+            }));
+            Assert.Equal("invalid selector", invalidSelectorIsVisible.GetProperty("reason").GetString());
 
             AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserFill, new
             {
@@ -2399,6 +2509,14 @@ public sealed class MainWindowSmokeTests
             Assert.Equal("frame is not same-origin accessible", sandboxFrameFocus.GetProperty("reason").GetString());
             Assert.Equal("agentmux-sandbox-frame", sandboxFrameFocus.GetProperty("frame").GetString());
 
+            var sandboxFrameIsVisible = AssertRpcNotOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserIsVisible, new
+            {
+                selector = "#blocked",
+                frame = "agentmux-sandbox-frame"
+            }));
+            Assert.Equal("frame is not same-origin accessible", sandboxFrameIsVisible.GetProperty("reason").GetString());
+            Assert.Equal("agentmux-sandbox-frame", sandboxFrameIsVisible.GetProperty("frame").GetString());
+
             var frameTree = await WaitForFrameTreeWithChildAsync(window, "agentmux-child-frame").ConfigureAwait(true);
             Assert.True(frameTree.GetProperty("ok").GetBoolean(), frameTree.ToString());
             var rootFrameTree = frameTree.GetProperty("frameTree");
@@ -2493,6 +2611,7 @@ public sealed class MainWindowSmokeTests
             var waitSnapshotText = await System.IO.File.ReadAllTextAsync(store.FilePath).ConfigureAwait(true);
             Assert.DoesNotContain(waitSecretToken, waitSnapshotText, StringComparison.Ordinal);
             Assert.DoesNotContain(browserTextSecretToken, waitSnapshotText, StringComparison.Ordinal);
+            Assert.DoesNotContain(browserIsSecretToken, waitSnapshotText, StringComparison.Ordinal);
 
             var missingWait = AssertRpcNotOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserWaitForSelector, new
             {
