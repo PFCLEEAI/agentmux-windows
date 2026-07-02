@@ -56,6 +56,9 @@ public static class AgentMuxMethods
     public const string WorkspaceSelect = "workspace.select";
     public const string WorkspaceSetPorts = "workspace.set_ports";
     public const string WorkspaceSetPullRequest = "workspace.set_pull_request";
+    public const string WorkspaceLog = "workspace.log";
+    public const string WorkspaceListLog = "workspace.list_log";
+    public const string WorkspaceClearLog = "workspace.clear_log";
     public const string SurfaceList = "surface.list";
     public const string SurfaceCreate = "surface.create";
     public const string SurfaceSelect = "surface.select";

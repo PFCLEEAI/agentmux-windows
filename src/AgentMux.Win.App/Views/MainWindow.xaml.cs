@@ -22,9 +22,13 @@ namespace AgentMux.Win.App.Views;
 public partial class MainWindow : Window
 {
     private const int MaxNotifications = 200;
+    private const int MaxWorkspaceLogs = 200;
+    private const int MaxWorkspaceLogMessageLength = 1000;
+    private const int MaxWorkspaceLogSourceLength = 80;
 
     private readonly ObservableCollection<WorkspaceState> _workspaces = [];
     private readonly List<TerminalNotification> _notifications = [];
+    private readonly List<WorkspaceLogEntry> _workspaceLogs = [];
     private readonly Dictionary<string, ConPtySession> _ptySessions = [];
     private readonly Dictionary<string, TerminalPaneView> _terminalViews = [];
     private readonly Dictionary<string, TerminalOutputProcessor> _terminalOutputProcessors = [];
@@ -369,6 +373,7 @@ public partial class MainWindow : Window
         var clone = JsonSerializer.Deserialize<WorkspaceState>(json, AgentMuxJson.Options) ?? new WorkspaceState();
         clone.UnreadCount = 0;
         clone.LatestNotification = null;
+        clone.LatestLog = null;
         foreach (var surface in clone.Surfaces)
         {
             ClearPaneNotificationState(surface.Root);
@@ -508,6 +513,9 @@ public partial class MainWindow : Window
             AgentMuxMethods.WorkspaceSelect => AgentMuxResponse.Success(request.Id, HandleWorkspaceSelect(request.Params)),
             AgentMuxMethods.WorkspaceSetPorts => AgentMuxResponse.Success(request.Id, HandleWorkspaceSetPorts(request.Params)),
             AgentMuxMethods.WorkspaceSetPullRequest => AgentMuxResponse.Success(request.Id, HandleWorkspaceSetPullRequest(request.Params)),
+            AgentMuxMethods.WorkspaceLog => AgentMuxResponse.Success(request.Id, HandleWorkspaceLog(request.Params)),
+            AgentMuxMethods.WorkspaceListLog => AgentMuxResponse.Success(request.Id, HandleWorkspaceListLog(request.Params)),
+            AgentMuxMethods.WorkspaceClearLog => AgentMuxResponse.Success(request.Id, HandleWorkspaceClearLog(request.Params)),
             AgentMuxMethods.SurfaceList => AgentMuxResponse.Success(request.Id, BuildSurfaceList()),
             AgentMuxMethods.SurfaceCreate => AgentMuxResponse.Success(request.Id, HandleSurfaceCreate(request.Params)),
             AgentMuxMethods.SurfaceSelect => AgentMuxResponse.Success(request.Id, HandleSurfaceSelect(request.Params)),
@@ -573,6 +581,7 @@ public partial class MainWindow : Window
             activeSurfaceIndex = workspace.ActiveSurfaceIndex,
             activeSurfaceTitle = surface.Title,
             notificationCount = _notifications.Count,
+            workspaceLogCount = _workspaceLogs.Count,
             terminalSessionCount = _ptySessions.Count,
             browserPaneCount = CountPaneKind(surface.Root, PaneKind.Browser)
         };
@@ -690,6 +699,123 @@ public partial class MainWindow : Window
         return new
         {
             updated = true,
+            workspace = BuildWorkspaceDto(workspace, selectedIndex)
+        };
+    }
+
+    private object HandleWorkspaceLog(JsonElement? parameters)
+    {
+        if (!TryReadOptionalWorkspaceTarget(parameters, out var index, out var id, out var targetError))
+        {
+            return new { logged = false, reason = targetError };
+        }
+
+        if (!TryReadWorkspaceLogMessage(parameters, out var message, out var messageError))
+        {
+            return new { logged = false, reason = messageError };
+        }
+
+        if (!TryReadWorkspaceLogLevel(parameters, out var level, out var levelError))
+        {
+            return new { logged = false, reason = levelError };
+        }
+
+        if (!TryReadWorkspaceLogSource(parameters, out var source, out var sourceError))
+        {
+            return new { logged = false, reason = sourceError };
+        }
+
+        var selectedIndex = ResolveWorkspaceIndex(index, id);
+        if (selectedIndex < 0 || selectedIndex >= _workspaces.Count)
+        {
+            return new
+            {
+                logged = false,
+                reason = index.HasValue ? "index out of range" : "workspace not found"
+            };
+        }
+
+        var workspace = _workspaces[selectedIndex];
+        var entry = new WorkspaceLogEntry
+        {
+            WorkspaceId = workspace.Id,
+            WorkspaceTitle = workspace.Title,
+            Level = level,
+            Source = source,
+            Message = message
+        };
+
+        _workspaceLogs.Add(entry);
+        TrimWorkspaceLogs();
+        RecalculateWorkspaceLogState();
+        return new
+        {
+            logged = true,
+            log = BuildWorkspaceLogDto(entry),
+            workspace = BuildWorkspaceDto(workspace, selectedIndex)
+        };
+    }
+
+    private object HandleWorkspaceListLog(JsonElement? parameters)
+    {
+        if (!TryReadOptionalWorkspaceTarget(parameters, out var index, out var id, out var targetError))
+        {
+            return new { listed = false, reason = targetError };
+        }
+
+        if (!TryReadWorkspaceLogLimit(parameters, out var limit, out var limitError))
+        {
+            return new { listed = false, reason = limitError };
+        }
+
+        var selectedIndex = ResolveWorkspaceIndex(index, id);
+        if (selectedIndex < 0 || selectedIndex >= _workspaces.Count)
+        {
+            return new
+            {
+                listed = false,
+                reason = index.HasValue ? "index out of range" : "workspace not found"
+            };
+        }
+
+        var workspace = _workspaces[selectedIndex];
+        var logs = _workspaceLogs
+            .Where(log => string.Equals(log.WorkspaceId, workspace.Id, StringComparison.Ordinal))
+            .Reverse()
+            .ToList();
+
+        return new
+        {
+            listed = true,
+            workspaceId = workspace.Id,
+            count = logs.Count,
+            logs = logs.Take(limit).Select(BuildWorkspaceLogDto).ToList()
+        };
+    }
+
+    private object HandleWorkspaceClearLog(JsonElement? parameters)
+    {
+        if (!TryReadOptionalWorkspaceTarget(parameters, out var index, out var id, out var targetError))
+        {
+            return new { cleared = 0, reason = targetError };
+        }
+
+        var selectedIndex = ResolveWorkspaceIndex(index, id);
+        if (selectedIndex < 0 || selectedIndex >= _workspaces.Count)
+        {
+            return new
+            {
+                cleared = 0,
+                reason = index.HasValue ? "index out of range" : "workspace not found"
+            };
+        }
+
+        var workspace = _workspaces[selectedIndex];
+        var cleared = _workspaceLogs.RemoveAll(log => string.Equals(log.WorkspaceId, workspace.Id, StringComparison.Ordinal));
+        RecalculateWorkspaceLogState();
+        return new
+        {
+            cleared,
             workspace = BuildWorkspaceDto(workspace, selectedIndex)
         };
     }
@@ -1634,6 +1760,32 @@ public partial class MainWindow : Window
         }
     }
 
+    private void TrimWorkspaceLogs()
+    {
+        while (_workspaceLogs.Count > MaxWorkspaceLogs)
+        {
+            _workspaceLogs.RemoveAt(0);
+        }
+    }
+
+    private void RecalculateWorkspaceLogState()
+    {
+        foreach (var workspace in _workspaces)
+        {
+            var latest = _workspaceLogs
+                .LastOrDefault(log => string.Equals(log.WorkspaceId, workspace.Id, StringComparison.Ordinal));
+            workspace.LatestLog = latest is null ? null : FormatWorkspaceLogText(latest);
+        }
+    }
+
+    private static string FormatWorkspaceLogText(WorkspaceLogEntry entry)
+    {
+        var prefix = $"[{entry.Level}]";
+        return string.IsNullOrWhiteSpace(entry.Source)
+            ? $"{prefix} {entry.Message}"
+            : $"{prefix} {entry.Source}: {entry.Message}";
+    }
+
     private WorkspaceState ActiveWorkspace()
     {
         if (_activeWorkspaceIndex < 0 || _activeWorkspaceIndex >= _workspaces.Count)
@@ -1851,7 +2003,8 @@ public partial class MainWindow : Window
         var pullRequestMeta = string.IsNullOrWhiteSpace(workspace.PullRequestLabel) ? "" : $"  |  {workspace.PullRequestLabel}";
         var portsMeta = string.IsNullOrWhiteSpace(workspace.PortsLabel) ? "" : $"  |  {workspace.PortsLabel}";
         var notificationMeta = string.IsNullOrWhiteSpace(workspace.LatestNotificationLabel) ? "" : $"  |  {workspace.LatestNotificationLabel}";
-        WorkspaceMeta.Text = $"{workspace.WorkingDirectory}{branchMeta}{pullRequestMeta}{portsMeta}{notificationMeta}  |  surfaces: {workspace.Surfaces.Count}  |  panes: {CountPanes(surface.Root)}  |  unread: {workspace.UnreadCount}";
+        var logMeta = string.IsNullOrWhiteSpace(workspace.LatestLogLabel) ? "" : $"  |  {workspace.LatestLogLabel}";
+        WorkspaceMeta.Text = $"{workspace.WorkingDirectory}{branchMeta}{pullRequestMeta}{portsMeta}{notificationMeta}{logMeta}  |  surfaces: {workspace.Surfaces.Count}  |  panes: {CountPanes(surface.Root)}  |  unread: {workspace.UnreadCount}";
         RefreshSurfaceTabs(workspace);
         var activeSessionRunning = activePane is not null
             && _ptySessions.TryGetValue(activePane.Id, out var activeSession)
@@ -2512,6 +2665,8 @@ public partial class MainWindow : Window
             ports = workspace.Ports.ToArray(),
             workspace.UnreadCount,
             latestNotification = workspace.LatestNotificationPreview,
+            latestLog = workspace.LatestLogPreview,
+            logCount = _workspaceLogs.Count(log => string.Equals(log.WorkspaceId, workspace.Id, StringComparison.Ordinal)),
             surfaceCount = workspace.Surfaces.Count,
             workspace.ActiveSurfaceIndex,
             activeSurfaceTitle = surface.Title,
@@ -2531,6 +2686,20 @@ public partial class MainWindow : Window
                 pullRequest.Status,
                 pullRequest.Url
             };
+    }
+
+    private static object BuildWorkspaceLogDto(WorkspaceLogEntry log)
+    {
+        return new
+        {
+            log.Id,
+            log.WorkspaceId,
+            log.WorkspaceTitle,
+            log.Level,
+            log.Source,
+            log.Message,
+            log.CreatedAt
+        };
     }
 
     private static object BuildSurfaceDto(WorkspaceState workspace, SurfaceState surface, int index)
@@ -3219,6 +3388,111 @@ public partial class MainWindow : Window
 
         ports = values.ToList();
         return true;
+    }
+
+    private static bool TryReadWorkspaceLogMessage(JsonElement? parameters, out string message, out string error)
+    {
+        message = "";
+        error = "";
+        if (parameters is not { ValueKind: JsonValueKind.Object } element
+            || !element.TryGetProperty("message", out var property)
+            || property.ValueKind != JsonValueKind.String)
+        {
+            error = "message is required";
+            return false;
+        }
+
+        message = CompactWorkspaceLogValue(property.GetString(), MaxWorkspaceLogMessageLength);
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            error = "message is required";
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool TryReadWorkspaceLogLevel(JsonElement? parameters, out string level, out string error)
+    {
+        level = "info";
+        error = "";
+        if (parameters is not { ValueKind: JsonValueKind.Object } element
+            || !element.TryGetProperty("level", out var property)
+            || property.ValueKind == JsonValueKind.Null)
+        {
+            return true;
+        }
+
+        if (property.ValueKind != JsonValueKind.String)
+        {
+            error = "level must be one of info, warn, error, debug";
+            return false;
+        }
+
+        var normalized = property.GetString()?.Trim().ToLowerInvariant();
+        if (normalized is not ("info" or "warn" or "error" or "debug"))
+        {
+            error = "level must be one of info, warn, error, debug";
+            return false;
+        }
+
+        level = normalized;
+        return true;
+    }
+
+    private static bool TryReadWorkspaceLogSource(JsonElement? parameters, out string? source, out string error)
+    {
+        source = null;
+        error = "";
+        if (parameters is not { ValueKind: JsonValueKind.Object } element
+            || !element.TryGetProperty("source", out var property)
+            || property.ValueKind == JsonValueKind.Null)
+        {
+            return true;
+        }
+
+        if (property.ValueKind != JsonValueKind.String)
+        {
+            error = "source must be a string";
+            return false;
+        }
+
+        var compact = CompactWorkspaceLogValue(property.GetString(), MaxWorkspaceLogSourceLength);
+        source = string.IsNullOrWhiteSpace(compact) ? null : compact;
+        return true;
+    }
+
+    private static bool TryReadWorkspaceLogLimit(JsonElement? parameters, out int limit, out string error)
+    {
+        limit = 50;
+        error = "";
+        if (parameters is not { ValueKind: JsonValueKind.Object } element
+            || !element.TryGetProperty("limit", out var property)
+            || property.ValueKind == JsonValueKind.Null)
+        {
+            return true;
+        }
+
+        if (!TryReadPositiveInt(property, out var parsed))
+        {
+            error = "limit must be a positive integer";
+            return false;
+        }
+
+        limit = Math.Min(parsed, MaxWorkspaceLogs);
+        return true;
+    }
+
+    private static string CompactWorkspaceLogValue(string? value, int maxLength)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return "";
+        }
+
+        var cleaned = new string(value.Select(ch => char.IsControl(ch) && !char.IsWhiteSpace(ch) ? ' ' : ch).ToArray());
+        var compact = string.Join(' ', cleaned.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+        return compact.Length <= maxLength ? compact : compact[..maxLength];
     }
 
     private int ResolveWorkspaceIndex(int? index, string? id)

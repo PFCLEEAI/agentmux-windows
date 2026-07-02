@@ -29,6 +29,9 @@ public static class Program
                 "tree" => await client.SendAsync(AgentMuxMethods.Tree).ConfigureAwait(false),
                 "notify" => await client.SendAsync(AgentMuxMethods.Notify, ParseNotify(args[1..])).ConfigureAwait(false),
                 "notifications" or "notification" => await HandleNotificationsAsync(client, args[1..]).ConfigureAwait(false),
+                "log" => await HandleWorkspaceLogAsync(client, args[1..]).ConfigureAwait(false),
+                "list-log" => await HandleWorkspaceListLogAsync(client, args[1..]).ConfigureAwait(false),
+                "clear-log" => await HandleWorkspaceClearLogAsync(client, args[1..]).ConfigureAwait(false),
                 "workspace" => await HandleWorkspaceAsync(client, args[1..]).ConfigureAwait(false),
                 "surface" or "surfaces" or "tab" or "tabs" => await HandleSurfaceAsync(client, args[1..]).ConfigureAwait(false),
                 "split" => await HandleSplitAsync(client, args[1..]).ConfigureAwait(false),
@@ -57,6 +60,39 @@ public static class Program
     private static async Task<AgentMuxResponse> HandleWorkspaceAsync(NamedPipeRpcClient client, string[] args)
     {
         var request = ParseWorkspaceRequestForTests(args, out var error);
+        if (request is null)
+        {
+            return AgentMuxResponse.Failure("", error);
+        }
+
+        return await client.SendAsync(request.Method, request.Parameters).ConfigureAwait(false);
+    }
+
+    private static async Task<AgentMuxResponse> HandleWorkspaceLogAsync(NamedPipeRpcClient client, string[] args)
+    {
+        var request = ParseWorkspaceLogRequestForTests(args, out var error);
+        if (request is null)
+        {
+            return AgentMuxResponse.Failure("", error);
+        }
+
+        return await client.SendAsync(request.Method, request.Parameters).ConfigureAwait(false);
+    }
+
+    private static async Task<AgentMuxResponse> HandleWorkspaceListLogAsync(NamedPipeRpcClient client, string[] args)
+    {
+        var request = ParseWorkspaceListLogRequestForTests(args, out var error);
+        if (request is null)
+        {
+            return AgentMuxResponse.Failure("", error);
+        }
+
+        return await client.SendAsync(request.Method, request.Parameters).ConfigureAwait(false);
+    }
+
+    private static async Task<AgentMuxResponse> HandleWorkspaceClearLogAsync(NamedPipeRpcClient client, string[] args)
+    {
+        var request = ParseWorkspaceClearLogRequestForTests(args, out var error);
         if (request is null)
         {
             return AgentMuxResponse.Failure("", error);
@@ -854,6 +890,103 @@ public static class Program
         return null;
     }
 
+    internal static CliRequest? ParseWorkspaceLogRequestForTests(string[] args, out string error)
+    {
+        const string usage = "Usage: agentmux log <message> [--level <info|warn|error|debug>] [--source <text>] [--workspace <id-or-index>]";
+        var named = ParseNamed(args);
+        var message = NamedOrRemaining(named, "message", 0);
+        if (string.IsNullOrWhiteSpace(message)
+            || (named.ContainsKey("message") && message.Equals("true", StringComparison.OrdinalIgnoreCase)))
+        {
+            error = usage;
+            return null;
+        }
+
+        var level = "info";
+        if (named.TryGetValue("level", out var levelValue)
+            && !TryNormalizeWorkspaceLogLevel(levelValue, out level))
+        {
+            error = usage;
+            return null;
+        }
+
+        var parameters = new Dictionary<string, object?>
+        {
+            ["message"] = message,
+            ["level"] = level
+        };
+
+        if (named.TryGetValue("source", out var source))
+        {
+            if (string.IsNullOrWhiteSpace(source) || source.Equals("true", StringComparison.OrdinalIgnoreCase))
+            {
+                error = usage;
+                return null;
+            }
+
+            parameters["source"] = source;
+        }
+
+        if (!TryAddWorkspaceTarget(named, parameters, usage, out error))
+        {
+            return null;
+        }
+
+        error = "";
+        return new CliRequest(AgentMuxMethods.WorkspaceLog, parameters);
+    }
+
+    internal static CliRequest? ParseWorkspaceListLogRequestForTests(string[] args, out string error)
+    {
+        const string usage = "Usage: agentmux list-log [--limit <count>] [--workspace <id-or-index>]";
+        var named = ParseNamed(args);
+        if (ReadPositional(named).Length > 0)
+        {
+            error = usage;
+            return null;
+        }
+
+        var parameters = new Dictionary<string, object?>();
+        if (named.TryGetValue("limit", out var limitValue))
+        {
+            if (!TryParseStrictPositiveInt(limitValue, out var limit))
+            {
+                error = usage;
+                return null;
+            }
+
+            parameters["limit"] = limit;
+        }
+
+        if (!TryAddWorkspaceTarget(named, parameters, usage, out error))
+        {
+            return null;
+        }
+
+        error = "";
+        return new CliRequest(AgentMuxMethods.WorkspaceListLog, parameters);
+    }
+
+    internal static CliRequest? ParseWorkspaceClearLogRequestForTests(string[] args, out string error)
+    {
+        const string usage = "Usage: agentmux clear-log [--workspace <id-or-index>]";
+        var named = ParseNamed(args);
+        if (ReadPositional(named).Length > 0)
+        {
+            error = usage;
+            return null;
+        }
+
+        var parameters = new Dictionary<string, object?>();
+        if (!TryAddWorkspaceTarget(named, parameters, usage, out error))
+        {
+            return null;
+        }
+
+        error = "";
+        return new CliRequest(AgentMuxMethods.WorkspaceClearLog, parameters);
+    }
+
     internal static CliRequest? ParseFocusRequestForTests(string[] args, out string error)
     {
         var named = ParseNamed(args);
@@ -1210,6 +1343,88 @@ public static class Program
         return true;
     }
 
+    private static bool TryNormalizeWorkspaceLogLevel(string? value, out string level)
+    {
+        level = "";
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var normalized = value.Trim().ToLowerInvariant();
+        if (normalized is not ("info" or "warn" or "error" or "debug"))
+        {
+            return false;
+        }
+
+        level = normalized;
+        return true;
+    }
+
+    private static bool TryAddWorkspaceTarget(
+        Dictionary<string, string> named,
+        Dictionary<string, object?> parameters,
+        string usage,
+        out string error)
+    {
+        error = "";
+        var hasWorkspace = named.TryGetValue("workspace", out var workspaceValue);
+        var hasIndex = named.ContainsKey("index");
+        var hasIdFlag = named.ContainsKey("id");
+        var hasId = named.TryGetValue("id", out var idValue)
+            && !string.IsNullOrWhiteSpace(idValue)
+            && !idValue.Equals("true", StringComparison.OrdinalIgnoreCase);
+
+        if (hasIdFlag && !hasId)
+        {
+            error = usage;
+            return false;
+        }
+
+        var targetCount = (hasWorkspace ? 1 : 0) + (hasIndex ? 1 : 0) + (hasId ? 1 : 0);
+        if (targetCount > 1)
+        {
+            error = usage;
+            return false;
+        }
+
+        if (hasWorkspace)
+        {
+            if (string.IsNullOrWhiteSpace(workspaceValue) || workspaceValue.Equals("true", StringComparison.OrdinalIgnoreCase))
+            {
+                error = usage;
+                return false;
+            }
+
+            if (TryParseNonNegativeInt(workspaceValue, out var workspaceIndex))
+            {
+                parameters["index"] = workspaceIndex;
+            }
+            else
+            {
+                parameters["id"] = workspaceValue;
+            }
+        }
+
+        if (hasIndex)
+        {
+            if (!named.TryGetValue("index", out var indexValue) || !TryParseNonNegativeInt(indexValue, out var index))
+            {
+                error = usage;
+                return false;
+            }
+
+            parameters["index"] = index;
+        }
+
+        if (hasId)
+        {
+            parameters["id"] = idValue;
+        }
+
+        return true;
+    }
+
     private static bool TryParsePullRequestNumber(string? value, out int number)
     {
         return int.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out number)
@@ -1342,6 +1557,9 @@ public static class Program
           agentmux notifications list --limit 20
           agentmux notifications jump-latest
           agentmux notifications clear
+          agentmux log "Server started" --level info --source server
+          agentmux list-log --limit 20
+          agentmux clear-log
           agentmux workspace list
           agentmux workspace create --title "API" --cwd "C:\src\api"
           agentmux workspace select --index 0

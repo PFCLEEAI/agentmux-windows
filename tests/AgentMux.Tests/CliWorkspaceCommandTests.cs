@@ -7,6 +7,9 @@ namespace AgentMux.Tests;
 public sealed class CliWorkspaceCommandTests
 {
     private const string PullRequestUsage = "Usage: agentmux workspace pr [--index <n>|--id <workspace-id>] <number>|set <number>|--number <n>|clear [--status <unknown|open|draft|merged|closed>] [--url <url>]";
+    private const string WorkspaceLogUsage = "Usage: agentmux log <message> [--level <info|warn|error|debug>] [--source <text>] [--workspace <id-or-index>]";
+    private const string WorkspaceListLogUsage = "Usage: agentmux list-log [--limit <count>] [--workspace <id-or-index>]";
+    private const string WorkspaceClearLogUsage = "Usage: agentmux clear-log [--workspace <id-or-index>]";
 
     [Theory]
     [InlineData("list")]
@@ -214,6 +217,81 @@ public sealed class CliWorkspaceCommandTests
     }
 
     [Fact]
+    public void WorkspaceLogCommandParsesPositionalMessageWithDefaults()
+    {
+        var request = Program.ParseWorkspaceLogRequestForTests(["server", "started"], out var error);
+
+        Assert.Equal("", error);
+        Assert.NotNull(request);
+        Assert.Equal(AgentMuxMethods.WorkspaceLog, request.Method);
+
+        var parameters = JsonSerializer.SerializeToElement(request.Parameters, AgentMuxJson.Options);
+        Assert.Equal("server started", parameters.GetProperty("message").GetString());
+        Assert.Equal("info", parameters.GetProperty("level").GetString());
+        Assert.False(parameters.TryGetProperty("source", out _));
+        Assert.False(parameters.TryGetProperty("index", out _));
+        Assert.False(parameters.TryGetProperty("id", out _));
+    }
+
+    [Fact]
+    public void WorkspaceLogCommandParsesNamedFieldsAndWorkspaceIndex()
+    {
+        var request = Program.ParseWorkspaceLogRequestForTests(
+            ["--message", "Server ready", "--level", "WARN", "--source", "server", "--workspace", "1"],
+            out var error);
+
+        Assert.Equal("", error);
+        Assert.NotNull(request);
+        Assert.Equal(AgentMuxMethods.WorkspaceLog, request.Method);
+
+        var parameters = JsonSerializer.SerializeToElement(request.Parameters, AgentMuxJson.Options);
+        Assert.Equal("Server ready", parameters.GetProperty("message").GetString());
+        Assert.Equal("warn", parameters.GetProperty("level").GetString());
+        Assert.Equal("server", parameters.GetProperty("source").GetString());
+        Assert.Equal(1, parameters.GetProperty("index").GetInt32());
+        Assert.False(parameters.TryGetProperty("id", out _));
+    }
+
+    [Fact]
+    public void WorkspaceLogCommandParsesWorkspaceId()
+    {
+        var request = Program.ParseWorkspaceLogRequestForTests(["ready", "--workspace", "workspace-1"], out var error);
+
+        Assert.Equal("", error);
+        Assert.NotNull(request);
+        var parameters = JsonSerializer.SerializeToElement(request.Parameters, AgentMuxJson.Options);
+        Assert.Equal("workspace-1", parameters.GetProperty("id").GetString());
+        Assert.False(parameters.TryGetProperty("index", out _));
+    }
+
+    [Fact]
+    public void WorkspaceListLogCommandParsesLimitAndWorkspace()
+    {
+        var request = Program.ParseWorkspaceListLogRequestForTests(["--limit", "20", "--workspace", "workspace-1"], out var error);
+
+        Assert.Equal("", error);
+        Assert.NotNull(request);
+        Assert.Equal(AgentMuxMethods.WorkspaceListLog, request.Method);
+
+        var parameters = JsonSerializer.SerializeToElement(request.Parameters, AgentMuxJson.Options);
+        Assert.Equal(20, parameters.GetProperty("limit").GetInt32());
+        Assert.Equal("workspace-1", parameters.GetProperty("id").GetString());
+    }
+
+    [Fact]
+    public void WorkspaceClearLogCommandParsesWorkspaceIndex()
+    {
+        var request = Program.ParseWorkspaceClearLogRequestForTests(["--workspace", "0"], out var error);
+
+        Assert.Equal("", error);
+        Assert.NotNull(request);
+        Assert.Equal(AgentMuxMethods.WorkspaceClearLog, request.Method);
+
+        var parameters = JsonSerializer.SerializeToElement(request.Parameters, AgentMuxJson.Options);
+        Assert.Equal(0, parameters.GetProperty("index").GetInt32());
+    }
+
+    [Fact]
     public void WorkspaceCommandRejectsMissingAction()
     {
         var request = Program.ParseWorkspaceRequestForTests([], out var error);
@@ -369,6 +447,85 @@ public sealed class CliWorkspaceCommandTests
 
         Assert.Null(request);
         Assert.Equal(PullRequestUsage, error);
+    }
+
+    [Theory]
+    [InlineData()]
+    [InlineData("--message")]
+    public void WorkspaceLogCommandRejectsMissingMessage(params string[] args)
+    {
+        var request = Program.ParseWorkspaceLogRequestForTests(args, out var error);
+
+        Assert.Null(request);
+        Assert.Equal(WorkspaceLogUsage, error);
+    }
+
+    [Theory]
+    [InlineData("--level")]
+    [InlineData("--level", "trace")]
+    public void WorkspaceLogCommandRejectsInvalidLevel(params string[] args)
+    {
+        var request = Program.ParseWorkspaceLogRequestForTests(["ready", .. args], out var error);
+
+        Assert.Null(request);
+        Assert.Equal(WorkspaceLogUsage, error);
+    }
+
+    [Fact]
+    public void WorkspaceLogCommandRejectsBareSourceFlag()
+    {
+        var request = Program.ParseWorkspaceLogRequestForTests(["ready", "--source"], out var error);
+
+        Assert.Null(request);
+        Assert.Equal(WorkspaceLogUsage, error);
+    }
+
+    [Fact]
+    public void WorkspaceLogCommandRejectsAmbiguousWorkspaceTarget()
+    {
+        var request = Program.ParseWorkspaceLogRequestForTests(["ready", "--workspace", "0", "--id", "workspace-1"], out var error);
+
+        Assert.Null(request);
+        Assert.Equal(WorkspaceLogUsage, error);
+    }
+
+    [Fact]
+    public void WorkspaceLogCommandRejectsBareWorkspaceFlag()
+    {
+        var request = Program.ParseWorkspaceLogRequestForTests(["ready", "--workspace"], out var error);
+
+        Assert.Null(request);
+        Assert.Equal(WorkspaceLogUsage, error);
+    }
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("-1")]
+    [InlineData("abc")]
+    public void WorkspaceListLogCommandRejectsInvalidLimit(string limit)
+    {
+        var request = Program.ParseWorkspaceListLogRequestForTests(["--limit", limit], out var error);
+
+        Assert.Null(request);
+        Assert.Equal(WorkspaceListLogUsage, error);
+    }
+
+    [Fact]
+    public void WorkspaceListLogCommandRejectsPositionals()
+    {
+        var request = Program.ParseWorkspaceListLogRequestForTests(["extra"], out var error);
+
+        Assert.Null(request);
+        Assert.Equal(WorkspaceListLogUsage, error);
+    }
+
+    [Fact]
+    public void WorkspaceClearLogCommandRejectsPositionals()
+    {
+        var request = Program.ParseWorkspaceClearLogRequestForTests(["extra"], out var error);
+
+        Assert.Null(request);
+        Assert.Equal(WorkspaceClearLogUsage, error);
     }
 
     [Fact]

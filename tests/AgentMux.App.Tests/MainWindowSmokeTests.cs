@@ -603,10 +603,15 @@ public sealed class MainWindowSmokeTests
             Assert.Equal("Terminal", initialWorkspace.GetProperty("activeSurfaceTitle").GetString());
             Assert.Equal(1, initialWorkspace.GetProperty("paneCount").GetInt32());
             Assert.Equal(0, initialWorkspace.GetProperty("browserPaneCount").GetInt32());
+            var defaultWorkspaceId = initialWorkspace.GetProperty("id").GetString();
+            Assert.False(string.IsNullOrWhiteSpace(defaultWorkspaceId));
             Assert.False(initialWorkspace.TryGetProperty("surfaces", out _));
             Assert.False(initialWorkspace.TryGetProperty("root", out _));
             Assert.True(initialWorkspace.TryGetProperty("latestNotification", out _));
             Assert.Equal(System.Text.Json.JsonValueKind.Null, initialWorkspace.GetProperty("latestNotification").ValueKind);
+            Assert.True(initialWorkspace.TryGetProperty("latestLog", out _));
+            Assert.Equal(System.Text.Json.JsonValueKind.Null, initialWorkspace.GetProperty("latestLog").ValueKind);
+            Assert.Equal(0, initialWorkspace.GetProperty("logCount").GetInt32());
             Assert.True(initialWorkspace.TryGetProperty("gitBranch", out _));
             Assert.Equal(System.Text.Json.JsonValueKind.Null, initialWorkspace.GetProperty("gitBranch").ValueKind);
             Assert.True(initialWorkspace.TryGetProperty("pullRequest", out _));
@@ -646,6 +651,79 @@ public sealed class MainWindowSmokeTests
             Assert.Equal("API", window.ActiveWorkspaceTitleForSmokeTest);
             Assert.Contains("branch: feature/api-sidebar", window.ActiveWorkspaceMetaForSmokeTest, StringComparison.Ordinal);
             Assert.False(window.RenderedTextContainsForSmokeTest("AGENTMUX_WORKSPACE_ONE"));
+
+            var logResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceLog, new
+            {
+                message = " Server\r\nready \u0007",
+                level = "WARN",
+                source = "server"
+            });
+            Assert.True(logResponse.Ok, logResponse.Error);
+            var logResult = System.Text.Json.JsonSerializer.SerializeToElement(logResponse.Result, AgentMuxJson.Options);
+            Assert.True(logResult.GetProperty("logged").GetBoolean());
+            var logEntry = logResult.GetProperty("log");
+            Assert.Equal(createdWorkspaceId, logEntry.GetProperty("workspaceId").GetString());
+            Assert.Equal("API", logEntry.GetProperty("workspaceTitle").GetString());
+            Assert.Equal("warn", logEntry.GetProperty("level").GetString());
+            Assert.Equal("server", logEntry.GetProperty("source").GetString());
+            Assert.Equal("Server ready", logEntry.GetProperty("message").GetString());
+            Assert.Equal("[warn] server: Server ready", logResult.GetProperty("workspace").GetProperty("latestLog").GetString());
+            Assert.Equal(1, logResult.GetProperty("workspace").GetProperty("logCount").GetInt32());
+            Assert.Contains("log: [warn] server: Server ready", window.ActiveWorkspaceMetaForSmokeTest, StringComparison.Ordinal);
+
+            var listLogResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceListLog, new
+            {
+                limit = 5
+            });
+            Assert.True(listLogResponse.Ok, listLogResponse.Error);
+            var listLog = System.Text.Json.JsonSerializer.SerializeToElement(listLogResponse.Result, AgentMuxJson.Options);
+            Assert.True(listLog.GetProperty("listed").GetBoolean());
+            Assert.Equal(createdWorkspaceId, listLog.GetProperty("workspaceId").GetString());
+            Assert.Equal(1, listLog.GetProperty("count").GetInt32());
+            var listedLog = Assert.Single(listLog.GetProperty("logs").EnumerateArray());
+            Assert.Equal("Server ready", listedLog.GetProperty("message").GetString());
+
+            var targetedDefaultLogResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceLog, new
+            {
+                index = 0,
+                message = "Default ready",
+                level = "debug"
+            });
+            Assert.True(targetedDefaultLogResponse.Ok, targetedDefaultLogResponse.Error);
+            var targetedDefaultLog = System.Text.Json.JsonSerializer.SerializeToElement(targetedDefaultLogResponse.Result, AgentMuxJson.Options);
+            Assert.True(targetedDefaultLog.GetProperty("logged").GetBoolean());
+            Assert.Equal(defaultWorkspaceId, targetedDefaultLog.GetProperty("workspace").GetProperty("id").GetString());
+            Assert.Equal("[debug] Default ready", targetedDefaultLog.GetProperty("workspace").GetProperty("latestLog").GetString());
+            Assert.Contains("log: [warn] server: Server ready", window.ActiveWorkspaceMetaForSmokeTest, StringComparison.Ordinal);
+
+            var missingLogMessageResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceLog, new
+            {
+                message = " \r\n\t"
+            });
+            Assert.True(missingLogMessageResponse.Ok, missingLogMessageResponse.Error);
+            var missingLogMessage = System.Text.Json.JsonSerializer.SerializeToElement(missingLogMessageResponse.Result, AgentMuxJson.Options);
+            Assert.False(missingLogMessage.GetProperty("logged").GetBoolean());
+            Assert.Equal("message is required", missingLogMessage.GetProperty("reason").GetString());
+
+            var invalidLogLevelResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceLog, new
+            {
+                message = "ready",
+                level = "trace"
+            });
+            Assert.True(invalidLogLevelResponse.Ok, invalidLogLevelResponse.Error);
+            var invalidLogLevel = System.Text.Json.JsonSerializer.SerializeToElement(invalidLogLevelResponse.Result, AgentMuxJson.Options);
+            Assert.False(invalidLogLevel.GetProperty("logged").GetBoolean());
+            Assert.Equal("level must be one of info, warn, error, debug", invalidLogLevel.GetProperty("reason").GetString());
+
+            var invalidLogSourceResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceLog, new
+            {
+                message = "ready",
+                source = true
+            });
+            Assert.True(invalidLogSourceResponse.Ok, invalidLogSourceResponse.Error);
+            var invalidLogSource = System.Text.Json.JsonSerializer.SerializeToElement(invalidLogSourceResponse.Result, AgentMuxJson.Options);
+            Assert.False(invalidLogSource.GetProperty("logged").GetBoolean());
+            Assert.Equal("source must be a string", invalidLogSource.GetProperty("reason").GetString());
 
             var setPullRequestResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceSetPullRequest, new
             {
@@ -784,6 +862,9 @@ public sealed class MainWindowSmokeTests
             Assert.DoesNotContain("pr:", window.ActiveWorkspaceMetaForSmokeTest, StringComparison.Ordinal);
             Assert.Empty(selectFirst.GetProperty("workspace").GetProperty("ports").EnumerateArray());
             Assert.DoesNotContain("ports:", window.ActiveWorkspaceMetaForSmokeTest, StringComparison.Ordinal);
+            Assert.Equal("[debug] Default ready", selectFirst.GetProperty("workspace").GetProperty("latestLog").GetString());
+            Assert.Contains("log: [debug] Default ready", window.ActiveWorkspaceMetaForSmokeTest, StringComparison.Ordinal);
+            Assert.DoesNotContain("Server ready", window.ActiveWorkspaceMetaForSmokeTest, StringComparison.Ordinal);
             Assert.True(window.RenderedTextContainsForSmokeTest("AGENTMUX_WORKSPACE_ONE"));
             Assert.False(window.RenderedTextContainsForSmokeTest("AGENTMUX_WORKSPACE_TWO"));
 
@@ -844,10 +925,35 @@ public sealed class MainWindowSmokeTests
             Assert.Equal("API", window.ActiveWorkspaceTitleForSmokeTest);
             Assert.Contains("pr: #123 open", window.ActiveWorkspaceMetaForSmokeTest, StringComparison.Ordinal);
             Assert.Contains("ports: 3000, 5173", window.ActiveWorkspaceMetaForSmokeTest, StringComparison.Ordinal);
+            Assert.Contains("log: [warn] server: Server ready", window.ActiveWorkspaceMetaForSmokeTest, StringComparison.Ordinal);
             Assert.Equal(secondPaneId, window.ActivePaneIdForSmokeTest);
             Assert.True(window.RenderedTextContainsForSmokeTest("AGENTMUX_WORKSPACE_TWO"));
             Assert.False(window.RenderedTextContainsForSmokeTest("AGENTMUX_WORKSPACE_ONE"));
             Assert.True(window.CachedTerminalPaneViewCountForSmokeTest >= 2);
+
+            for (var index = 0; index < 205; index++)
+            {
+                var capLogResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceLog, new
+                {
+                    id = createdWorkspaceId,
+                    message = $"cap {index}"
+                });
+                Assert.True(capLogResponse.Ok, capLogResponse.Error);
+            }
+
+            var cappedListResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceListLog, new
+            {
+                id = createdWorkspaceId,
+                limit = 999
+            });
+            Assert.True(cappedListResponse.Ok, cappedListResponse.Error);
+            var cappedList = System.Text.Json.JsonSerializer.SerializeToElement(cappedListResponse.Result, AgentMuxJson.Options);
+            Assert.True(cappedList.GetProperty("listed").GetBoolean());
+            Assert.Equal(200, cappedList.GetProperty("count").GetInt32());
+            var cappedLogs = cappedList.GetProperty("logs").EnumerateArray().ToArray();
+            Assert.Equal(200, cappedLogs.Length);
+            Assert.Equal("cap 204", cappedLogs[0].GetProperty("message").GetString());
+            Assert.DoesNotContain(cappedLogs, log => log.GetProperty("message").GetString() == "cap 0");
 
             var finalListResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceList);
             Assert.True(finalListResponse.Ok, finalListResponse.Error);
@@ -863,9 +969,22 @@ public sealed class MainWindowSmokeTests
             Assert.Equal(123, finalPullRequest.GetProperty("number").GetInt32());
             Assert.Equal("open", finalPullRequest.GetProperty("status").GetString());
             Assert.Equal(new[] { 3000, 5173 }, finalCreatedWorkspace.GetProperty("ports").EnumerateArray().Select(port => port.GetInt32()).ToArray());
+            Assert.Equal("[info] cap 204", finalCreatedWorkspace.GetProperty("latestLog").GetString());
+            Assert.Equal(200, finalCreatedWorkspace.GetProperty("logCount").GetInt32());
             Assert.False(finalCreatedWorkspace.TryGetProperty("pid", out _));
             Assert.False(finalCreatedWorkspace.TryGetProperty("process", out _));
             Assert.False(finalCreatedWorkspace.TryGetProperty("status", out _));
+
+            var clearLogResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceClearLog, new
+            {
+                id = createdWorkspaceId
+            });
+            Assert.True(clearLogResponse.Ok, clearLogResponse.Error);
+            var clearLog = System.Text.Json.JsonSerializer.SerializeToElement(clearLogResponse.Result, AgentMuxJson.Options);
+            Assert.Equal(200, clearLog.GetProperty("cleared").GetInt32());
+            Assert.Equal(System.Text.Json.JsonValueKind.Null, clearLog.GetProperty("workspace").GetProperty("latestLog").ValueKind);
+            Assert.Equal(0, clearLog.GetProperty("workspace").GetProperty("logCount").GetInt32());
+            Assert.DoesNotContain("log:", window.ActiveWorkspaceMetaForSmokeTest, StringComparison.Ordinal);
 
             var clearPullRequestResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceSetPullRequest, new
             {
@@ -1148,6 +1267,16 @@ public sealed class MainWindowSmokeTests
                 Assert.Equal(1, source.ActiveSurfaceIndexForSmokeTest);
                 source.SetActivePaneTextForSmokeTest("AGENTMUX_SURFACE_SESSION_TEXT");
 
+                var transientLog = await source.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceLog, new
+                {
+                    id = createdWorkspaceId,
+                    message = "TRANSIENT_SESSION_LOG",
+                    level = "warn",
+                    source = "restore"
+                });
+                Assert.True(transientLog.Ok, transientLog.Error);
+                Assert.Contains("log: [warn] restore: TRANSIENT_SESSION_LOG", source.ActiveWorkspaceMetaForSmokeTest, StringComparison.Ordinal);
+
                 await source.SaveSessionForSmokeTestAsync();
             }
             finally
@@ -1168,6 +1297,7 @@ public sealed class MainWindowSmokeTests
                 Assert.Equal("Persisted workspace", restored.ActiveWorkspaceTitleForSmokeTest);
                 Assert.Contains("pr: #123 draft", restored.ActiveWorkspaceMetaForSmokeTest, StringComparison.Ordinal);
                 Assert.Contains("ports: 3000, 5173", restored.ActiveWorkspaceMetaForSmokeTest, StringComparison.Ordinal);
+                Assert.DoesNotContain("log:", restored.ActiveWorkspaceMetaForSmokeTest, StringComparison.Ordinal);
                 Assert.Equal(2, restored.SurfaceCountForSmokeTest);
                 Assert.Equal(1, restored.ActiveSurfaceIndexForSmokeTest);
                 Assert.Equal("Persisted surface", restored.ActiveSurfaceTitleForSmokeTest);
@@ -1188,6 +1318,8 @@ public sealed class MainWindowSmokeTests
                 Assert.Equal("draft", restoredPullRequest.GetProperty("status").GetString());
                 Assert.Equal("https://github.com/example/repo/pull/123", restoredPullRequest.GetProperty("url").GetString());
                 Assert.Equal(new[] { 3000, 5173 }, restoredWorkspace.GetProperty("ports").EnumerateArray().Select(port => port.GetInt32()).ToArray());
+                Assert.Equal(System.Text.Json.JsonValueKind.Null, restoredWorkspace.GetProperty("latestLog").ValueKind);
+                Assert.Equal(0, restoredWorkspace.GetProperty("logCount").GetInt32());
 
                 var selectFirstSurface = await restored.HandleRpcForSmokeTestAsync(AgentMuxMethods.SurfaceSelect, new
                 {

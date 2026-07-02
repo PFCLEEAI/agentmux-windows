@@ -54,6 +54,26 @@ public sealed class WorkspaceModelTests
     }
 
     [Fact]
+    public void WorkspaceLatestLogPreviewIsDisplayOnlyAndCapped()
+    {
+        var workspace = new WorkspaceState
+        {
+            LatestLog = " [warn]\r\nserver:\twaiting \u0007" + new string('x', 140)
+        };
+
+        var json = JsonSerializer.Serialize(workspace, AgentMuxJson.Options);
+
+        Assert.NotNull(workspace.LatestLogPreview);
+        Assert.StartsWith("[warn] server: waiting", workspace.LatestLogPreview, StringComparison.Ordinal);
+        Assert.EndsWith("...", workspace.LatestLogPreview, StringComparison.Ordinal);
+        Assert.Equal(120, workspace.LatestLogPreview!.Length);
+        Assert.Equal($"log: {workspace.LatestLogPreview}", workspace.LatestLogLabel);
+        Assert.DoesNotContain("latestLog", json, StringComparison.Ordinal);
+        Assert.DoesNotContain("latestLogPreview", json, StringComparison.Ordinal);
+        Assert.DoesNotContain("latestLogLabel", json, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void WorkspacePortsRoundTripAndLabelIsDisplayOnly()
     {
         var workspace = new WorkspaceState
