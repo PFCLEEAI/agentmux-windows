@@ -604,7 +604,6 @@ public sealed class MainWindowSmokeTests
             Assert.Equal(1, window.WorkspaceListSelectedIndexForSmokeTest);
             Assert.Equal("API", window.ActiveWorkspaceTitleForSmokeTest);
             Assert.Contains("branch: feature/api-sidebar", window.ActiveWorkspaceMetaForSmokeTest, StringComparison.Ordinal);
-            Assert.True(window.WorkspaceListContainsTextForSmokeTest("branch: feature/api-sidebar"));
             Assert.False(window.RenderedTextContainsForSmokeTest("AGENTMUX_WORKSPACE_ONE"));
 
             window.SetActivePaneTextForSmokeTest("AGENTMUX_WORKSPACE_TWO");

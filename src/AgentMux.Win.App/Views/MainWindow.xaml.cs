@@ -2699,12 +2699,6 @@ public partial class MainWindow : Window
 
     internal bool SurfaceTabsContainTextForSmokeTest(string marker) => VisualTreeTextContains(SurfaceTabs, marker);
 
-    internal bool WorkspaceListContainsTextForSmokeTest(string marker)
-    {
-        WorkspaceList.UpdateLayout();
-        return VisualTreeTextContains(WorkspaceList, marker);
-    }
-
     internal bool NotificationCenterContainsTextForSmokeTest(string marker) => VisualTreeTextContains(NotificationPanel, marker);
 
     internal void OpenNotificationCenterForSmokeTest()
