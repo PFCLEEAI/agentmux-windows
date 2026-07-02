@@ -542,7 +542,7 @@ if (-not [string]::IsNullOrWhiteSpace($reportDirectory)) {
   New-Item -ItemType Directory -Force -Path $reportDirectory | Out-Null
 }
 
-$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+$utf8NoBom = [System.Text.UTF8Encoding]::new($false)
 [System.IO.File]::WriteAllText($ReportPath, ($report | ConvertTo-Json -Depth 8), $utf8NoBom)
 Add-InfoMessage "Verification report: $ReportPath"
 
