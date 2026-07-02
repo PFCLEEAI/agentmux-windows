@@ -96,6 +96,14 @@ public static class AgentMuxMethods
     public const string BrowserIsVisible = "browser.is.visible";
     public const string BrowserIsEnabled = "browser.is.enabled";
     public const string BrowserIsChecked = "browser.is.checked";
+    public const string BrowserFindRole = "browser.find.role";
+    public const string BrowserFindText = "browser.find.text";
+    public const string BrowserFindLabel = "browser.find.label";
+    public const string BrowserFindPlaceholder = "browser.find.placeholder";
+    public const string BrowserFindTestId = "browser.find.testid";
+    public const string BrowserFindFirst = "browser.find.first";
+    public const string BrowserFindLast = "browser.find.last";
+    public const string BrowserFindNth = "browser.find.nth";
     public const string BrowserFill = "surface.fill_selector";
     public const string BrowserType = "surface.browser_type_text";
     public const string BrowserPress = "surface.browser_press_key";

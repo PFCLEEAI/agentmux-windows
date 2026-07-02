@@ -436,6 +436,170 @@ public sealed class CliBrowserCommandTests
     }
 
     [Fact]
+    public void BrowserFindParsesRoleNameExactAndFrame()
+    {
+        var request = Program.ParseBrowserRequestForTests([
+            "find",
+            "role",
+            "button",
+            "--name",
+            "Submit",
+            "--exact",
+            "--frame",
+            "agentmux-child-frame"
+        ], out var error);
+
+        Assert.Equal("", error);
+        Assert.NotNull(request);
+        Assert.Equal(AgentMuxMethods.BrowserFindRole, request.Method);
+        var parameters = JsonSerializer.SerializeToElement(request.Parameters, AgentMuxJson.Options);
+        Assert.Equal("button", parameters.GetProperty("role").GetString());
+        Assert.Equal("Submit", parameters.GetProperty("name").GetString());
+        Assert.True(parameters.GetProperty("exact").GetBoolean());
+        Assert.Equal("agentmux-child-frame", parameters.GetProperty("frame").GetString());
+    }
+
+    [Theory]
+    [InlineData("text", AgentMuxMethods.BrowserFindText, "text")]
+    [InlineData("label", AgentMuxMethods.BrowserFindLabel, "label")]
+    [InlineData("placeholder", AgentMuxMethods.BrowserFindPlaceholder, "placeholder")]
+    public void BrowserFindParsesTextLikeQueries(string kind, string method, string property)
+    {
+        var request = Program.ParseBrowserRequestForTests(["find", kind, "Hello", "World", "--exact"], out var error);
+
+        Assert.Equal("", error);
+        Assert.NotNull(request);
+        Assert.Equal(method, request.Method);
+        var parameters = JsonSerializer.SerializeToElement(request.Parameters, AgentMuxJson.Options);
+        Assert.Equal("Hello World", parameters.GetProperty(property).GetString());
+        Assert.True(parameters.GetProperty("exact").GetBoolean());
+        Assert.Equal(JsonValueKind.Null, parameters.GetProperty("frame").ValueKind);
+    }
+
+    [Fact]
+    public void BrowserFindParsesExactBeforeText()
+    {
+        var request = Program.ParseBrowserRequestForTests(["find", "text", "--exact", "Hello"], out var error);
+
+        Assert.Equal("", error);
+        Assert.NotNull(request);
+        Assert.Equal(AgentMuxMethods.BrowserFindText, request.Method);
+        var parameters = JsonSerializer.SerializeToElement(request.Parameters, AgentMuxJson.Options);
+        Assert.Equal("Hello", parameters.GetProperty("text").GetString());
+        Assert.True(parameters.GetProperty("exact").GetBoolean());
+    }
+
+    [Fact]
+    public void BrowserFindParsesExplicitExactFalseBeforeText()
+    {
+        var request = Program.ParseBrowserRequestForTests(["find", "text", "--exact", "false", "Hello"], out var error);
+
+        Assert.Equal("", error);
+        Assert.NotNull(request);
+        Assert.Equal(AgentMuxMethods.BrowserFindText, request.Method);
+        var parameters = JsonSerializer.SerializeToElement(request.Parameters, AgentMuxJson.Options);
+        Assert.Equal("Hello", parameters.GetProperty("text").GetString());
+        Assert.False(parameters.GetProperty("exact").GetBoolean());
+    }
+
+    [Fact]
+    public void BrowserFindParsesTestId()
+    {
+        var request = Program.ParseBrowserRequestForTests(["find", "testid", "login-submit", "--frame", "agentmux-child-frame"], out var error);
+
+        Assert.Equal("", error);
+        Assert.NotNull(request);
+        Assert.Equal(AgentMuxMethods.BrowserFindTestId, request.Method);
+        var parameters = JsonSerializer.SerializeToElement(request.Parameters, AgentMuxJson.Options);
+        Assert.Equal("login-submit", parameters.GetProperty("testId").GetString());
+        Assert.Equal("agentmux-child-frame", parameters.GetProperty("frame").GetString());
+    }
+
+    [Theory]
+    [InlineData("first", AgentMuxMethods.BrowserFindFirst)]
+    [InlineData("last", AgentMuxMethods.BrowserFindLast)]
+    public void BrowserFindParsesSelectorKinds(string kind, string method)
+    {
+        var request = Program.ParseBrowserRequestForTests(["find", kind, ".item", "button"], out var error);
+
+        Assert.Equal("", error);
+        Assert.NotNull(request);
+        Assert.Equal(method, request.Method);
+        var parameters = JsonSerializer.SerializeToElement(request.Parameters, AgentMuxJson.Options);
+        Assert.Equal(".item button", parameters.GetProperty("selector").GetString());
+    }
+
+    [Fact]
+    public void BrowserFindParsesNthSelectorAndZeroBasedIndex()
+    {
+        var request = Program.ParseBrowserRequestForTests(["find", "nth", ".item", "button", "2"], out var error);
+
+        Assert.Equal("", error);
+        Assert.NotNull(request);
+        Assert.Equal(AgentMuxMethods.BrowserFindNth, request.Method);
+        var parameters = JsonSerializer.SerializeToElement(request.Parameters, AgentMuxJson.Options);
+        Assert.Equal(".item button", parameters.GetProperty("selector").GetString());
+        Assert.Equal(2, parameters.GetProperty("index").GetInt32());
+    }
+
+    [Fact]
+    public void BrowserFindParsesNthNamedSelectorAndIndex()
+    {
+        var request = Program.ParseBrowserRequestForTests(["find", "nth", "--selector", ".item", "--index", "0"], out var error);
+
+        Assert.Equal("", error);
+        Assert.NotNull(request);
+        Assert.Equal(AgentMuxMethods.BrowserFindNth, request.Method);
+        var parameters = JsonSerializer.SerializeToElement(request.Parameters, AgentMuxJson.Options);
+        Assert.Equal(".item", parameters.GetProperty("selector").GetString());
+        Assert.Equal(0, parameters.GetProperty("index").GetInt32());
+    }
+
+    [Theory]
+    [InlineData("find")]
+    [InlineData("find nope")]
+    [InlineData("find role")]
+    [InlineData("find role --role")]
+    [InlineData("find text")]
+    [InlineData("find label")]
+    [InlineData("find placeholder")]
+    [InlineData("find testid")]
+    [InlineData("find first")]
+    [InlineData("find last")]
+    [InlineData("find nth .item")]
+    [InlineData("find nth .item -1")]
+    [InlineData("find nth .item nope")]
+    [InlineData("find text Hello --frame")]
+    public void BrowserFindRejectsInvalidShapes(string commandLine)
+    {
+        var args = commandLine.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        var request = Program.ParseBrowserRequestForTests(args, out var error);
+
+        Assert.Null(request);
+        Assert.Contains("Usage: agentmux browser find", error, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("role", "--surface")]
+    [InlineData("text", "--snapshot-after")]
+    [InlineData("label", "--surface")]
+    [InlineData("placeholder", "--snapshot-after")]
+    [InlineData("testid", "--exact")]
+    [InlineData("first", "--snapshot-after")]
+    [InlineData("last", "--surface")]
+    [InlineData("nth", "--surface")]
+    public void BrowserFindRejectsUnsupportedNamedFlags(string kind, string flag)
+    {
+        var args = kind == "nth"
+            ? new[] { "find", kind, ".item", "0", flag, "true" }
+            : new[] { "find", kind, "target", flag, "true" };
+        var request = Program.ParseBrowserRequestForTests(args, out var error);
+
+        Assert.Null(request);
+        Assert.Contains("Usage: agentmux browser find", error, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void BrowserFrameOptionRequiresValue()
     {
         var request = Program.ParseBrowserRequestForTests(["click", "#submit", "--frame"], out var error);

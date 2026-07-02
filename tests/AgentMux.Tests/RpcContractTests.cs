@@ -110,6 +110,14 @@ public sealed class RpcContractTests
         Assert.Equal("browser.is.visible", AgentMuxMethods.BrowserIsVisible);
         Assert.Equal("browser.is.enabled", AgentMuxMethods.BrowserIsEnabled);
         Assert.Equal("browser.is.checked", AgentMuxMethods.BrowserIsChecked);
+        Assert.Equal("browser.find.role", AgentMuxMethods.BrowserFindRole);
+        Assert.Equal("browser.find.text", AgentMuxMethods.BrowserFindText);
+        Assert.Equal("browser.find.label", AgentMuxMethods.BrowserFindLabel);
+        Assert.Equal("browser.find.placeholder", AgentMuxMethods.BrowserFindPlaceholder);
+        Assert.Equal("browser.find.testid", AgentMuxMethods.BrowserFindTestId);
+        Assert.Equal("browser.find.first", AgentMuxMethods.BrowserFindFirst);
+        Assert.Equal("browser.find.last", AgentMuxMethods.BrowserFindLast);
+        Assert.Equal("browser.find.nth", AgentMuxMethods.BrowserFindNth);
         Assert.Equal("surface.fill_selector", AgentMuxMethods.BrowserFill);
         Assert.Equal("surface.browser_type_text", AgentMuxMethods.BrowserType);
         Assert.Equal("surface.browser_press_key", AgentMuxMethods.BrowserPress);

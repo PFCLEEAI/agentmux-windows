@@ -567,6 +567,14 @@ public partial class MainWindow : Window
             AgentMuxMethods.BrowserIsVisible => AgentMuxResponse.Success(request.Id, await HandleBrowserIsAsync(request.Params, "visible").ConfigureAwait(true)),
             AgentMuxMethods.BrowserIsEnabled => AgentMuxResponse.Success(request.Id, await HandleBrowserIsAsync(request.Params, "enabled").ConfigureAwait(true)),
             AgentMuxMethods.BrowserIsChecked => AgentMuxResponse.Success(request.Id, await HandleBrowserIsAsync(request.Params, "checked").ConfigureAwait(true)),
+            AgentMuxMethods.BrowserFindRole => AgentMuxResponse.Success(request.Id, await HandleBrowserFindAsync(request.Params, "role").ConfigureAwait(true)),
+            AgentMuxMethods.BrowserFindText => AgentMuxResponse.Success(request.Id, await HandleBrowserFindAsync(request.Params, "text").ConfigureAwait(true)),
+            AgentMuxMethods.BrowserFindLabel => AgentMuxResponse.Success(request.Id, await HandleBrowserFindAsync(request.Params, "label").ConfigureAwait(true)),
+            AgentMuxMethods.BrowserFindPlaceholder => AgentMuxResponse.Success(request.Id, await HandleBrowserFindAsync(request.Params, "placeholder").ConfigureAwait(true)),
+            AgentMuxMethods.BrowserFindTestId => AgentMuxResponse.Success(request.Id, await HandleBrowserFindAsync(request.Params, "testid").ConfigureAwait(true)),
+            AgentMuxMethods.BrowserFindFirst => AgentMuxResponse.Success(request.Id, await HandleBrowserFindAsync(request.Params, "first").ConfigureAwait(true)),
+            AgentMuxMethods.BrowserFindLast => AgentMuxResponse.Success(request.Id, await HandleBrowserFindAsync(request.Params, "last").ConfigureAwait(true)),
+            AgentMuxMethods.BrowserFindNth => AgentMuxResponse.Success(request.Id, await HandleBrowserFindAsync(request.Params, "nth").ConfigureAwait(true)),
             AgentMuxMethods.BrowserFill => AgentMuxResponse.Success(request.Id, await HandleBrowserFillAsync(request.Params).ConfigureAwait(true)),
             AgentMuxMethods.BrowserType => AgentMuxResponse.Success(request.Id, await HandleBrowserTypeAsync(request.Params).ConfigureAwait(true)),
             AgentMuxMethods.BrowserPress => AgentMuxResponse.Success(request.Id, await HandleBrowserPressAsync(request.Params).ConfigureAwait(true)),
@@ -1541,6 +1549,50 @@ public partial class MainWindow : Window
         }
 
         return await RunBrowserScriptAsync(view => view.CheckElementStateAsync(state, parsed.Selector, parsed.Frame)).ConfigureAwait(true);
+    }
+
+    private async Task<object> HandleBrowserFindAsync(JsonElement? parameters, string kind)
+    {
+        var parsed = Deserialize<BrowserFindParams>(parameters);
+        if (parsed is null)
+        {
+            return new { ok = false, kind, reason = "parameters are required" };
+        }
+
+        var value = kind switch
+        {
+            "role" => parsed.Role,
+            "text" => parsed.Text,
+            "label" => parsed.Label,
+            "placeholder" => parsed.Placeholder,
+            "testid" => parsed.TestId,
+            _ => null
+        };
+
+        if (kind is "role" or "text" or "label" or "placeholder" or "testid"
+            && string.IsNullOrWhiteSpace(value))
+        {
+            return new { ok = false, kind, reason = $"{kind} is required" };
+        }
+
+        if (kind is "first" or "last" or "nth" && string.IsNullOrWhiteSpace(parsed.Selector))
+        {
+            return new { ok = false, kind, reason = "selector is required" };
+        }
+
+        if (kind is "nth" && parsed.Index is null or < 0)
+        {
+            return new { ok = false, kind, reason = "index must be a non-negative integer" };
+        }
+
+        return await RunBrowserScriptAsync(view => view.FindElementsAsync(
+            kind,
+            value,
+            parsed.Selector,
+            parsed.Name,
+            parsed.Index,
+            parsed.Exact,
+            parsed.Frame)).ConfigureAwait(true);
     }
 
     private async Task<object> HandleBrowserFillAsync(JsonElement? parameters)
@@ -3030,6 +3082,14 @@ public partial class MainWindow : Window
             or AgentMuxMethods.BrowserIsVisible
             or AgentMuxMethods.BrowserIsEnabled
             or AgentMuxMethods.BrowserIsChecked
+            or AgentMuxMethods.BrowserFindRole
+            or AgentMuxMethods.BrowserFindText
+            or AgentMuxMethods.BrowserFindLabel
+            or AgentMuxMethods.BrowserFindPlaceholder
+            or AgentMuxMethods.BrowserFindTestId
+            or AgentMuxMethods.BrowserFindFirst
+            or AgentMuxMethods.BrowserFindLast
+            or AgentMuxMethods.BrowserFindNth
             or AgentMuxMethods.BrowserFill
             or AgentMuxMethods.BrowserType
             or AgentMuxMethods.BrowserPress
@@ -4345,6 +4405,20 @@ public partial class MainWindow : Window
     private sealed class BrowserSelectorParams
     {
         public string? Selector { get; set; }
+        public string? Frame { get; set; }
+    }
+
+    private sealed class BrowserFindParams
+    {
+        public string? Role { get; set; }
+        public string? Name { get; set; }
+        public string? Text { get; set; }
+        public string? Label { get; set; }
+        public string? Placeholder { get; set; }
+        public string? TestId { get; set; }
+        public string? Selector { get; set; }
+        public int? Index { get; set; }
+        public bool Exact { get; set; }
         public string? Frame { get; set; }
     }
 

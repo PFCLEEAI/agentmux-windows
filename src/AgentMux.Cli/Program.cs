@@ -317,6 +317,11 @@ public static class Program
             return ParseBrowserIsRequest(args[1..], out error);
         }
 
+        if (args[0].Equals("find", StringComparison.OrdinalIgnoreCase))
+        {
+            return ParseBrowserFindRequest(args[1..], out error);
+        }
+
         if (args[0].Equals("eval", StringComparison.OrdinalIgnoreCase))
         {
             var named = ParseNamed(args[1..]);
@@ -870,6 +875,190 @@ public static class Program
             _ => throw new InvalidOperationException("Unsupported browser is state.")
         };
     }
+
+    private static CliRequest? ParseBrowserFindRequest(string[] args, out string error)
+    {
+        const string usage = "Usage: agentmux browser find <role|text|label|placeholder|testid|first|last|nth> ...";
+        if (args.Length == 0)
+        {
+            error = usage;
+            return null;
+        }
+
+        var kind = args[0].Trim().ToLowerInvariant();
+        if (kind is not ("role" or "text" or "label" or "placeholder" or "testid" or "first" or "last" or "nth"))
+        {
+            error = usage;
+            return null;
+        }
+
+        var named = ParseNamedWithBooleanFlags(args[1..], ["exact"]);
+        if (!TryReadOptionalFrame(named, BrowserFindUsage(kind), out var frame, out error))
+        {
+            return null;
+        }
+
+        if (kind is "role")
+        {
+            var role = NamedOrFirst(named, "role");
+            named.TryGetValue("name", out var name);
+            var usageForKind = BrowserFindUsage(kind);
+            if (!NamedKeysAreAllowed(named, ["role", "name", "exact", "frame"])
+                || string.IsNullOrWhiteSpace(role)
+                || NamedValueIsBareFlag(named, "role")
+                || NamedValueIsBareFlag(named, "name")
+                || !TryReadOptionalBoolFlag(named, "exact", usageForKind, out var exact, out error))
+            {
+                error = usageForKind;
+                return null;
+            }
+
+            error = "";
+            return new CliRequest(AgentMuxMethods.BrowserFindRole, new { role, name, exact, frame });
+        }
+
+        if (kind is "text" or "label" or "placeholder")
+        {
+            var value = NamedOrJoined(named, kind);
+            var usageForKind = BrowserFindUsage(kind);
+            if (!NamedKeysAreAllowed(named, [kind, "exact", "frame"])
+                || string.IsNullOrWhiteSpace(value)
+                || NamedValueIsBareFlag(named, kind)
+                || !TryReadOptionalBoolFlag(named, "exact", usageForKind, out var exact, out error))
+            {
+                error = usageForKind;
+                return null;
+            }
+
+            error = "";
+            return kind switch
+            {
+                "text" => new CliRequest(AgentMuxMethods.BrowserFindText, new { text = value, exact, frame }),
+                "label" => new CliRequest(AgentMuxMethods.BrowserFindLabel, new { label = value, exact, frame }),
+                "placeholder" => new CliRequest(AgentMuxMethods.BrowserFindPlaceholder, new { placeholder = value, exact, frame }),
+                _ => throw new InvalidOperationException("Unsupported browser find text kind.")
+            };
+        }
+
+        if (kind is "testid")
+        {
+            var testId = NamedOrFirst(named, "testid");
+            var usageForKind = BrowserFindUsage(kind);
+            if (!NamedKeysAreAllowed(named, ["testid", "frame"])
+                || string.IsNullOrWhiteSpace(testId)
+                || NamedValueIsBareFlag(named, "testid"))
+            {
+                error = usageForKind;
+                return null;
+            }
+
+            error = "";
+            return new CliRequest(AgentMuxMethods.BrowserFindTestId, new { testId, frame });
+        }
+
+        if (kind is "first" or "last")
+        {
+            var selector = NamedOrJoined(named, "selector");
+            var usageForKind = BrowserFindUsage(kind);
+            if (!NamedKeysAreAllowed(named, ["selector", "frame"])
+                || string.IsNullOrWhiteSpace(selector)
+                || NamedValueIsBareFlag(named, "selector"))
+            {
+                error = usageForKind;
+                return null;
+            }
+
+            error = "";
+            var method = kind is "first" ? AgentMuxMethods.BrowserFindFirst : AgentMuxMethods.BrowserFindLast;
+            return new CliRequest(method, new { selector, frame });
+        }
+
+        return ParseBrowserFindNth(named, frame, out error);
+    }
+
+    private static CliRequest? ParseBrowserFindNth(Dictionary<string, string> named, string? frame, out string error)
+    {
+        const string usage = "Usage: agentmux browser find nth <selector> <index> [--frame <name-or-id>]";
+        if (!NamedKeysAreAllowed(named, ["selector", "index", "frame"])
+            || NamedValueIsBareFlag(named, "selector")
+            || NamedValueIsBareFlag(named, "index"))
+        {
+            error = usage;
+            return null;
+        }
+
+        var positional = ReadPositional(named);
+        string? selector;
+        string? indexValue;
+        if (named.TryGetValue("selector", out var namedSelector))
+        {
+            selector = namedSelector;
+            if (named.TryGetValue("index", out var namedIndex))
+            {
+                if (positional.Length != 0)
+                {
+                    error = usage;
+                    return null;
+                }
+
+                indexValue = namedIndex;
+            }
+            else
+            {
+                if (positional.Length != 1)
+                {
+                    error = usage;
+                    return null;
+                }
+
+                indexValue = positional[0];
+            }
+        }
+        else if (named.TryGetValue("index", out var namedIndex))
+        {
+            if (positional.Length == 0)
+            {
+                error = usage;
+                return null;
+            }
+
+            selector = string.Join(' ', positional);
+            indexValue = namedIndex;
+        }
+        else
+        {
+            if (positional.Length < 2)
+            {
+                error = usage;
+                return null;
+            }
+
+            selector = string.Join(' ', positional[..^1]);
+            indexValue = positional[^1];
+        }
+
+        if (string.IsNullOrWhiteSpace(selector) || !TryParseNonNegativeInt(indexValue, out var index))
+        {
+            error = usage;
+            return null;
+        }
+
+        error = "";
+        return new CliRequest(AgentMuxMethods.BrowserFindNth, new { selector, index, frame });
+    }
+
+    private static string BrowserFindUsage(string kind) => kind switch
+    {
+        "role" => "Usage: agentmux browser find role <role> [--name <text>] [--exact] [--frame <name-or-id>]",
+        "text" => "Usage: agentmux browser find text <text> [--exact] [--frame <name-or-id>]",
+        "label" => "Usage: agentmux browser find label <text> [--exact] [--frame <name-or-id>]",
+        "placeholder" => "Usage: agentmux browser find placeholder <text> [--exact] [--frame <name-or-id>]",
+        "testid" => "Usage: agentmux browser find testid <value> [--frame <name-or-id>]",
+        "first" => "Usage: agentmux browser find first <selector> [--frame <name-or-id>]",
+        "last" => "Usage: agentmux browser find last <selector> [--frame <name-or-id>]",
+        "nth" => "Usage: agentmux browser find nth <selector> <index> [--frame <name-or-id>]",
+        _ => "Usage: agentmux browser find <role|text|label|placeholder|testid|first|last|nth> ..."
+    };
 
     private static CliRequest? ParseBrowserRouteRequest(string[] args, out string error)
     {
@@ -1753,6 +1942,38 @@ public static class Program
         return true;
     }
 
+    private static bool TryReadOptionalBoolFlag(
+        Dictionary<string, string> named,
+        string key,
+        string usage,
+        out bool enabled,
+        out string error)
+    {
+        enabled = false;
+        error = "";
+        if (!named.TryGetValue(key, out var value))
+        {
+            return true;
+        }
+
+        if (string.Equals(value, "true", StringComparison.OrdinalIgnoreCase))
+        {
+            enabled = true;
+            return true;
+        }
+
+        if (string.Equals(value, "false", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        error = usage;
+        return false;
+    }
+
+    private static bool NamedValueIsBareFlag(Dictionary<string, string> named, string key) =>
+        named.TryGetValue(key, out var value) && string.Equals(value, "true", StringComparison.OrdinalIgnoreCase);
+
     private static object ParseNotify(string[] args)
     {
         var named = ParseNamed(args);
@@ -2022,6 +2243,48 @@ public static class Program
         return result;
     }
 
+    private static Dictionary<string, string> ParseNamedWithBooleanFlags(string[] args, string[] booleanKeys)
+    {
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var positional = 0;
+
+        for (var i = 0; i < args.Length; i++)
+        {
+            var arg = args[i];
+            if (arg.StartsWith("--", StringComparison.Ordinal))
+            {
+                var key = arg[2..];
+                if (booleanKeys.Contains(key, StringComparer.OrdinalIgnoreCase))
+                {
+                    if (i + 1 < args.Length
+                        && (args[i + 1].Equals("true", StringComparison.OrdinalIgnoreCase)
+                            || args[i + 1].Equals("false", StringComparison.OrdinalIgnoreCase)))
+                    {
+                        result[key] = args[++i];
+                    }
+                    else
+                    {
+                        result[key] = "true";
+                    }
+                }
+                else if (i + 1 < args.Length && !args[i + 1].StartsWith("-", StringComparison.Ordinal))
+                {
+                    result[key] = args[++i];
+                }
+                else
+                {
+                    result[key] = "true";
+                }
+            }
+            else
+            {
+                result[$"_arg{positional++}"] = arg;
+            }
+        }
+
+        return result;
+    }
+
     private static string[] ReadPositional(Dictionary<string, string> named)
     {
         var values = new List<string>();
@@ -2131,6 +2394,12 @@ public static class Program
           agentmux browser is visible ".modal"
           agentmux browser is enabled "button.submit"
           agentmux browser is checked "input[type='checkbox']"
+          agentmux browser find role button --name "Submit" --exact
+          agentmux browser find text "Welcome"
+          agentmux browser find label "Email"
+          agentmux browser find placeholder "Search"
+          agentmux browser find testid login-submit
+          agentmux browser find nth ".item" 0
           agentmux browser fill "#prompt" "write tests"
           agentmux browser type "#prompt" "write tests"
           agentmux browser press Enter --selector "#prompt" --frame agentmux-child-frame

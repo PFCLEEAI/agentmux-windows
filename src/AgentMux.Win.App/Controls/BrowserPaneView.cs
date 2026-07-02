@@ -19,6 +19,8 @@ internal sealed class BrowserPaneView : Grid, IDisposable
     private const int MaxResponseBodyChars = 1_000_000;
     private const int DefaultBrowserTextChars = 10_000;
     private const int MaxBrowserTextChars = 100_000;
+    private const int MaxBrowserFindMatches = 20;
+    private const int MaxBrowserFindTextChars = 500;
     private const int MaxConsoleEventCount = 200;
     private const int MaxConsoleMessageChars = 4_096;
     private const int DefaultWaitForSelectorTimeoutMs = 5_000;
@@ -667,6 +669,301 @@ internal sealed class BrowserPaneView : Grid, IDisposable
                     checkable,
                     matches
                   };
+                })()
+                """).ConfigureAwait(true);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or System.Runtime.InteropServices.COMException)
+        {
+            return """{"ok":false,"reason":"document unavailable"}""";
+        }
+    }
+
+    public async Task<string> FindElementsAsync(
+        string kind,
+        string? value = null,
+        string? selector = null,
+        string? name = null,
+        int? index = null,
+        bool exact = false,
+        string? frame = null)
+    {
+        var normalizedKind = string.IsNullOrWhiteSpace(kind) ? "" : kind.Trim().ToLowerInvariant();
+        if (normalizedKind is not ("role" or "text" or "label" or "placeholder" or "testid" or "first" or "last" or "nth"))
+        {
+            return JsonSerializer.Serialize(new { ok = false, kind = normalizedKind, reason = "unsupported find kind" }, AgentMuxJson.Options);
+        }
+
+        var normalizedValue = string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+        var normalizedSelector = NormalizeSelector(selector);
+        var normalizedName = string.IsNullOrWhiteSpace(name) ? null : name.Trim();
+        var normalizedFrame = NormalizeFrame(frame);
+
+        if (normalizedKind is "role" or "text" or "label" or "placeholder" or "testid"
+            && string.IsNullOrWhiteSpace(normalizedValue))
+        {
+            return JsonSerializer.Serialize(new { ok = false, kind = normalizedKind, reason = $"{normalizedKind} is required" }, AgentMuxJson.Options);
+        }
+
+        if (normalizedKind is "first" or "last" or "nth" && string.IsNullOrWhiteSpace(normalizedSelector))
+        {
+            return JsonSerializer.Serialize(new { ok = false, kind = normalizedKind, reason = "selector is required" }, AgentMuxJson.Options);
+        }
+
+        if (normalizedKind is "nth" && index is null or < 0)
+        {
+            return JsonSerializer.Serialize(new { ok = false, kind = normalizedKind, reason = "index must be a non-negative integer" }, AgentMuxJson.Options);
+        }
+
+        await EnsureReadyAsync().ConfigureAwait(true);
+        try
+        {
+            return await _webView.CoreWebView2!.ExecuteScriptAsync($$"""
+                (() => {
+                  const kind = {{JsonSerializer.Serialize(normalizedKind)}};
+                  const value = {{JsonSerializer.Serialize(normalizedValue)}};
+                  const selector = {{JsonSerializer.Serialize(normalizedSelector)}};
+                  const name = {{JsonSerializer.Serialize(normalizedName)}};
+                  const index = {{JsonSerializer.Serialize(index)}};
+                  const exact = {{JsonSerializer.Serialize(exact)}};
+                  const maxMatches = {{MaxBrowserFindMatches}};
+                  const maxTextChars = {{MaxBrowserFindTextChars}};
+                  {{FrameScopeScript(normalizedFrame, scrollFrameIntoView: false)}}
+                  const scope = resolveAutomationScope();
+
+                  const normalize = input => String(input ?? "").replace(/\s+/g, " ").trim();
+                  const cap = input => {
+                    const raw = normalize(input);
+                    return raw.length > maxTextChars ? raw.slice(0, maxTextChars) : raw;
+                  };
+                  const textMatches = (candidate, query) => {
+                    const normalizedQuery = normalize(query);
+                    if (!normalizedQuery) {
+                      return false;
+                    }
+
+                    const normalizedCandidate = normalize(candidate);
+                    return exact
+                      ? normalizedCandidate === normalizedQuery
+                      : normalizedCandidate.toLocaleLowerCase().includes(normalizedQuery.toLocaleLowerCase());
+                  };
+                  const visibleText = element => typeof element?.innerText === "string"
+                    ? element.innerText
+                    : (element?.textContent || "");
+                  const cssIdentifier = input => {
+                    const raw = String(input ?? "");
+                    if (scope.window.CSS && typeof scope.window.CSS.escape === "function") {
+                      return scope.window.CSS.escape(raw);
+                    }
+
+                    return raw.replace(/[^a-zA-Z0-9_-]/g, "\\$&");
+                  };
+                  const cssString = input => String(input ?? "")
+                    .replace(/\\/g, "\\\\")
+                    .replace(/"/g, "\\\"")
+                    .replace(/\r/g, "\\D ")
+                    .replace(/\n/g, "\\A ");
+                  const idText = (documentRef, id) => {
+                    const element = documentRef.getElementById(id);
+                    return element ? visibleText(element) : "";
+                  };
+                  const labelText = element => {
+                    const labels = element?.labels ? Array.from(element.labels) : [];
+                    if (labels.length > 0) {
+                      return normalize(labels.map(label => visibleText(label)).join(" "));
+                    }
+
+                    const id = element?.getAttribute?.("id");
+                    if (id) {
+                      const label = element.ownerDocument.querySelector(`label[for="${cssString(id)}"]`);
+                      if (label) {
+                        return normalize(visibleText(label));
+                      }
+                    }
+
+                    const wrappingLabel = element?.closest?.("label");
+                    return wrappingLabel ? normalize(visibleText(wrappingLabel)) : "";
+                  };
+                  const isLabelable = element =>
+                    !!element?.matches?.("button, input, meter, output, progress, select, textarea");
+                  const accessibleName = element => {
+                    const ariaLabel = element.getAttribute?.("aria-label");
+                    if (ariaLabel) {
+                      return normalize(ariaLabel);
+                    }
+
+                    const labelledBy = element.getAttribute?.("aria-labelledby");
+                    if (labelledBy) {
+                      const labelledText = labelledBy
+                        .split(/\s+/)
+                        .map(id => idText(element.ownerDocument, id))
+                        .join(" ");
+                      if (normalize(labelledText)) {
+                        return normalize(labelledText);
+                      }
+                    }
+
+                    const label = labelText(element);
+                    if (label) {
+                      return label;
+                    }
+
+                    const alt = element.getAttribute?.("alt");
+                    if (alt) {
+                      return normalize(alt);
+                    }
+
+                    const title = element.getAttribute?.("title");
+                    if (title) {
+                      return normalize(title);
+                    }
+
+                    const placeholder = element.getAttribute?.("placeholder");
+                    if (placeholder) {
+                      return normalize(placeholder);
+                    }
+
+                    const tag = String(element.tagName || "").toLowerCase();
+                    const type = String(element.getAttribute?.("type") || "").toLowerCase();
+                    if (tag === "input" && ["button", "submit", "reset"].includes(type) && "value" in element) {
+                      return normalize(element.value);
+                    }
+
+                    return normalize(visibleText(element));
+                  };
+                  const roleOf = element => {
+                    const explicitRole = element.getAttribute?.("role");
+                    if (explicitRole) {
+                      return explicitRole.split(/\s+/)[0].toLowerCase();
+                    }
+
+                    const tag = String(element.tagName || "").toLowerCase();
+                    const type = String(element.getAttribute?.("type") || "").toLowerCase();
+                    if (tag === "button") return "button";
+                    if (tag === "a" && element.hasAttribute("href")) return "link";
+                    if (tag === "textarea") return "textbox";
+                    if (tag === "select") return "combobox";
+                    if (tag === "img") return "img";
+                    if (/^h[1-6]$/.test(tag)) return "heading";
+                    if (tag === "nav") return "navigation";
+                    if (tag === "main") return "main";
+                    if (tag === "header") return "banner";
+                    if (tag === "footer") return "contentinfo";
+                    if (tag === "form") return "form";
+                    if (tag === "input") {
+                      if (type === "checkbox") return "checkbox";
+                      if (type === "radio") return "radio";
+                      if (type === "range") return "slider";
+                      if (type === "number") return "spinbutton";
+                      if (["button", "submit", "reset"].includes(type)) return "button";
+                      return "textbox";
+                    }
+
+                    return "";
+                  };
+                  const bestSelector = element => {
+                    const id = element.getAttribute?.("id");
+                    if (id) {
+                      return `#${cssIdentifier(id)}`;
+                    }
+
+                    const testId = element.getAttribute?.("data-testid");
+                    if (testId) {
+                      return `[data-testid="${cssString(testId)}"]`;
+                    }
+
+                    const nameAttr = element.getAttribute?.("name");
+                    if (nameAttr) {
+                      return `${String(element.tagName || "element").toLowerCase()}[name="${cssString(nameAttr)}"]`;
+                    }
+
+                    return String(element.tagName || "element").toLowerCase();
+                  };
+                  const describe = element => {
+                    const placeholder = element.getAttribute?.("placeholder") || null;
+                    const testId = element.getAttribute?.("data-testid") || null;
+                    return {
+                      tagName: element.tagName || null,
+                      id: element.getAttribute?.("id") || null,
+                      role: roleOf(element) || null,
+                      name: cap(accessibleName(element)),
+                      text: cap(visibleText(element)),
+                      label: cap(labelText(element)),
+                      placeholder: placeholder ? cap(placeholder) : null,
+                      testId,
+                      selector: bestSelector(element)
+                    };
+                  };
+                  const finish = (selected, count, extra = {}) => {
+                    const matches = selected.slice(0, maxMatches).map(describe);
+                    return {
+                      ok: true,
+                      kind,
+                      frame: scope.frame,
+                      count,
+                      returned: matches.length,
+                      maxMatches,
+                      match: matches[0] || null,
+                      matches,
+                      ...extra
+                    };
+                  };
+
+                  if (!scope.ok) {
+                    return { ...scope, kind };
+                  }
+
+                  const allElements = () => Array.from(scope.document.querySelectorAll("*"));
+                  if (kind === "role") {
+                    const normalizedRole = normalize(value).toLocaleLowerCase();
+                    const selected = allElements().filter(element =>
+                      roleOf(element) === normalizedRole
+                      && (!name || textMatches(accessibleName(element), name)));
+                    return finish(selected, selected.length, { role: value, name, exact });
+                  }
+
+                  if (kind === "text") {
+                    const candidates = allElements().filter(element => textMatches(visibleText(element), value));
+                    const smallest = candidates.filter(element =>
+                      !Array.from(element.children || []).some(child => textMatches(visibleText(child), value)));
+                    const selected = smallest.length > 0 ? smallest : candidates;
+                    return finish(selected, selected.length, { text: value, exact });
+                  }
+
+                  if (kind === "label") {
+                    const selected = allElements().filter(element => isLabelable(element) && textMatches(labelText(element), value));
+                    return finish(selected, selected.length, { label: value, exact });
+                  }
+
+                  if (kind === "placeholder") {
+                    const selected = allElements().filter(element => textMatches(element.getAttribute?.("placeholder"), value));
+                    return finish(selected, selected.length, { placeholder: value, exact });
+                  }
+
+                  if (kind === "testid") {
+                    const selected = allElements().filter(element => element.getAttribute?.("data-testid") === value);
+                    return finish(selected, selected.length, { testId: value });
+                  }
+
+                  let candidates;
+                  try {
+                    candidates = Array.from(scope.document.querySelectorAll(selector));
+                  } catch {
+                    return { ok: false, kind, reason: "invalid selector", selector, frame: scope.frame };
+                  }
+
+                  if (kind === "first") {
+                    return finish(candidates.length > 0 ? [candidates[0]] : [], candidates.length, { selector });
+                  }
+
+                  if (kind === "last") {
+                    return finish(candidates.length > 0 ? [candidates[candidates.length - 1]] : [], candidates.length, { selector });
+                  }
+
+                  if (kind === "nth") {
+                    return finish(index >= 0 && index < candidates.length ? [candidates[index]] : [], candidates.length, { selector, index });
+                  }
+
+                  return { ok: false, kind, reason: "unsupported find kind", frame: scope.frame };
                 })()
                 """).ConfigureAwait(true);
         }
