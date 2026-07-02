@@ -518,6 +518,8 @@ $missingEvidenceFiles = @($script:CheckedFiles | Where-Object { $_.category -eq 
 $packageIntegrityVerified = [bool]($script:PackageIntegrityChecked -and -not $script:PackageIntegrityFailed)
 $helperEvidencePacketVerified = [bool]($missingEvidenceFiles.Count -eq 0)
 
+Add-InfoMessage "Preparing verification report."
+
 $report = [ordered]@{
   verificationVersion = 1
   checkedAtUtc = (Get-Date).ToUniversalTime().ToString("o")
@@ -542,8 +544,7 @@ if (-not [string]::IsNullOrWhiteSpace($reportDirectory)) {
   New-Item -ItemType Directory -Force -Path $reportDirectory | Out-Null
 }
 
-$utf8NoBom = [System.Text.UTF8Encoding]::new($false)
-[System.IO.File]::WriteAllText($ReportPath, ($report | ConvertTo-Json -Depth 8), $utf8NoBom)
+$report | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $ReportPath -Encoding UTF8
 Add-InfoMessage "Verification report: $ReportPath"
 
 if ($script:Errors.Count -gt 0) {
