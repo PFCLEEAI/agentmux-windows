@@ -615,6 +615,11 @@ public sealed class MainWindowSmokeTests
             Assert.True(initialWorkspace.TryGetProperty("latestStatus", out _));
             Assert.Equal(System.Text.Json.JsonValueKind.Null, initialWorkspace.GetProperty("latestStatus").ValueKind);
             Assert.Equal(0, initialWorkspace.GetProperty("statusCount").GetInt32());
+            Assert.True(initialWorkspace.TryGetProperty("latestProgress", out _));
+            Assert.Equal(System.Text.Json.JsonValueKind.Null, initialWorkspace.GetProperty("latestProgress").ValueKind);
+            Assert.True(initialWorkspace.TryGetProperty("progress", out _));
+            Assert.Equal(System.Text.Json.JsonValueKind.Null, initialWorkspace.GetProperty("progress").ValueKind);
+            Assert.Equal(0, initialWorkspace.GetProperty("progressCount").GetInt32());
             Assert.True(initialWorkspace.TryGetProperty("gitBranch", out _));
             Assert.Equal(System.Text.Json.JsonValueKind.Null, initialWorkspace.GetProperty("gitBranch").ValueKind);
             Assert.True(initialWorkspace.TryGetProperty("pullRequest", out _));
@@ -813,6 +818,103 @@ public sealed class MainWindowSmokeTests
             var invalidStatusIcon = System.Text.Json.JsonSerializer.SerializeToElement(invalidStatusIconResponse.Result, AgentMuxJson.Options);
             Assert.False(invalidStatusIcon.GetProperty("updated").GetBoolean());
             Assert.Equal("icon must be a string", invalidStatusIcon.GetProperty("reason").GetString());
+
+            var progressResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceSetProgress, new
+            {
+                value = 0.75,
+                label = " Deploying\r\napp \u0007"
+            });
+            Assert.True(progressResponse.Ok, progressResponse.Error);
+            var progressResult = System.Text.Json.JsonSerializer.SerializeToElement(progressResponse.Result, AgentMuxJson.Options);
+            Assert.True(progressResult.GetProperty("updated").GetBoolean());
+            var progressEntry = progressResult.GetProperty("progress");
+            var progressEntryId = progressEntry.GetProperty("id").GetString();
+            Assert.Equal(createdWorkspaceId, progressEntry.GetProperty("workspaceId").GetString());
+            Assert.Equal("API", progressEntry.GetProperty("workspaceTitle").GetString());
+            Assert.Equal(0.75, progressEntry.GetProperty("value").GetDouble(), 3);
+            Assert.Equal(75, progressEntry.GetProperty("percent").GetInt32());
+            Assert.Equal("Deploying app", progressEntry.GetProperty("label").GetString());
+            Assert.Equal("75% Deploying app", progressEntry.GetProperty("text").GetString());
+            Assert.Equal("75% Deploying app", progressResult.GetProperty("workspace").GetProperty("latestProgress").GetString());
+            Assert.Equal(1, progressResult.GetProperty("workspace").GetProperty("progressCount").GetInt32());
+            Assert.Contains("progress: 75% Deploying app", window.ActiveWorkspaceMetaForSmokeTest, StringComparison.Ordinal);
+
+            var updatedProgressResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceSetProgress, new
+            {
+                value = 1.0
+            });
+            Assert.True(updatedProgressResponse.Ok, updatedProgressResponse.Error);
+            var updatedProgress = System.Text.Json.JsonSerializer.SerializeToElement(updatedProgressResponse.Result, AgentMuxJson.Options);
+            Assert.True(updatedProgress.GetProperty("updated").GetBoolean());
+            Assert.Equal(progressEntryId, updatedProgress.GetProperty("progress").GetProperty("id").GetString());
+            Assert.Equal(1, updatedProgress.GetProperty("progress").GetProperty("value").GetDouble(), 3);
+            Assert.Equal(100, updatedProgress.GetProperty("progress").GetProperty("percent").GetInt32());
+            Assert.Equal(System.Text.Json.JsonValueKind.Null, updatedProgress.GetProperty("progress").GetProperty("label").ValueKind);
+            Assert.Equal("100%", updatedProgress.GetProperty("workspace").GetProperty("latestProgress").GetString());
+            Assert.Equal(1, updatedProgress.GetProperty("workspace").GetProperty("progressCount").GetInt32());
+            Assert.Contains("progress: 100%", window.ActiveWorkspaceMetaForSmokeTest, StringComparison.Ordinal);
+            Assert.DoesNotContain("progress: 75% Deploying app", window.ActiveWorkspaceMetaForSmokeTest, StringComparison.Ordinal);
+
+            var targetedDefaultProgressResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceSetProgress, new
+            {
+                index = 0,
+                value = 0.1
+            });
+            Assert.True(targetedDefaultProgressResponse.Ok, targetedDefaultProgressResponse.Error);
+            var targetedDefaultProgress = System.Text.Json.JsonSerializer.SerializeToElement(targetedDefaultProgressResponse.Result, AgentMuxJson.Options);
+            Assert.True(targetedDefaultProgress.GetProperty("updated").GetBoolean());
+            Assert.Equal(defaultWorkspaceId, targetedDefaultProgress.GetProperty("workspace").GetProperty("id").GetString());
+            Assert.Equal("10%", targetedDefaultProgress.GetProperty("workspace").GetProperty("latestProgress").GetString());
+            Assert.Contains("progress: 100%", window.ActiveWorkspaceMetaForSmokeTest, StringComparison.Ordinal);
+
+            var progressIsolationListResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceList);
+            Assert.True(progressIsolationListResponse.Ok, progressIsolationListResponse.Error);
+            var progressIsolationList = System.Text.Json.JsonSerializer.SerializeToElement(progressIsolationListResponse.Result, AgentMuxJson.Options);
+            var progressIsolationWorkspaces = progressIsolationList.GetProperty("workspaces").EnumerateArray().ToArray();
+            var progressIsolationDefault = Assert.Single(progressIsolationWorkspaces, workspace => workspace.GetProperty("id").GetString() == defaultWorkspaceId);
+            var progressIsolationCreated = Assert.Single(progressIsolationWorkspaces, workspace => workspace.GetProperty("id").GetString() == createdWorkspaceId);
+            Assert.Equal("10%", progressIsolationDefault.GetProperty("latestProgress").GetString());
+            Assert.Equal(0.1, progressIsolationDefault.GetProperty("progress").GetProperty("value").GetDouble(), 3);
+            Assert.Equal("100%", progressIsolationCreated.GetProperty("latestProgress").GetString());
+            Assert.Equal(1, progressIsolationCreated.GetProperty("progress").GetProperty("value").GetDouble(), 3);
+
+            var missingProgressValueResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceSetProgress, new
+            {
+                label = "ready"
+            });
+            Assert.True(missingProgressValueResponse.Ok, missingProgressValueResponse.Error);
+            var missingProgressValue = System.Text.Json.JsonSerializer.SerializeToElement(missingProgressValueResponse.Result, AgentMuxJson.Options);
+            Assert.False(missingProgressValue.GetProperty("updated").GetBoolean());
+            Assert.Equal("value is required", missingProgressValue.GetProperty("reason").GetString());
+
+            var invalidProgressStringValueResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceSetProgress, new
+            {
+                value = "0.5"
+            });
+            Assert.True(invalidProgressStringValueResponse.Ok, invalidProgressStringValueResponse.Error);
+            var invalidProgressStringValue = System.Text.Json.JsonSerializer.SerializeToElement(invalidProgressStringValueResponse.Result, AgentMuxJson.Options);
+            Assert.False(invalidProgressStringValue.GetProperty("updated").GetBoolean());
+            Assert.Equal("value must be a number between 0 and 1", invalidProgressStringValue.GetProperty("reason").GetString());
+
+            var invalidProgressRangeResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceSetProgress, new
+            {
+                value = 1.1
+            });
+            Assert.True(invalidProgressRangeResponse.Ok, invalidProgressRangeResponse.Error);
+            var invalidProgressRange = System.Text.Json.JsonSerializer.SerializeToElement(invalidProgressRangeResponse.Result, AgentMuxJson.Options);
+            Assert.False(invalidProgressRange.GetProperty("updated").GetBoolean());
+            Assert.Equal("value must be a number between 0 and 1", invalidProgressRange.GetProperty("reason").GetString());
+
+            var invalidProgressLabelResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceSetProgress, new
+            {
+                value = 0.5,
+                label = true
+            });
+            Assert.True(invalidProgressLabelResponse.Ok, invalidProgressLabelResponse.Error);
+            var invalidProgressLabel = System.Text.Json.JsonSerializer.SerializeToElement(invalidProgressLabelResponse.Result, AgentMuxJson.Options);
+            Assert.False(invalidProgressLabel.GetProperty("updated").GetBoolean());
+            Assert.Equal("label must be a string", invalidProgressLabel.GetProperty("reason").GetString());
+            Assert.Contains("progress: 100%", window.ActiveWorkspaceMetaForSmokeTest, StringComparison.Ordinal);
 
             var setPullRequestResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceSetPullRequest, new
             {
@@ -1066,9 +1168,32 @@ public sealed class MainWindowSmokeTests
             Assert.Equal(200, finalCreatedWorkspace.GetProperty("logCount").GetInt32());
             Assert.Equal("build: Passed", finalCreatedWorkspace.GetProperty("latestStatus").GetString());
             Assert.Equal(1, finalCreatedWorkspace.GetProperty("statusCount").GetInt32());
+            Assert.Equal("100%", finalCreatedWorkspace.GetProperty("latestProgress").GetString());
+            Assert.Equal(1, finalCreatedWorkspace.GetProperty("progress").GetProperty("value").GetDouble(), 3);
+            Assert.Equal(1, finalCreatedWorkspace.GetProperty("progressCount").GetInt32());
             Assert.False(finalCreatedWorkspace.TryGetProperty("pid", out _));
             Assert.False(finalCreatedWorkspace.TryGetProperty("process", out _));
             Assert.False(finalCreatedWorkspace.TryGetProperty("status", out _));
+
+            var clearProgressResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceClearProgress, new
+            {
+                id = createdWorkspaceId
+            });
+            Assert.True(clearProgressResponse.Ok, clearProgressResponse.Error);
+            var clearProgress = System.Text.Json.JsonSerializer.SerializeToElement(clearProgressResponse.Result, AgentMuxJson.Options);
+            Assert.Equal(1, clearProgress.GetProperty("cleared").GetInt32());
+            Assert.Equal(System.Text.Json.JsonValueKind.Null, clearProgress.GetProperty("workspace").GetProperty("latestProgress").ValueKind);
+            Assert.Equal(System.Text.Json.JsonValueKind.Null, clearProgress.GetProperty("workspace").GetProperty("progress").ValueKind);
+            Assert.Equal(0, clearProgress.GetProperty("workspace").GetProperty("progressCount").GetInt32());
+            Assert.DoesNotContain("progress:", window.ActiveWorkspaceMetaForSmokeTest, StringComparison.Ordinal);
+
+            var clearProgressAgainResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceClearProgress, new
+            {
+                id = createdWorkspaceId
+            });
+            Assert.True(clearProgressAgainResponse.Ok, clearProgressAgainResponse.Error);
+            var clearProgressAgain = System.Text.Json.JsonSerializer.SerializeToElement(clearProgressAgainResponse.Result, AgentMuxJson.Options);
+            Assert.Equal(0, clearProgressAgain.GetProperty("cleared").GetInt32());
 
             var clearStatusKeyResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceClearStatus, new
             {
@@ -1472,6 +1597,15 @@ public sealed class MainWindowSmokeTests
                 Assert.True(transientStatus.Ok, transientStatus.Error);
                 Assert.Contains("status: restore: TRANSIENT_SESSION_STATUS", source.ActiveWorkspaceMetaForSmokeTest, StringComparison.Ordinal);
 
+                var transientProgress = await source.HandleRpcForSmokeTestAsync(AgentMuxMethods.WorkspaceSetProgress, new
+                {
+                    id = createdWorkspaceId,
+                    value = 0.5,
+                    label = "TRANSIENT_SESSION_PROGRESS"
+                });
+                Assert.True(transientProgress.Ok, transientProgress.Error);
+                Assert.Contains("progress: 50% TRANSIENT_SESSION_PROGRESS", source.ActiveWorkspaceMetaForSmokeTest, StringComparison.Ordinal);
+
                 await source.SaveSessionForSmokeTestAsync();
             }
             finally
@@ -1494,6 +1628,7 @@ public sealed class MainWindowSmokeTests
                 Assert.Contains("ports: 3000, 5173", restored.ActiveWorkspaceMetaForSmokeTest, StringComparison.Ordinal);
                 Assert.DoesNotContain("log:", restored.ActiveWorkspaceMetaForSmokeTest, StringComparison.Ordinal);
                 Assert.DoesNotContain("status:", restored.ActiveWorkspaceMetaForSmokeTest, StringComparison.Ordinal);
+                Assert.DoesNotContain("progress:", restored.ActiveWorkspaceMetaForSmokeTest, StringComparison.Ordinal);
                 Assert.Equal(2, restored.SurfaceCountForSmokeTest);
                 Assert.Equal(1, restored.ActiveSurfaceIndexForSmokeTest);
                 Assert.Equal("Persisted surface", restored.ActiveSurfaceTitleForSmokeTest);
@@ -1518,6 +1653,9 @@ public sealed class MainWindowSmokeTests
                 Assert.Equal(0, restoredWorkspace.GetProperty("logCount").GetInt32());
                 Assert.Equal(System.Text.Json.JsonValueKind.Null, restoredWorkspace.GetProperty("latestStatus").ValueKind);
                 Assert.Equal(0, restoredWorkspace.GetProperty("statusCount").GetInt32());
+                Assert.Equal(System.Text.Json.JsonValueKind.Null, restoredWorkspace.GetProperty("latestProgress").ValueKind);
+                Assert.Equal(System.Text.Json.JsonValueKind.Null, restoredWorkspace.GetProperty("progress").ValueKind);
+                Assert.Equal(0, restoredWorkspace.GetProperty("progressCount").GetInt32());
 
                 var selectFirstSurface = await restored.HandleRpcForSmokeTestAsync(AgentMuxMethods.SurfaceSelect, new
                 {

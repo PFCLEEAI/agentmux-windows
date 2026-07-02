@@ -94,6 +94,26 @@ public sealed class WorkspaceModelTests
     }
 
     [Fact]
+    public void WorkspaceLatestProgressPreviewIsDisplayOnlyAndCapped()
+    {
+        var workspace = new WorkspaceState
+        {
+            LatestProgress = " 75%\r\ndeploying\tAPI \u0007" + new string('x', 140)
+        };
+
+        var json = JsonSerializer.Serialize(workspace, AgentMuxJson.Options);
+
+        Assert.NotNull(workspace.LatestProgressPreview);
+        Assert.StartsWith("75% deploying API", workspace.LatestProgressPreview, StringComparison.Ordinal);
+        Assert.EndsWith("...", workspace.LatestProgressPreview, StringComparison.Ordinal);
+        Assert.Equal(120, workspace.LatestProgressPreview!.Length);
+        Assert.Equal($"progress: {workspace.LatestProgressPreview}", workspace.LatestProgressLabel);
+        Assert.DoesNotContain("latestProgress", json, StringComparison.Ordinal);
+        Assert.DoesNotContain("latestProgressPreview", json, StringComparison.Ordinal);
+        Assert.DoesNotContain("latestProgressLabel", json, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void WorkspacePortsRoundTripAndLabelIsDisplayOnly()
     {
         var workspace = new WorkspaceState

@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Globalization;
 using System.IO;
 using System.Text;
 using System.Text.Json;
@@ -29,11 +30,13 @@ public partial class MainWindow : Window
     private const int MaxWorkspaceStatusKeyLength = 80;
     private const int MaxWorkspaceStatusTextLength = 200;
     private const int MaxWorkspaceStatusMetaLength = 80;
+    private const int MaxWorkspaceProgressLabelLength = 120;
 
     private readonly ObservableCollection<WorkspaceState> _workspaces = [];
     private readonly List<TerminalNotification> _notifications = [];
     private readonly List<WorkspaceLogEntry> _workspaceLogs = [];
     private readonly List<WorkspaceStatusEntry> _workspaceStatuses = [];
+    private readonly Dictionary<string, WorkspaceProgressEntry> _workspaceProgress = new(StringComparer.Ordinal);
     private readonly Dictionary<string, ConPtySession> _ptySessions = [];
     private readonly Dictionary<string, TerminalPaneView> _terminalViews = [];
     private readonly Dictionary<string, TerminalOutputProcessor> _terminalOutputProcessors = [];
@@ -380,6 +383,7 @@ public partial class MainWindow : Window
         clone.LatestNotification = null;
         clone.LatestLog = null;
         clone.LatestStatus = null;
+        clone.LatestProgress = null;
         foreach (var surface in clone.Surfaces)
         {
             ClearPaneNotificationState(surface.Root);
@@ -525,6 +529,8 @@ public partial class MainWindow : Window
             AgentMuxMethods.WorkspaceSetStatus => AgentMuxResponse.Success(request.Id, HandleWorkspaceSetStatus(request.Params)),
             AgentMuxMethods.WorkspaceListStatus => AgentMuxResponse.Success(request.Id, HandleWorkspaceListStatus(request.Params)),
             AgentMuxMethods.WorkspaceClearStatus => AgentMuxResponse.Success(request.Id, HandleWorkspaceClearStatus(request.Params)),
+            AgentMuxMethods.WorkspaceSetProgress => AgentMuxResponse.Success(request.Id, HandleWorkspaceSetProgress(request.Params)),
+            AgentMuxMethods.WorkspaceClearProgress => AgentMuxResponse.Success(request.Id, HandleWorkspaceClearProgress(request.Params)),
             AgentMuxMethods.SurfaceList => AgentMuxResponse.Success(request.Id, BuildSurfaceList()),
             AgentMuxMethods.SurfaceCreate => AgentMuxResponse.Success(request.Id, HandleSurfaceCreate(request.Params)),
             AgentMuxMethods.SurfaceSelect => AgentMuxResponse.Success(request.Id, HandleSurfaceSelect(request.Params)),
@@ -592,6 +598,7 @@ public partial class MainWindow : Window
             notificationCount = _notifications.Count,
             workspaceLogCount = _workspaceLogs.Count,
             workspaceStatusCount = _workspaceStatuses.Count,
+            workspaceProgressCount = _workspaceProgress.Count,
             terminalSessionCount = _ptySessions.Count,
             browserPaneCount = CountPaneKind(surface.Root, PaneKind.Browser)
         };
@@ -956,6 +963,81 @@ public partial class MainWindow : Window
             string.Equals(status.WorkspaceId, workspace.Id, StringComparison.Ordinal)
             && (clearAll || string.Equals(status.Key, key, StringComparison.Ordinal)));
         RecalculateWorkspaceStatusState();
+        return new
+        {
+            cleared,
+            workspace = BuildWorkspaceDto(workspace, selectedIndex)
+        };
+    }
+
+    private object HandleWorkspaceSetProgress(JsonElement? parameters)
+    {
+        if (!TryReadOptionalWorkspaceTarget(parameters, out var index, out var id, out var targetError))
+        {
+            return new { updated = false, reason = targetError };
+        }
+
+        if (!TryReadWorkspaceProgressValue(parameters, out var value, out var valueError))
+        {
+            return new { updated = false, reason = valueError };
+        }
+
+        if (!TryReadWorkspaceProgressLabel(parameters, out var label, out var labelError))
+        {
+            return new { updated = false, reason = labelError };
+        }
+
+        var selectedIndex = ResolveWorkspaceIndex(index, id);
+        if (selectedIndex < 0 || selectedIndex >= _workspaces.Count)
+        {
+            return new
+            {
+                updated = false,
+                reason = index.HasValue ? "index out of range" : "workspace not found"
+            };
+        }
+
+        var workspace = _workspaces[selectedIndex];
+        var entry = _workspaceProgress.TryGetValue(workspace.Id, out var existing)
+            ? existing
+            : new WorkspaceProgressEntry();
+
+        entry.WorkspaceId = workspace.Id;
+        entry.WorkspaceTitle = workspace.Title;
+        entry.Value = value;
+        entry.Label = label;
+        entry.UpdatedAt = DateTimeOffset.UtcNow;
+        _workspaceProgress[workspace.Id] = entry;
+        RecalculateWorkspaceProgressState();
+
+        return new
+        {
+            updated = true,
+            progress = BuildWorkspaceProgressDto(entry),
+            workspace = BuildWorkspaceDto(workspace, selectedIndex)
+        };
+    }
+
+    private object HandleWorkspaceClearProgress(JsonElement? parameters)
+    {
+        if (!TryReadOptionalWorkspaceTarget(parameters, out var index, out var id, out var targetError))
+        {
+            return new { cleared = 0, reason = targetError };
+        }
+
+        var selectedIndex = ResolveWorkspaceIndex(index, id);
+        if (selectedIndex < 0 || selectedIndex >= _workspaces.Count)
+        {
+            return new
+            {
+                cleared = 0,
+                reason = index.HasValue ? "index out of range" : "workspace not found"
+            };
+        }
+
+        var workspace = _workspaces[selectedIndex];
+        var cleared = _workspaceProgress.Remove(workspace.Id) ? 1 : 0;
+        RecalculateWorkspaceProgressState();
         return new
         {
             cleared,
@@ -1939,6 +2021,16 @@ public partial class MainWindow : Window
         }
     }
 
+    private void RecalculateWorkspaceProgressState()
+    {
+        foreach (var workspace in _workspaces)
+        {
+            workspace.LatestProgress = _workspaceProgress.TryGetValue(workspace.Id, out var progress)
+                ? FormatWorkspaceProgressText(progress)
+                : null;
+        }
+    }
+
     private static string FormatWorkspaceLogText(WorkspaceLogEntry entry)
     {
         var prefix = $"[{entry.Level}]";
@@ -1952,6 +2044,15 @@ public partial class MainWindow : Window
         return string.IsNullOrWhiteSpace(entry.Icon)
             ? $"{entry.Key}: {entry.Text}"
             : $"{entry.Key}: {entry.Icon} {entry.Text}";
+    }
+
+    private static string FormatWorkspaceProgressText(WorkspaceProgressEntry entry)
+    {
+        var percent = (int)Math.Round(entry.Value * 100, MidpointRounding.AwayFromZero);
+        var prefix = percent.ToString(CultureInfo.InvariantCulture) + "%";
+        return string.IsNullOrWhiteSpace(entry.Label)
+            ? prefix
+            : $"{prefix} {entry.Label}";
     }
 
     private WorkspaceState ActiveWorkspace()
@@ -2171,9 +2272,10 @@ public partial class MainWindow : Window
         var pullRequestMeta = string.IsNullOrWhiteSpace(workspace.PullRequestLabel) ? "" : $"  |  {workspace.PullRequestLabel}";
         var portsMeta = string.IsNullOrWhiteSpace(workspace.PortsLabel) ? "" : $"  |  {workspace.PortsLabel}";
         var statusMeta = string.IsNullOrWhiteSpace(workspace.LatestStatusLabel) ? "" : $"  |  {workspace.LatestStatusLabel}";
+        var progressMeta = string.IsNullOrWhiteSpace(workspace.LatestProgressLabel) ? "" : $"  |  {workspace.LatestProgressLabel}";
         var notificationMeta = string.IsNullOrWhiteSpace(workspace.LatestNotificationLabel) ? "" : $"  |  {workspace.LatestNotificationLabel}";
         var logMeta = string.IsNullOrWhiteSpace(workspace.LatestLogLabel) ? "" : $"  |  {workspace.LatestLogLabel}";
-        WorkspaceMeta.Text = $"{workspace.WorkingDirectory}{branchMeta}{pullRequestMeta}{portsMeta}{statusMeta}{notificationMeta}{logMeta}  |  surfaces: {workspace.Surfaces.Count}  |  panes: {CountPanes(surface.Root)}  |  unread: {workspace.UnreadCount}";
+        WorkspaceMeta.Text = $"{workspace.WorkingDirectory}{branchMeta}{pullRequestMeta}{portsMeta}{statusMeta}{progressMeta}{notificationMeta}{logMeta}  |  surfaces: {workspace.Surfaces.Count}  |  panes: {CountPanes(surface.Root)}  |  unread: {workspace.UnreadCount}";
         RefreshSurfaceTabs(workspace);
         var activeSessionRunning = activePane is not null
             && _ptySessions.TryGetValue(activePane.Id, out var activeSession)
@@ -2836,8 +2938,11 @@ public partial class MainWindow : Window
             latestNotification = workspace.LatestNotificationPreview,
             latestLog = workspace.LatestLogPreview,
             latestStatus = workspace.LatestStatusPreview,
+            latestProgress = workspace.LatestProgressPreview,
+            progress = BuildWorkspaceProgressDto(FindWorkspaceProgress(workspace.Id)),
             logCount = _workspaceLogs.Count(log => string.Equals(log.WorkspaceId, workspace.Id, StringComparison.Ordinal)),
             statusCount = _workspaceStatuses.Count(status => string.Equals(status.WorkspaceId, workspace.Id, StringComparison.Ordinal)),
+            progressCount = _workspaceProgress.ContainsKey(workspace.Id) ? 1 : 0,
             surfaceCount = workspace.Surfaces.Count,
             workspace.ActiveSurfaceIndex,
             activeSurfaceTitle = surface.Title,
@@ -2886,6 +2991,31 @@ public partial class MainWindow : Window
             status.Color,
             status.UpdatedAt
         };
+    }
+
+    private static object? BuildWorkspaceProgressDto(WorkspaceProgressEntry? progress)
+    {
+        if (progress is null)
+        {
+            return null;
+        }
+
+        return new
+        {
+            progress.Id,
+            progress.WorkspaceId,
+            progress.WorkspaceTitle,
+            progress.Value,
+            percent = (int)Math.Round(progress.Value * 100, MidpointRounding.AwayFromZero),
+            progress.Label,
+            text = FormatWorkspaceProgressText(progress),
+            progress.UpdatedAt
+        };
+    }
+
+    private WorkspaceProgressEntry? FindWorkspaceProgress(string workspaceId)
+    {
+        return _workspaceProgress.TryGetValue(workspaceId, out var progress) ? progress : null;
     }
 
     private static object BuildSurfaceDto(WorkspaceState workspace, SurfaceState surface, int index)
@@ -3785,6 +3915,55 @@ public partial class MainWindow : Window
             return false;
         }
 
+        return true;
+    }
+
+    private static bool TryReadWorkspaceProgressValue(JsonElement? parameters, out double value, out string error)
+    {
+        value = 0;
+        error = "";
+        if (parameters is not { ValueKind: JsonValueKind.Object } element
+            || !element.TryGetProperty("value", out var property)
+            || property.ValueKind == JsonValueKind.Null)
+        {
+            error = "value is required";
+            return false;
+        }
+
+        if (property.ValueKind != JsonValueKind.Number || !property.TryGetDouble(out value))
+        {
+            error = "value must be a number between 0 and 1";
+            return false;
+        }
+
+        if (!double.IsFinite(value) || value is < 0 or > 1)
+        {
+            error = "value must be a number between 0 and 1";
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool TryReadWorkspaceProgressLabel(JsonElement? parameters, out string? label, out string error)
+    {
+        label = null;
+        error = "";
+        if (parameters is not { ValueKind: JsonValueKind.Object } element
+            || !element.TryGetProperty("label", out var property)
+            || property.ValueKind == JsonValueKind.Null)
+        {
+            return true;
+        }
+
+        if (property.ValueKind != JsonValueKind.String)
+        {
+            error = "label must be a string";
+            return false;
+        }
+
+        var compact = CompactWorkspaceLogValue(property.GetString(), MaxWorkspaceProgressLabelLength);
+        label = string.IsNullOrWhiteSpace(compact) ? null : compact;
         return true;
     }
 

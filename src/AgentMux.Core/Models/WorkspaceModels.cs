@@ -45,6 +45,12 @@ public sealed class WorkspaceState
     public string? LatestStatusPreview => CompactNotificationPreview(LatestStatus);
     [JsonIgnore]
     public string? LatestStatusLabel => LatestStatusPreview is { } preview ? $"status: {preview}" : null;
+    [JsonIgnore]
+    public string? LatestProgress { get; set; }
+    [JsonIgnore]
+    public string? LatestProgressPreview => CompactNotificationPreview(LatestProgress);
+    [JsonIgnore]
+    public string? LatestProgressLabel => LatestProgressPreview is { } preview ? $"progress: {preview}" : null;
     public List<SurfaceState> Surfaces { get; set; } = [SurfaceState.CreateDefault()];
 
     private static string? CompactNotificationPreview(string? value)
@@ -163,6 +169,16 @@ public sealed class WorkspaceStatusEntry
     public string Text { get; set; } = "";
     public string? Icon { get; set; }
     public string? Color { get; set; }
+    public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
+public sealed class WorkspaceProgressEntry
+{
+    public string Id { get; set; } = Ids.New("progress");
+    public string WorkspaceId { get; set; } = "";
+    public string WorkspaceTitle { get; set; } = "";
+    public double Value { get; set; }
+    public string? Label { get; set; }
     public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
 }
 

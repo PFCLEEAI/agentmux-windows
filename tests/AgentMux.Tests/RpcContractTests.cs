@@ -137,6 +137,8 @@ public sealed class RpcContractTests
         Assert.Equal("workspace.set_status", AgentMuxMethods.WorkspaceSetStatus);
         Assert.Equal("workspace.list_status", AgentMuxMethods.WorkspaceListStatus);
         Assert.Equal("workspace.clear_status", AgentMuxMethods.WorkspaceClearStatus);
+        Assert.Equal("workspace.set_progress", AgentMuxMethods.WorkspaceSetProgress);
+        Assert.Equal("workspace.clear_progress", AgentMuxMethods.WorkspaceClearProgress);
     }
 
     [Fact]

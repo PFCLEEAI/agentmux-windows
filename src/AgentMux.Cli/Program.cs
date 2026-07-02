@@ -35,6 +35,8 @@ public static class Program
                 "set-status" => await HandleWorkspaceSetStatusAsync(client, args[1..]).ConfigureAwait(false),
                 "list-status" => await HandleWorkspaceListStatusAsync(client, args[1..]).ConfigureAwait(false),
                 "clear-status" => await HandleWorkspaceClearStatusAsync(client, args[1..]).ConfigureAwait(false),
+                "set-progress" => await HandleWorkspaceSetProgressAsync(client, args[1..]).ConfigureAwait(false),
+                "clear-progress" => await HandleWorkspaceClearProgressAsync(client, args[1..]).ConfigureAwait(false),
                 "workspace" => await HandleWorkspaceAsync(client, args[1..]).ConfigureAwait(false),
                 "surface" or "surfaces" or "tab" or "tabs" => await HandleSurfaceAsync(client, args[1..]).ConfigureAwait(false),
                 "split" => await HandleSplitAsync(client, args[1..]).ConfigureAwait(false),
@@ -129,6 +131,28 @@ public static class Program
     private static async Task<AgentMuxResponse> HandleWorkspaceClearStatusAsync(NamedPipeRpcClient client, string[] args)
     {
         var request = ParseWorkspaceClearStatusRequestForTests(args, out var error);
+        if (request is null)
+        {
+            return AgentMuxResponse.Failure("", error);
+        }
+
+        return await client.SendAsync(request.Method, request.Parameters).ConfigureAwait(false);
+    }
+
+    private static async Task<AgentMuxResponse> HandleWorkspaceSetProgressAsync(NamedPipeRpcClient client, string[] args)
+    {
+        var request = ParseWorkspaceSetProgressRequestForTests(args, out var error);
+        if (request is null)
+        {
+            return AgentMuxResponse.Failure("", error);
+        }
+
+        return await client.SendAsync(request.Method, request.Parameters).ConfigureAwait(false);
+    }
+
+    private static async Task<AgentMuxResponse> HandleWorkspaceClearProgressAsync(NamedPipeRpcClient client, string[] args)
+    {
+        var request = ParseWorkspaceClearProgressRequestForTests(args, out var error);
         if (request is null)
         {
             return AgentMuxResponse.Failure("", error);
@@ -1154,6 +1178,84 @@ public static class Program
         return new CliRequest(AgentMuxMethods.WorkspaceClearStatus, parameters);
     }
 
+    internal static CliRequest? ParseWorkspaceSetProgressRequestForTests(string[] args, out string error)
+    {
+        const string usage = "Usage: agentmux set-progress <0..1> [--label <text>] [--workspace <id-or-index>]";
+        var named = ParseNamed(args);
+        if (!NamedKeysAreAllowed(named, ["value", "label", "workspace", "index", "id"]))
+        {
+            error = usage;
+            return null;
+        }
+
+        var positionals = ReadPositional(named);
+        var valueWasNamed = named.ContainsKey("value");
+        if ((valueWasNamed && positionals.Length > 0) || (!valueWasNamed && positionals.Length != 1))
+        {
+            error = usage;
+            return null;
+        }
+
+        var valueText = valueWasNamed ? named["value"] : positionals[0];
+        if (!double.TryParse(valueText, NumberStyles.Float, CultureInfo.InvariantCulture, out var value)
+            || !double.IsFinite(value)
+            || value is < 0 or > 1)
+        {
+            error = usage;
+            return null;
+        }
+
+        var parameters = new Dictionary<string, object?>
+        {
+            ["value"] = value
+        };
+
+        if (named.TryGetValue("label", out var label))
+        {
+            if (string.IsNullOrWhiteSpace(label) || label.Equals("true", StringComparison.OrdinalIgnoreCase))
+            {
+                error = usage;
+                return null;
+            }
+
+            parameters["label"] = label;
+        }
+
+        if (!TryAddWorkspaceTarget(named, parameters, usage, out error))
+        {
+            return null;
+        }
+
+        error = "";
+        return new CliRequest(AgentMuxMethods.WorkspaceSetProgress, parameters);
+    }
+
+    internal static CliRequest? ParseWorkspaceClearProgressRequestForTests(string[] args, out string error)
+    {
+        const string usage = "Usage: agentmux clear-progress [--workspace <id-or-index>]";
+        var named = ParseNamed(args);
+        if (!NamedKeysAreAllowed(named, ["workspace", "index", "id"]))
+        {
+            error = usage;
+            return null;
+        }
+
+        if (ReadPositional(named).Length > 0)
+        {
+            error = usage;
+            return null;
+        }
+
+        var parameters = new Dictionary<string, object?>();
+        if (!TryAddWorkspaceTarget(named, parameters, usage, out error))
+        {
+            return null;
+        }
+
+        error = "";
+        return new CliRequest(AgentMuxMethods.WorkspaceClearProgress, parameters);
+    }
+
     internal static CliRequest? ParseFocusRequestForTests(string[] args, out string error)
     {
         var named = ParseNamed(args);
@@ -1693,6 +1795,24 @@ public static class Program
         return values.ToArray();
     }
 
+    private static bool NamedKeysAreAllowed(Dictionary<string, string> named, string[] allowedKeys)
+    {
+        foreach (var key in named.Keys)
+        {
+            if (key.StartsWith("_arg", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (!allowedKeys.Contains(key, StringComparer.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     private static void PrintResponse(AgentMuxResponse response)
     {
         if (!response.Ok)
@@ -1731,6 +1851,8 @@ public static class Program
           agentmux list-status
           agentmux clear-status build
           agentmux clear-status --all
+          agentmux set-progress 0.75 --label "Deploying"
+          agentmux clear-progress
           agentmux workspace list
           agentmux workspace create --title "API" --cwd "C:\src\api"
           agentmux workspace select --index 0

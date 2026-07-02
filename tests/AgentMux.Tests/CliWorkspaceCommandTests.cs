@@ -13,6 +13,8 @@ public sealed class CliWorkspaceCommandTests
     private const string WorkspaceSetStatusUsage = "Usage: agentmux set-status <key> <text> [--icon <text>] [--color <text>] [--workspace <id-or-index>]";
     private const string WorkspaceListStatusUsage = "Usage: agentmux list-status [--workspace <id-or-index>]";
     private const string WorkspaceClearStatusUsage = "Usage: agentmux clear-status <key|--all> [--workspace <id-or-index>]";
+    private const string WorkspaceSetProgressUsage = "Usage: agentmux set-progress <0..1> [--label <text>] [--workspace <id-or-index>]";
+    private const string WorkspaceClearProgressUsage = "Usage: agentmux clear-progress [--workspace <id-or-index>]";
 
     [Theory]
     [InlineData("list")]
@@ -374,6 +376,73 @@ public sealed class CliWorkspaceCommandTests
         Assert.False(parameters.TryGetProperty("key", out _));
     }
 
+    [Theory]
+    [InlineData("0", 0)]
+    [InlineData(".5", 0.5)]
+    [InlineData("0.5", 0.5)]
+    [InlineData("1", 1)]
+    public void WorkspaceSetProgressCommandParsesValue(string valueText, double expected)
+    {
+        var request = Program.ParseWorkspaceSetProgressRequestForTests([valueText], out var error);
+
+        Assert.Equal("", error);
+        Assert.NotNull(request);
+        Assert.Equal(AgentMuxMethods.WorkspaceSetProgress, request.Method);
+
+        var parameters = JsonSerializer.SerializeToElement(request.Parameters, AgentMuxJson.Options);
+        Assert.Equal(expected, parameters.GetProperty("value").GetDouble(), 3);
+        Assert.False(parameters.TryGetProperty("label", out _));
+        Assert.False(parameters.TryGetProperty("index", out _));
+        Assert.False(parameters.TryGetProperty("id", out _));
+    }
+
+    [Fact]
+    public void WorkspaceSetProgressCommandParsesLabelAndWorkspaceIndex()
+    {
+        var request = Program.ParseWorkspaceSetProgressRequestForTests(
+            ["0.75", "--label", "Deploying app", "--workspace", "1"],
+            out var error);
+
+        Assert.Equal("", error);
+        Assert.NotNull(request);
+        Assert.Equal(AgentMuxMethods.WorkspaceSetProgress, request.Method);
+
+        var parameters = JsonSerializer.SerializeToElement(request.Parameters, AgentMuxJson.Options);
+        Assert.Equal(0.75, parameters.GetProperty("value").GetDouble(), 3);
+        Assert.Equal("Deploying app", parameters.GetProperty("label").GetString());
+        Assert.Equal(1, parameters.GetProperty("index").GetInt32());
+        Assert.False(parameters.TryGetProperty("id", out _));
+    }
+
+    [Fact]
+    public void WorkspaceSetProgressCommandParsesNamedValueAndWorkspaceId()
+    {
+        var request = Program.ParseWorkspaceSetProgressRequestForTests(["--value", "1", "--workspace", "workspace-1"], out var error);
+
+        Assert.Equal("", error);
+        Assert.NotNull(request);
+        Assert.Equal(AgentMuxMethods.WorkspaceSetProgress, request.Method);
+
+        var parameters = JsonSerializer.SerializeToElement(request.Parameters, AgentMuxJson.Options);
+        Assert.Equal(1, parameters.GetProperty("value").GetDouble(), 3);
+        Assert.Equal("workspace-1", parameters.GetProperty("id").GetString());
+        Assert.False(parameters.TryGetProperty("index", out _));
+        Assert.False(parameters.TryGetProperty("label", out _));
+    }
+
+    [Fact]
+    public void WorkspaceClearProgressCommandParsesWorkspaceIndex()
+    {
+        var request = Program.ParseWorkspaceClearProgressRequestForTests(["--workspace", "0"], out var error);
+
+        Assert.Equal("", error);
+        Assert.NotNull(request);
+        Assert.Equal(AgentMuxMethods.WorkspaceClearProgress, request.Method);
+
+        var parameters = JsonSerializer.SerializeToElement(request.Parameters, AgentMuxJson.Options);
+        Assert.Equal(0, parameters.GetProperty("index").GetInt32());
+    }
+
     [Fact]
     public void WorkspaceCommandRejectsMissingAction()
     {
@@ -686,6 +755,79 @@ public sealed class CliWorkspaceCommandTests
 
         Assert.Null(request);
         Assert.Equal(WorkspaceClearStatusUsage, error);
+    }
+
+    [Theory]
+    [InlineData()]
+    [InlineData("-0.1")]
+    [InlineData("1.1")]
+    [InlineData("NaN")]
+    [InlineData("Infinity")]
+    [InlineData("abc")]
+    [InlineData("0,5")]
+    [InlineData("0.5", "extra")]
+    [InlineData("--value")]
+    [InlineData("--value", "0.5", "extra")]
+    public void WorkspaceSetProgressCommandRejectsInvalidValue(params string[] args)
+    {
+        var request = Program.ParseWorkspaceSetProgressRequestForTests(args, out var error);
+
+        Assert.Null(request);
+        Assert.Equal(WorkspaceSetProgressUsage, error);
+    }
+
+    [Fact]
+    public void WorkspaceSetProgressCommandRejectsBareLabelFlag()
+    {
+        var request = Program.ParseWorkspaceSetProgressRequestForTests(["0.5", "--label"], out var error);
+
+        Assert.Null(request);
+        Assert.Equal(WorkspaceSetProgressUsage, error);
+    }
+
+    [Fact]
+    public void WorkspaceSetProgressCommandRejectsAmbiguousWorkspaceTarget()
+    {
+        var request = Program.ParseWorkspaceSetProgressRequestForTests(["0.5", "--workspace", "0", "--id", "workspace-1"], out var error);
+
+        Assert.Null(request);
+        Assert.Equal(WorkspaceSetProgressUsage, error);
+    }
+
+    [Fact]
+    public void WorkspaceSetProgressCommandRejectsUnknownFlag()
+    {
+        var request = Program.ParseWorkspaceSetProgressRequestForTests(["0.5", "--workspce", "1"], out var error);
+
+        Assert.Null(request);
+        Assert.Equal(WorkspaceSetProgressUsage, error);
+    }
+
+    [Fact]
+    public void WorkspaceClearProgressCommandRejectsPositionals()
+    {
+        var request = Program.ParseWorkspaceClearProgressRequestForTests(["0"], out var error);
+
+        Assert.Null(request);
+        Assert.Equal(WorkspaceClearProgressUsage, error);
+    }
+
+    [Fact]
+    public void WorkspaceClearProgressCommandRejectsBareWorkspaceFlag()
+    {
+        var request = Program.ParseWorkspaceClearProgressRequestForTests(["--workspace"], out var error);
+
+        Assert.Null(request);
+        Assert.Equal(WorkspaceClearProgressUsage, error);
+    }
+
+    [Fact]
+    public void WorkspaceClearProgressCommandRejectsUnknownFlag()
+    {
+        var request = Program.ParseWorkspaceClearProgressRequestForTests(["--workspce", "1"], out var error);
+
+        Assert.Null(request);
+        Assert.Equal(WorkspaceClearProgressUsage, error);
     }
 
     [Fact]
