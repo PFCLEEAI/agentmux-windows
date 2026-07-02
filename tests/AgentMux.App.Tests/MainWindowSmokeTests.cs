@@ -1920,6 +1920,25 @@ public sealed class MainWindowSmokeTests
             var currentUrlAfterReload = AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserGetUrl).ConfigureAwait(true));
             Assert.Equal(navigationUrlB, currentUrlAfterReload.GetProperty("url").GetString());
 
+            await using (var automationBaseServer = LoopbackHttpServer.Start(
+                "/automation-base",
+                "<!doctype html><html><body></body></html>",
+                "text/html; charset=utf-8"))
+            {
+                var openAutomationBaseResponse = await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.OpenUrl, new
+                {
+                    url = automationBaseServer.Url.ToString()
+                }).ConfigureAwait(true);
+                Assert.True(openAutomationBaseResponse.Ok, openAutomationBaseResponse.Error);
+                var openAutomationBaseResult = System.Text.Json.JsonSerializer.SerializeToElement(openAutomationBaseResponse.Result, AgentMuxJson.Options);
+                Assert.True(openAutomationBaseResult.GetProperty("opened").GetBoolean(), openAutomationBaseResult.ToString());
+                AssertRpcOk(await window.HandleRpcForSmokeTestAsync(AgentMuxMethods.BrowserWaitForLoad, new
+                {
+                    state = "load",
+                    timeoutMs = 5000
+                }).ConfigureAwait(true));
+            }
+
             var setup = await WaitForRpcOkAsync(window, AgentMuxMethods.BrowserEval, new
             {
                 script = """
