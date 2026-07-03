@@ -66,6 +66,17 @@ public sealed class MainWindowSmokeTests
                 Assert.True(window.HasButtonForSmokeTest("Split right"));
                 Assert.True(window.HasButtonForSmokeTest("Split down"));
                 Assert.True(window.HasButtonForSmokeTest("Browser"));
+                Assert.True(window.HasButtonForSmokeTest("Shortcuts"));
+                Assert.False(window.IsShortcutPanelOpenForSmokeTest);
+                window.OpenShortcutPanelForSmokeTest();
+                Assert.True(window.IsShortcutPanelOpenForSmokeTest);
+                Assert.Equal(8, window.RenderedShortcutItemCountForSmokeTest);
+                Assert.True(window.ShortcutPanelContainsTextForSmokeTest(ShortcutSettings.DefaultFilePath()));
+                Assert.True(window.ShortcutPanelContainsTextForSmokeTest("Toggle zoom"));
+                Assert.True(window.ShortcutPanelContainsTextForSmokeTest("Ctrl+Shift+Z"));
+                Assert.True(window.ShortcutPanelContainsTextForSmokeTest("Focus next pane"));
+                Assert.True(window.ShortcutPanelContainsTextForSmokeTest("Ctrl+Tab"));
+                Assert.True(window.ShortcutPanelContainsTextForSmokeTest("App-window only; not global hotkeys."));
                 Assert.Equal(1, window.PaneCountForSmokeTest);
                 Assert.Equal(1, window.RenderedTerminalPaneCountForSmokeTest);
                 Assert.Equal(120, window.ActivePaneColsForSmokeTest);
@@ -215,6 +226,12 @@ public sealed class MainWindowSmokeTests
             try
             {
                 customWindow.InitializeForSmokeTest();
+                customWindow.OpenShortcutPanelForSmokeTest();
+                Assert.Equal(8, customWindow.RenderedShortcutItemCountForSmokeTest);
+                Assert.True(customWindow.ShortcutPanelContainsTextForSmokeTest(shortcutsPath));
+                Assert.True(customWindow.ShortcutPanelContainsTextForSmokeTest("Ctrl+Shift+F11"));
+                Assert.True(customWindow.ShortcutPanelContainsTextForSmokeTest("Ctrl+Alt+L"));
+                Assert.True(customWindow.ShortcutPanelContainsTextForSmokeTest("Ctrl+Shift+X"));
                 Assert.True(customWindow.HandlePreviewKeyDownForSmokeTest(Key.F11, ModifierKeys.Control | ModifierKeys.Shift));
                 Assert.True(customWindow.IsActivePaneZoomedForSmokeTest);
                 Assert.False(customWindow.HandlePreviewKeyDownForSmokeTest(Key.Z, ModifierKeys.Control | ModifierKeys.Shift));

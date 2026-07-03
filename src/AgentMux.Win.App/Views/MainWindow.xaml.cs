@@ -53,6 +53,7 @@ public partial class MainWindow : Window
     private CancellationTokenSource? _sessionSaveDebounce;
     private int _activeWorkspaceIndex;
     private bool _notificationPanelOpen;
+    private bool _shortcutPanelOpen;
 
     public MainWindow()
         : this(
@@ -87,6 +88,7 @@ public partial class MainWindow : Window
         _restoreSessionOnStartup = restoreSessionOnStartup;
         _persistSession = persistSession;
         InitializeComponent();
+        RefreshShortcutReference();
         EnsureDefaultWorkspace();
     }
 
@@ -185,6 +187,18 @@ public partial class MainWindow : Window
     {
         HandleNotificationsClear();
         RefreshWorkspaceView();
+    }
+
+    private void ShortcutToggle_Click(object sender, RoutedEventArgs e)
+    {
+        _shortcutPanelOpen = !_shortcutPanelOpen;
+        RefreshShortcutReference();
+    }
+
+    private void ShortcutClose_Click(object sender, RoutedEventArgs e)
+    {
+        _shortcutPanelOpen = false;
+        RefreshShortcutReference();
     }
 
     private async void NewSurface_Click(object sender, RoutedEventArgs e)
@@ -2717,6 +2731,45 @@ public partial class MainWindow : Window
         }
     }
 
+    private void RefreshShortcutReference()
+    {
+        ShortcutPanel.Visibility = _shortcutPanelOpen ? Visibility.Visible : Visibility.Collapsed;
+        ShortcutPathText.Text = $"Config: {_shortcutSettings.FilePath}";
+        ShortcutItems.Children.Clear();
+
+        foreach (var binding in _shortcutSettings.BindingsForDisplay())
+        {
+            var row = new DockPanel
+            {
+                LastChildFill = false,
+                Margin = new Thickness(0, 0, 0, 4)
+            };
+
+            var actionText = new TextBlock
+            {
+                Text = binding.Action,
+                Foreground = Brush("AgentMuxMutedText"),
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            DockPanel.SetDock(actionText, Dock.Left);
+
+            var gestureText = new TextBlock
+            {
+                Text = binding.Gesture,
+                FontWeight = FontWeights.SemiBold,
+                HorizontalAlignment = HorizontalAlignment.Right,
+                Margin = new Thickness(8, 0, 0, 0),
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            DockPanel.SetDock(gestureText, Dock.Right);
+
+            row.Children.Add(actionText);
+            row.Children.Add(gestureText);
+            ShortcutItems.Children.Add(row);
+        }
+    }
+
     private Border BuildNotificationItem(TerminalNotification notification)
     {
         var item = new Border
@@ -3743,6 +3796,18 @@ public partial class MainWindow : Window
     internal bool IsActivePaneZoomedForSmokeTest => ActiveSurface().ZoomedPaneId == ActivePane()?.Id;
 
     internal bool HasButtonForSmokeTest(string content) => VisualTreeContainsButton(this, content);
+
+    internal bool IsShortcutPanelOpenForSmokeTest => ShortcutPanel.Visibility == Visibility.Visible;
+
+    internal int RenderedShortcutItemCountForSmokeTest => ShortcutItems.Children.Count;
+
+    internal bool ShortcutPanelContainsTextForSmokeTest(string marker) => VisualTreeTextContains(ShortcutPanel, marker);
+
+    internal void OpenShortcutPanelForSmokeTest()
+    {
+        _shortcutPanelOpen = true;
+        RefreshShortcutReference();
+    }
 
     internal bool RenderedTextContainsForSmokeTest(string marker) => VisualTreeTextContains(PaneHost, marker);
 

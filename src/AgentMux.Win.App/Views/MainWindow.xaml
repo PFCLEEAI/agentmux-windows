@@ -81,6 +81,42 @@
                             Height="34"
                             Margin="0,8,0,0"
                             Click="TestNotification_Click" />
+                    <Button x:Name="ShortcutToggle"
+                            Content="Shortcuts"
+                            Height="34"
+                            Margin="0,8,0,0"
+                            Click="ShortcutToggle_Click" />
+                    <Border x:Name="ShortcutPanel"
+                            Visibility="Collapsed"
+                            Background="#11151D"
+                            BorderBrush="{StaticResource AgentMuxBorder}"
+                            BorderThickness="1"
+                            CornerRadius="4"
+                            Margin="0,8,0,0"
+                            Padding="10">
+                        <StackPanel>
+                            <DockPanel LastChildFill="False" Margin="0,0,0,8">
+                                <TextBlock Text="Shortcuts"
+                                           DockPanel.Dock="Left"
+                                           FontWeight="SemiBold"
+                                           VerticalAlignment="Center" />
+                                <Button Content="Close"
+                                        DockPanel.Dock="Right"
+                                        Width="54"
+                                        Height="24"
+                                        Click="ShortcutClose_Click" />
+                            </DockPanel>
+                            <TextBlock x:Name="ShortcutPathText"
+                                       Foreground="{StaticResource AgentMuxMutedText}"
+                                       TextWrapping="Wrap"
+                                       Margin="0,0,0,8" />
+                            <StackPanel x:Name="ShortcutItems" />
+                            <TextBlock Text="App-window only; not global hotkeys."
+                                       Foreground="{StaticResource AgentMuxMutedText}"
+                                       TextWrapping="Wrap"
+                                       Margin="0,8,0,0" />
+                        </StackPanel>
+                    </Border>
                 </StackPanel>
 
                 <ListBox x:Name="WorkspaceList"

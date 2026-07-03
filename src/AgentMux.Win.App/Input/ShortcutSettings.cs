@@ -32,10 +32,13 @@ internal sealed class ShortcutSettings
 
     private readonly Dictionary<ShortcutAction, ShortcutGesture> _bindings;
 
-    private ShortcutSettings(Dictionary<ShortcutAction, ShortcutGesture> bindings)
+    private ShortcutSettings(Dictionary<ShortcutAction, ShortcutGesture> bindings, string filePath)
     {
         _bindings = bindings;
+        FilePath = filePath;
     }
+
+    public string FilePath { get; }
 
     public static ShortcutSettings Load()
     {
@@ -43,14 +46,14 @@ internal sealed class ShortcutSettings
         return LoadFromFile(string.IsNullOrWhiteSpace(configuredPath) ? DefaultFilePath() : configuredPath);
     }
 
-    internal static ShortcutSettings Default() => new(CloneDefaultBindings());
+    internal static ShortcutSettings Default() => new(CloneDefaultBindings(), DefaultFilePath());
 
     internal static ShortcutSettings LoadFromFile(string path)
     {
         var bindings = CloneDefaultBindings();
         if (!File.Exists(path))
         {
-            return new ShortcutSettings(bindings);
+            return new ShortcutSettings(bindings, path);
         }
 
         try
@@ -59,7 +62,7 @@ internal sealed class ShortcutSettings
             var configured = JsonSerializer.Deserialize<Dictionary<string, string>>(json, ShortcutJson.Options);
             if (configured is null)
             {
-                return new ShortcutSettings(bindings);
+                return new ShortcutSettings(bindings, path);
             }
 
             foreach (var (name, value) in configured)
@@ -74,7 +77,21 @@ internal sealed class ShortcutSettings
         {
         }
 
-        return new ShortcutSettings(bindings);
+        return new ShortcutSettings(bindings, path);
+    }
+
+    internal IReadOnlyList<ShortcutBindingDisplay> BindingsForDisplay()
+    {
+        var bindings = new List<ShortcutBindingDisplay>(ActionOrder.Length);
+        foreach (var action in ActionOrder)
+        {
+            if (_bindings.TryGetValue(action, out var gesture))
+            {
+                bindings.Add(new ShortcutBindingDisplay(DisplayName(action), FormatGesture(gesture)));
+            }
+        }
+
+        return bindings;
     }
 
     public bool TryMatch(Key key, ModifierKeys modifiers, out ShortcutAction action)
@@ -153,6 +170,69 @@ internal sealed class ShortcutSettings
 
     private static Dictionary<ShortcutAction, ShortcutGesture> CloneDefaultBindings() => new(DefaultBindings);
 
+    private static string DisplayName(ShortcutAction action) => action switch
+    {
+        ShortcutAction.ToggleZoom => "Toggle zoom",
+        ShortcutAction.ClosePane => "Close pane",
+        ShortcutAction.FocusLeft => "Focus left",
+        ShortcutAction.FocusRight => "Focus right",
+        ShortcutAction.FocusUp => "Focus up",
+        ShortcutAction.FocusDown => "Focus down",
+        ShortcutAction.FocusPrevious => "Focus previous pane",
+        ShortcutAction.FocusNext => "Focus next pane",
+        _ => action.ToString()
+    };
+
+    private static string FormatGesture(ShortcutGesture gesture)
+    {
+        var parts = new List<string>(5);
+        if (gesture.Modifiers.HasFlag(ModifierKeys.Control))
+        {
+            parts.Add("Ctrl");
+        }
+
+        if (gesture.Modifiers.HasFlag(ModifierKeys.Shift))
+        {
+            parts.Add("Shift");
+        }
+
+        if (gesture.Modifiers.HasFlag(ModifierKeys.Alt))
+        {
+            parts.Add("Alt");
+        }
+
+        if (gesture.Modifiers.HasFlag(ModifierKeys.Windows))
+        {
+            parts.Add("Win");
+        }
+
+        parts.Add(FormatKey(gesture.Key));
+        return string.Join("+", parts);
+    }
+
+    private static string FormatKey(Key key) => key switch
+    {
+        Key.Left => "Left",
+        Key.Right => "Right",
+        Key.Up => "Up",
+        Key.Down => "Down",
+        Key.PageUp => "PageUp",
+        Key.PageDown => "PageDown",
+        Key.Back => "Backspace",
+        Key.Return => "Enter",
+        Key.D0 => "0",
+        Key.D1 => "1",
+        Key.D2 => "2",
+        Key.D3 => "3",
+        Key.D4 => "4",
+        Key.D5 => "5",
+        Key.D6 => "6",
+        Key.D7 => "7",
+        Key.D8 => "8",
+        Key.D9 => "9",
+        _ => key.ToString()
+    };
+
     private static bool TryParseAction(string value, out ShortcutAction action)
     {
         var normalized = value.Replace("-", "", StringComparison.Ordinal).Replace("_", "", StringComparison.Ordinal);
@@ -213,3 +293,5 @@ internal enum ShortcutAction
 }
 
 internal readonly record struct ShortcutGesture(Key Key, ModifierKeys Modifiers);
+
+internal readonly record struct ShortcutBindingDisplay(string Action, string Gesture);

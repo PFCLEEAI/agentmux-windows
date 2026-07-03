@@ -22,7 +22,7 @@
 - Split pane layout. Implemented as recursive WPF panes with persisted split ratios.
 - WebView2/xterm renderer bridge. Preview implemented with WPF fallback; hosted CI proves runtime text, geometry, xterm runtime input events, renderer bridge input, and synthetic DOM keydown routing into the active terminal pane's ConPTY input path, plus PNG artifacts. Physical keyboard, native focus, and IME proof remain future/manual desktop work.
 - Focus movement. Preview implemented with `surface.focus_pane`, `agentmux focus`, `Ctrl+Tab`, and `Ctrl+Alt+Arrow`.
-- Keyboard shortcuts. Basic pane cycling, directional pane focus, pane zoom/close shortcuts, and JSON shortcut remapping are implemented; a full settings UI remains future work.
+- Keyboard shortcuts. Basic pane cycling, directional pane focus, pane zoom/close shortcuts, JSON shortcut remapping, and a read-only in-app shortcut reference are implemented; a full settings editor remains future work.
 - Each terminal pane now owns an independent ConPTY session started lazily.
 
 ## Sprint 3 - CLI/API
